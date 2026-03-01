@@ -164,11 +164,17 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [window setDelegate:self];
     isConnected = NO;
     
+    // MUST call setupUI FIRST to initialize activityLogView!
     [self setupUI];
     [self updateConnectionStatus];
-    [self appendToLog:@"🔧 Dialog initialization started\n"];
     
-    // Set up log callback to capture C++ Log() calls
+    // NOW we can use appendToLog
+    [self appendToLog:@"════════════════════════════════════════════════════════════════\n"];
+    [self appendToLog:@"🔧 DIALOG INIT COMPLETE - Widget setup done\n"];
+    [self appendToLog:@"════════════════════════════════════════════════════════════════\n"];
+    
+    // Set up log callback to capture C++ Log() calls  
+    [self appendToLog:@"🔧 Setting up C++ log callback...\n"];
     auto log_lambda = [self](const std::string& msg) {
         NSString* nsMsg = [NSString stringWithUTF8String:msg.c_str()];
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -176,9 +182,10 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
         });
     };
     ReaperExtension::Instance().SetLogCallback(log_lambda);
-    [self appendToLog:@"✓ Log callback registered\n"];
+    [self appendToLog:@"✓ C++ log callback registered successfully\n"];
     
-    [self appendToLog:@"Wing Connector ready. Configure settings and click Connect.\n"];
+    [self appendToLog:@"\nWing Connector ready. Configure settings and click Connect.\n"];
+    [self appendToLog:@"════════════════════════════════════════════════════════════════\n"];
     
     return self;
 }

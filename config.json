@@ -7,6 +7,7 @@
   "timeout": 5,
   "track_prefix": "",
   "color_tracks": true,
+  "configure_midi_actions": true,
   "include_channels": "",
   "exclude_channels": "",
   "default_track_color": {

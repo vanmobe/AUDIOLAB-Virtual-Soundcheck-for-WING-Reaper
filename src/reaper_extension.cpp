@@ -11,23 +11,34 @@
 #include <thread>
 #include <cstdlib>
 #include <cstring>
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
 #include <set>
+#include <ctime>
+#include <utime.h>
+
+// C-style wrapper function for MIDI hook (REAPER requires a C function, not a member function)
+extern "C" bool WingMidiInputHookWrapper(bool is_midi, const unsigned char* data, int len, int dev_id) {
+    return WingConnector::ReaperExtension::MidiInputHook(is_midi, data, len, dev_id);
+}
 
 namespace WingConnector {
 
 namespace {
 constexpr int kChannelQueryAttempts = 2;
 constexpr int kQueryResponseWaitMs = 600;  // Wait time for OSC responses after sending all queries
+}  // namespace
+
+// Static member definition
+reaper_plugin_info_t* ReaperExtension::g_rec_ = nullptr;
 
 // Helper function to parse channel selection (e.g., "1,3,5-7,10")
 std::set<int> ParseChannelSelection(const std::string& selection_str, int max_channels) {
     std::set<int> selected;
     if (selection_str.empty()) return selected;
-    
     std::istringstream iss(selection_str);
     std::string token;
     
@@ -65,7 +76,6 @@ std::set<int> ParseChannelSelection(const std::string& selection_str, int max_ch
     
     return selected;
 }
-}
 
 ReaperExtension::ReaperExtension()
     : connected_(false)
@@ -92,16 +102,44 @@ void ReaperExtension::Log(const std::string& message) {
     }
 }
 
-bool ReaperExtension::Initialize() {
+bool ReaperExtension::Initialize(reaper_plugin_info_t* rec) {
+    // Store g_rec context for later use in EnableMidiActions
+    if (rec) {
+        g_rec_ = rec;
+        FILE* log_f = fopen("/tmp/wing_connector_debug.log", "a");
+        if (log_f) {
+            fprintf(log_f, "🔧 [WING] Stored REAPER plugin context (g_rec_ = %p)\n", (void*)rec);
+            fprintf(log_f, "🔧 [WING] g_rec_->Register = %p\n", (void*)rec->Register);
+            fflush(log_f);
+            fclose(log_f);
+        }
+    } else {
+        FILE* log_f = fopen("/tmp/wing_connector_debug.log", "a");
+        if (log_f) {
+            fprintf(log_f, "🔧 [WING] WARNING: g_rec parameter is nullptr!\n");
+            fflush(log_f);
+            fclose(log_f);
+        }
+    }
+    
     // Load configuration
     std::string config_path = WingConfig::GetConfigPath();
+    fprintf(stderr, "🔧 [WING] Loading config from: %s\n", config_path.c_str());
+    fflush(stderr);
+    
     bool loaded_user_config = config_.LoadFromFile(config_path);
     if (!loaded_user_config) {
+        fprintf(stderr, "🔧 [WING] User config not found, trying install directory\n");
+        fflush(stderr);
         // Try loading from install directory
         if (!config_.LoadFromFile("config.json")) {
+            fprintf(stderr, "🔧 [WING] Using default configuration\n");
+            fflush(stderr);
             Log("Wing Connector: Using default configuration\n");
         }
     } else {
+        fprintf(stderr, "🔧 [WING] Configuration loaded successfully\n");
+        fflush(stderr);
         Log("Wing Connector: Configuration loaded\n");
         // Migrate legacy default listen port (2224 -> 2223)
         if (config_.listen_port == 2224) {
@@ -112,16 +150,30 @@ bool ReaperExtension::Initialize() {
         }
     }
     
+    fprintf(stderr, "🔧 [WING] Creating track manager\n");
+    fflush(stderr);
+    
     // Create track manager
     track_manager_ = std::make_unique<TrackManager>(config_);
+    
+    fprintf(stderr, "🔧 [WING] Enabling Wing MIDI device\n");
+    fflush(stderr);
     
     // Enable Wing MIDI device in REAPER settings
     EnableWingMidiDevice();
     
+    fprintf(stderr, "🔧 [WING] MIDI actions enabled: %d\n", config_.configure_midi_actions);
+    fflush(stderr);
+    
     // Enable MIDI actions if configured
     if (config_.configure_midi_actions) {
+        fprintf(stderr, "🔧 [WING] Enabling MIDI actions\n");
+        fflush(stderr);
         EnableMidiActions(true);
     }
+    
+    fprintf(stderr, "🔧 [WING] ReaperExtension::Initialize() complete\n");
+    fflush(stderr);
     
     return true;
 }
@@ -1176,44 +1228,124 @@ void ReaperExtension::EnableWingMidiDevice() {
 
 void ReaperExtension::RegisterMidiShortcuts() {
     Log("\n=== Wing MIDI Actions Configuration ===\n\n");
-    Log("APPROACH: Direct MIDI → Action execution via plugin\n\n");
+    Log("APPROACH: Programmatic MIDI shortcut assignment\n\n");
     
-    Log("Configured mappings:\n");
+    // Get path to reaper-kb.ini
+    const char* resource_path = GetResourcePath();
+    if (!resource_path) {
+        Log("✗ ERROR: Could not get REAPER resource path\n");
+        Log("GetResourcePath() returned nullptr - REAPER may not be fully initialized\n");
+        return;
+    }
+    
+    std::string kb_ini_path = std::string(resource_path) + "/reaper-kb.ini";
+    
+    char debug_msg[512];
+    snprintf(debug_msg, sizeof(debug_msg), "Resource path: %s\n", resource_path);
+    Log(debug_msg);
+    snprintf(debug_msg, sizeof(debug_msg), "KB.ini path: %s\n", kb_ini_path.c_str());
+    Log(debug_msg);
+    
+    // Check if file exists and is writable
+    std::ofstream test_file(kb_ini_path, std::ios::app);
+    if (!test_file.is_open()) {
+        snprintf(debug_msg, sizeof(debug_msg), "✗ ERROR: Cannot open %s for writing\n", kb_ini_path.c_str());
+        Log(debug_msg);
+        return;
+    }
+    test_file.close();
+    
+    Log("\nConfigured mappings:\n");
     for (const auto& action : MIDI_ACTIONS) {
         char msg[256];
         snprintf(msg, sizeof(msg), 
                  "  CC#%d (Ch 1) → %s\n", 
                  action.cc_number, action.description + 6);  // Skip "Wing: " prefix
         Log(msg);
+        
+        // Add MIDI shortcut to reaper-kb.ini
+        // Format: KEY <status_byte> <data1_encoded> <action_id> <param>
+        // Status byte: 0xB0 (176) = CC on channel 1
+        // Data1 is stored with +128 offset by REAPER: (cc_number + 128)
+        // Example: KEY 176 148 40157 0  (CC#20 → Insert marker, stored as 20+128=148)
+        
+        int cc_encoded = action.cc_number + 128;  // REAPER stores CC numbers with +128 offset
+        std::string shortcut_line = "KEY 176 " + std::to_string(cc_encoded) + 
+                                   " " + std::to_string(action.command_id) + " 0\n";
+        
+        // Append to reaper-kb.ini
+        std::ofstream kb_file(kb_ini_path, std::ios::app);
+        if (kb_file.is_open()) {
+            kb_file << shortcut_line;
+            kb_file.close();
+            snprintf(debug_msg, sizeof(debug_msg), "  ✓ Wrote: %s", shortcut_line.c_str());
+            Log(debug_msg);
+        } else {
+            snprintf(debug_msg, sizeof(debug_msg), "  ✗ Failed to write CC#%d mapping\n", action.cc_number);
+            Log(debug_msg);
+        }
     }
     
-    Log("\n✓ Plugin will intercept MIDI and execute actions directly\n");
-    Log("✓ No manual shortcut setup needed\n");
-    Log("\nTo verify MIDI is working:\n");
-    Log("  1. Press a Wing button\n");
-    Log("  2. Check this log for [MIDI DEBUG] messages\n");
-    Log("  3. If you see messages, actions should execute\n");
-    Log("  4. If NO messages appear → Wing MIDI not enabled (see below)\n\n");
+    Log("\n✓ MIDI shortcuts written to reaper-kb.ini\n");
     
-    Log("────────────────────────────────────────\n");
-    Log("TROUBLESHOOTING: If buttons don't work:\n");
-    Log("────────────────────────────────────────\n");
-    Log("1. Enable Wing MIDI input:\n");
-    Log("   Preferences → Audio → MIDI Devices\n");
-    Log("   → Find Wing device → Check 'Enable input'\n\n");
-    Log("2. Verify Wing button config:\n");
-    Log("   Wing web interface → assign buttons to send:\n");
-    Log("   - Message type: Control Change\n");
-    Log("   - MIDI Channel: 1\n");
-    Log("   - CC numbers: 20-26 (see table above)\n\n");
-    Log("3. Test by pressing a button now\n");
-    Log("   → You should see [MIDI DEBUG] below\n\n");
+    // Touch the file to update modification time
+    // This triggers REAPER's file watcher to reload keyboard shortcuts
+    // without requiring a restart
+    time_t now = time(nullptr);
+    struct utimbuf times = {now, now};
+    if (utime(kb_ini_path.c_str(), &times) == 0) {
+        Log("✓ Updated reaper-kb.ini modification time\n");
+        Log("✓ REAPER should reload shortcuts automatically\n\n");
+    } else {
+        Log("⚠ Could not update file modification time (REAPER will reload on next window focus)\n\n");
+    }
+    
+    Log("To verify:\n");
+    Log("  1. The Wing MIDI buttons should work immediately\n");
+    Log("  2. Or: Enable Wing MIDI in Preferences → MIDI Devices\n");
+    Log("  3. Press Wing buttons - actions should execute\n\n");
 }
 
 void ReaperExtension::UnregisterMidiShortcuts() {
-    // REAPER doesn't provide a direct way to remove shortcuts programmatically
-    // They persist in the .ReaperKeyMap file
-    Log("MIDI shortcuts remain in REAPER (can be removed manually in Actions list)\n");
+    const char* resource_path = GetResourcePath();
+    if (!resource_path) return;
+    
+    std::string kb_ini_path = std::string(resource_path) + "/reaper-kb.ini";
+    std::ifstream in_file(kb_ini_path);
+    std::string content;
+    std::string line;
+    
+    // Read file and remove Wing MIDI lines
+    while (std::getline(in_file, line)) {
+        bool is_wing_midi = false;
+        for (const auto& action : MIDI_ACTIONS) {
+            int cc_encoded = action.cc_number + 128;  // Use same encoding as register
+            std::string wing_line = "KEY 176 " + std::to_string(cc_encoded);
+            if (line.find(wing_line) != std::string::npos) {
+                is_wing_midi = true;
+                break;
+            }
+        }
+        if (!is_wing_midi) {
+            content += line + "\n";
+        }
+    }
+    in_file.close();
+    
+    // Write back
+    std::ofstream out_file(kb_ini_path);
+    out_file << content;
+    out_file.close();
+    
+    // Touch the file to update modification time
+    // This triggers REAPER's file watcher to reload keyboard shortcuts
+    time_t now = time(nullptr);
+    struct utimbuf times = {now, now};
+    if (utime(kb_ini_path.c_str(), &times) == 0) {
+        Log("✓ MIDI shortcuts removed and reloader triggered\n");
+    } else {
+        Log("MIDI shortcuts removed from reaper-kb.ini\n");
+    }
 }
 
 void ReaperExtension::EnableMidiActions(bool enable) {
@@ -1224,33 +1356,12 @@ void ReaperExtension::EnableMidiActions(bool enable) {
     midi_actions_enabled_ = enable;
     
     if (enable) {
-        // Register MIDI shortcuts directly in REAPER's action system
         RegisterMidiShortcuts();
-        
-        // Also register MIDI input hook for debugging
-        int result = plugin_register("midi_input_hook", (void*)&MidiInputHook);
-        
-        char msg[256];
-        snprintf(msg, sizeof(msg), "\n[HOOK STATUS] MIDI input hook: %s (return code: %d)\n", 
-                 result ? "✓ REGISTERED" : "✗ FAILED", result);
-        Log(msg);
-        
-        if (!result) {
-            Log("\n⚠ ERROR: MIDI hook registration failed!\n");
-            Log("  This means the plugin cannot intercept MIDI.\n");
-            Log("  Actions will NOT work automatically.\n\n");
-            midi_actions_enabled_ = false;
-        } else {
-            Log("[HOOK STATUS] Waiting for MIDI input...\n");
-            Log("[HOOK STATUS] Press any Wing button for a test\n\n");
-        }
     } else {
         UnregisterMidiShortcuts();
-        plugin_register("-midi_input_hook", (void*)&MidiInputHook);
-        Log("MIDI Actions: Disabled\n");
     }
     
-    // Update config
+    //Update config
     config_.configure_midi_actions = enable;
     config_.SaveToFile(WingConfig::GetConfigPath());
 }
@@ -1259,9 +1370,19 @@ bool ReaperExtension::MidiInputHook(bool is_midi, const unsigned char* data, int
     // Get instance
     auto& ext = ReaperExtension::Instance();
     
-    // Log EVERY call to the hook for debugging
+    // Log EVERY call to both file and instance log for debugging
     static int call_count = 0;
-    if (++call_count <= 5 || call_count % 100 == 0) {  // Log first 5 calls, then every 100th
+    call_count++;
+    
+    FILE* log_f = fopen("/tmp/wing_connector_debug.log", "a");
+    if (log_f) {
+        fprintf(log_f, "[HOOK CALLED #%d] is_midi=%d, len=%d, dev_id=%d\n", 
+                call_count, is_midi, len, dev_id);
+        fflush(log_f);
+        fclose(log_f);
+    }
+    
+    if (call_count <= 5 || call_count % 100 == 0) {  // Log first 5 calls to UI, then every 100th
         char debug[128];
         snprintf(debug, sizeof(debug), "[HOOK CALLED #%d] is_midi=%d, len=%d, dev_id=%d\n", 
                  call_count, is_midi, len, dev_id);

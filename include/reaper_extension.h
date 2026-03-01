@@ -1,6 +1,9 @@
 #ifndef REAPER_EXTENSION_H
 #define REAPER_EXTENSION_H
 
+// Forward declaration to avoid include ordering issues
+struct reaper_plugin_info_t;
+
 #include "wing_config.h"
 #include "wing_osc.h"
 #include "track_manager.h"
@@ -29,7 +32,7 @@ public:
     static ReaperExtension& Instance();
     
     // Extension lifecycle
-    bool Initialize();
+    bool Initialize(reaper_plugin_info_t* rec = nullptr);
     void Shutdown();
     
     // Connection (called by dialog)
@@ -74,6 +77,9 @@ public:
     void SetLogCallback(LogCallback callback) { log_callback_ = callback; }
     void Log(const std::string& message);
     
+    // MIDI input hook (needed by extern wrapper function)
+    static bool MidiInputHook(bool is_midi, const unsigned char* data, int len, int dev_id);
+
 private:
     ReaperExtension();
     ~ReaperExtension();
@@ -93,6 +99,9 @@ private:
     std::atomic<bool> midi_actions_enabled_;
     std::string status_message_;
     LogCallback log_callback_;
+    
+    // Static REAPER plugin context (set in Initialize)
+    static reaper_plugin_info_t* g_rec_;
     
     // MIDI action registration
     struct MidiAction {
@@ -114,7 +123,6 @@ private:
     void UnregisterMidiShortcuts();
     
     // MIDI input handling  
-    static bool MidiInputHook(bool is_midi, const unsigned char* data, int len, int dev_id);
     void ProcessMidiInput(const unsigned char* data, int len);
     
     // Callbacks

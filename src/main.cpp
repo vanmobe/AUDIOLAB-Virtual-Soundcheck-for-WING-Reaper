@@ -13,6 +13,7 @@
 #include <cstring>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
 
 // Accelerator flags (from Windows API)
 #define FVIRTKEY  0x01
@@ -29,6 +30,21 @@ static reaper_plugin_info_t* g_rec = nullptr;
 
 // Command IDs
 static int g_cmd_main_dialog = 0;
+
+// ===== DEBUG FILE LOGGING =====
+static const char* DEBUG_LOG_PATH = "/tmp/wing_connector_debug.log";
+
+void WriteDebugLog(const char* msg) {
+    FILE* f = fopen(DEBUG_LOG_PATH, "a");
+    if (f) {
+        fprintf(f, "%s\n", msg);
+        fflush(f);
+        fclose(f);
+    }
+    // Also write to stderr
+    fprintf(stderr, "%s\n", msg);
+    fflush(stderr);
+}
 
 // ===== COMMAND HOOK (hookcommand2) =====
 static bool OnAction(KbdSectionInfo* sec, int cmd, int val, int valhw, int relmode, HWND hwnd) {
@@ -118,17 +134,28 @@ int REAPER_PLUGIN_DLL_EXPORT REAPER_PLUGIN_ENTRYPOINT(
     REAPER_PLUGIN_HINSTANCE hInstance,
     reaper_plugin_info_t* rec)
 {
-    fprintf(stderr, "\n🔧 [WING] REAPER_PLUGIN_ENTRYPOINT called\n");
-    fflush(stderr);
+    // MARKER FILE - most reliable test
+    FILE* f = fopen("/tmp/wing_plugin_loaded.txt", "w");
+    if (f) {
+        fprintf(f, "PLUGIN LOADED AT: ENTRY POINT\n");
+        fflush(f);
+        fclose(f);
+    }
+    
+    WriteDebugLog("================================================================");
+    WriteDebugLog("🔧 [WING] REAPER_PLUGIN_ENTRYPOINT called - PLUGIN LOADING");
+    WriteDebugLog("================================================================");
     
     if (!rec) {
         // Unloading
+        WriteDebugLog("🔧 [WING] Plugin unloading");
         fprintf(stderr, "🔧 [WING] Plugin unloading\n");
         fflush(stderr);
         ReaperExtension::Instance().Shutdown();
         return 0;
     }
     
+    WriteDebugLog("🔧 [WING] Plugin loading - setting up API");
     fprintf(stderr, "🔧 [WING] Plugin loading - setting up API\n");
     fflush(stderr);
     
@@ -141,27 +168,35 @@ int REAPER_PLUGIN_DLL_EXPORT REAPER_PLUGIN_ENTRYPOINT(
     
     // Check that GetFunc is available
     if (!rec->GetFunc) {
+        WriteDebugLog("🔧 [WING] ERROR: GetFunc not available");
         fprintf(stderr, "🔧 [WING] ERROR: GetFunc not available\n");
         fflush(stderr);
         return 0;
     }
     
+    WriteDebugLog("🔧 [WING] Initializing ReaperExtension");
     fprintf(stderr, "🔧 [WING] Initializing ReaperExtension\n");
     fflush(stderr);
     
-    // Initialize our extension
-    if (!ReaperExtension::Instance().Initialize()) {
+    // Initialize our extension (pass rec context for MIDI hook registration)
+    if (!ReaperExtension::Instance().Initialize(rec)) {
+        WriteDebugLog("🔧 [WING] ERROR: ReaperExtension::Initialize() failed");
         fprintf(stderr, "🔧 [WING] ERROR: ReaperExtension::Initialize() failed\n");
         fflush(stderr);
         return 0;
     }
     
+    WriteDebugLog("🔧 [WING] Registering commands");
     fprintf(stderr, "🔧 [WING] Registering commands\n");
     fflush(stderr);
     
     // Register commands and actions
     RegisterCommands();
     
+    WriteDebugLog("================================================================");
+    WriteDebugLog("🔧 [WING] Plugin initialization complete! DEBUG LOG AT:");
+    WriteDebugLog(DEBUG_LOG_PATH);
+    WriteDebugLog("================================================================");
     fprintf(stderr, "🔧 [WING] Plugin initialization complete!\n");
     fflush(stderr);
     
