@@ -80,10 +80,11 @@ Getting up and running with Wing Connector is straightforward:
 
 On your Behringer Wing:
 1. Press **Setup** button
-2. Navigate to **Network** → **OSC**
-3. Enable OSC (toggle to **ON**)
+2. Navigate to **Remote** → **OSC**
+3. Make sure Remote OSC lock is **OFF**
 4. Note the **IP Address** (e.g., `192.168.1.100`)
 5. Verify **OSC Port** is `2223` (or note the actual port)
+6. For the midi commands to work make sure 'External MIDI Control' is set to **USB**
 
 ### 2. Set Up Dependencies
 
