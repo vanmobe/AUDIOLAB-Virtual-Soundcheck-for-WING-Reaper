@@ -1,0 +1,67 @@
+# Build directories
+build/
+install/
+cmake-build-*/
+
+# Compiled files
+*.o
+*.obj
+*.dylib
+*.dll
+*.so
+*.a
+*.lib
+*.exe
+
+# Python (backup)
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.user
+*.vcxproj.user
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+
+# Reaper
+*.RPP-bak
+*.reapeaks
+
+# Logs
+*.log
+*.dmp
+
+# Local configuration overrides
+config.local.json
+
+# Downloaded dependencies (download via setup script)
+lib/reaper-sdk/
+lib/oscpack/
+
+# macOS
+.AppleDouble
+.LSOverride
+*.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
