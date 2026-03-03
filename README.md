@@ -1324,10 +1324,10 @@ This is a community project. While efforts have been made to ensure quality and 
 
 ### Authors & Contributors
 
+- **[Ben van Mol](https://co-lab.eu)** — Wing Connector extension development
 - **Patrick Gillot** — Behringer Wing OSC Protocol documentation (invaluable reference)
 - **Cockos / Justin Frankel** — Reaper DAW and SDK
 - **Ross Bencina** — oscpack library (OSC implementation)
-- **CO_LAB** — Wing Connector extension development
 
 ### Third-Party Libraries
 
@@ -1358,7 +1358,7 @@ If you use Wing Connector in a project, we appreciate (but don't require) attrib
 
 ```
 Wing Connector - Reaper Extension for Behringer Wing
-https://github.com/CO_LAB/colab.reaper.recordwing
+Developed by Ben van Mol - https://co-lab.eu
 Licensed under MIT License
 ```
 
