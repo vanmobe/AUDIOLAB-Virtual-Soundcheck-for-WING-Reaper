@@ -44,6 +44,21 @@
 #include "internal/osc_helpers.h"
 #include "internal/osc_routing.h"
 
+#if defined(_WIN32)
+#ifdef BeginMessage
+#undef BeginMessage
+#endif
+#ifdef EndMessage
+#undef EndMessage
+#endif
+#ifdef MessageTerminator
+#undef MessageTerminator
+#endif
+#ifdef ReceivedMessage
+#undef ReceivedMessage
+#endif
+#endif
+
 #include "osc/OscReceivedElements.h"
 #include "osc/OscPacketListener.h"
 #include "osc/OscOutboundPacketStream.h"
