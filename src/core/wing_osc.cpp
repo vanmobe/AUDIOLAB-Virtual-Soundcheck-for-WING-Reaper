@@ -80,6 +80,14 @@ constexpr int kHandshakeTimeoutMs = 1500;  // Discovery timeout
 
 namespace WingConnector {
 
+static inline osc::BeginMessage BeginMsg(const char* address) {
+    return osc::BeginMessage{address};
+}
+
+static inline osc::MessageTerminator EndMsg() {
+    return osc::MessageTerminator{};
+}
+
 /**
  * WingOscListener - Internal OSC packet receiver
  * 
@@ -245,8 +253,8 @@ bool WingOSC::TestConnection() {
         osc::OutboundPacketStream p(buffer, 256);
         
         // Send info request
-        p << osc::BeginMessage("/xinfo")
-          << osc::EndMessage;
+        p << BeginMsg("/xinfo")
+          << EndMsg();
 
         if (!SendRawPacket(p.Data(), p.Size())) {
             Log("Failed to send Wing info probe");
@@ -647,7 +655,7 @@ void WingOSC::GetChannelStereoLink(int channel_num) {
     char buffer[256];
     osc::OutboundPacketStream p(buffer, 256);
     std::string address = "/ch/" + FormatChannelNum(channel_num) + "/clink";
-    p << osc::BeginMessage(address.c_str()) << osc::EndMessage;
+    p << BeginMsg(address.c_str()) << EndMsg();
     SendRawPacket(p.Data(), p.Size());
 }
 
@@ -673,7 +681,7 @@ void WingOSC::QueryChannelSourceStereo(int channel_num) {
     std::string address = "/io/in/" + grp + "/" + std::to_string(input) + "/mode";
     char buffer[256];
     osc::OutboundPacketStream p(buffer, 256);
-    p << osc::BeginMessage(address.c_str()) << osc::EndMessage;
+    p << BeginMsg(address.c_str()) << EndMsg();
     SendRawPacket(p.Data(), p.Size());
 }
 
@@ -687,9 +695,9 @@ void WingOSC::SetChannelAltSource(int channel_num, const std::string& grp, int i
     // Set ALT group: /ch/N/in/conn/altgrp "USB"
     std::string addr_altgrp = "/ch/" + ch + "/in/conn/altgrp";
     p.Clear();
-    p << osc::BeginMessage(addr_altgrp.c_str())
+    p << BeginMsg(addr_altgrp.c_str())
       << grp.c_str()
-      << osc::EndMessage;
+      << EndMsg();
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("Error setting ALT group for channel " + std::to_string(channel_num));
         return;
@@ -699,9 +707,9 @@ void WingOSC::SetChannelAltSource(int channel_num, const std::string& grp, int i
     // Set ALT input: /ch/N/in/conn/altin <int>
     std::string addr_altin = "/ch/" + ch + "/in/conn/altin";
     p.Clear();
-    p << osc::BeginMessage(addr_altin.c_str())
+    p << BeginMsg(addr_altin.c_str())
       << (int32_t)in
-      << osc::EndMessage;
+      << EndMsg();
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("Error setting ALT input for channel " + std::to_string(channel_num));
     }
@@ -716,9 +724,9 @@ void WingOSC::EnableChannelAltSource(int channel_num, bool enable) {
     std::string ch = FormatChannelNum(channel_num);
     std::string address = "/ch/" + ch + "/in/set/altsrc";
     
-    p << osc::BeginMessage(address.c_str())
+    p << BeginMsg(address.c_str())
       << (int32_t)(enable ? 1 : 0)
-      << osc::EndMessage;
+      << EndMsg();
     
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("Error toggling ALT source for channel " + std::to_string(channel_num));
@@ -741,9 +749,9 @@ void WingOSC::SetUSBOutputSource(int usb_num, const std::string& grp, int in) {
     // Set USB output source group
     std::string addr_grp = "/io/out/USB/" + std::to_string(usb_num) + "/grp";
     p.Clear();
-    p << osc::BeginMessage(addr_grp.c_str())
+    p << BeginMsg(addr_grp.c_str())
       << grp.c_str()
-      << osc::EndMessage;
+      << EndMsg();
     
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("[ERROR] Failed to set USB " + std::to_string(usb_num) + " group");
@@ -755,9 +763,9 @@ void WingOSC::SetUSBOutputSource(int usb_num, const std::string& grp, int in) {
     // Set USB output input number
     std::string addr_in = "/io/out/USB/" + std::to_string(usb_num) + "/in";
     p.Clear();
-    p << osc::BeginMessage(addr_in.c_str())
+    p << BeginMsg(addr_in.c_str())
       << (int32_t)in
-      << osc::EndMessage;
+      << EndMsg();
     
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("[ERROR] Failed to set USB " + std::to_string(usb_num) + " input");
@@ -776,9 +784,9 @@ void WingOSC::SetUSBOutputName(int usb_num, const std::string& name) {
     // Set USB output name: /io/out/USB/[1-48]/name
     std::string addr_name = "/io/out/USB/" + std::to_string(usb_num) + "/name";
     p.Clear();
-    p << osc::BeginMessage(addr_name.c_str())
+    p << BeginMsg(addr_name.c_str())
       << name.c_str()
-      << osc::EndMessage;
+      << EndMsg();
     
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("[ERROR] Failed to set USB output " + std::to_string(usb_num) + " name");
@@ -797,9 +805,9 @@ void WingOSC::SetUSBInputName(int usb_num, const std::string& name) {
     // Set USB input name: /io/in/USB/[1-48]/name
     std::string addr_name = "/io/in/USB/" + std::to_string(usb_num) + "/name";
     p.Clear();
-    p << osc::BeginMessage(addr_name.c_str())
+    p << BeginMsg(addr_name.c_str())
       << name.c_str()
-      << osc::EndMessage;
+      << EndMsg();
     
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("[ERROR] Failed to set USB " + std::to_string(usb_num) + " name");
@@ -813,9 +821,9 @@ void WingOSC::UnlockUSBOutputs() {
     osc::OutboundPacketStream p(buffer, 256);
     
     // Unlock USB recording outputs: /usbrec/lock 0
-    p << osc::BeginMessage("/usbrec/lock")
+    p << BeginMsg("/usbrec/lock")
       << (int32_t)0  // 0 = unlock, 1 = lock
-      << osc::EndMessage;
+      << EndMsg();
     
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("ERROR: Failed to unlock USB outputs");
@@ -840,9 +848,9 @@ void WingOSC::SetCardOutputSource(int card_num, const std::string& grp, int in) 
     // Set CARD output source group
     std::string addr_grp = "/io/out/CRD/" + std::to_string(card_num) + "/grp";
     p.Clear();
-    p << osc::BeginMessage(addr_grp.c_str())
+    p << BeginMsg(addr_grp.c_str())
       << grp.c_str()
-      << osc::EndMessage;
+      << EndMsg();
     
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("[ERROR] Failed to set CARD " + std::to_string(card_num) + " group");
@@ -854,9 +862,9 @@ void WingOSC::SetCardOutputSource(int card_num, const std::string& grp, int in) 
     // Set CARD output input number
     std::string addr_in = "/io/out/CRD/" + std::to_string(card_num) + "/in";
     p.Clear();
-    p << osc::BeginMessage(addr_in.c_str())
+    p << BeginMsg(addr_in.c_str())
       << (int32_t)in
-      << osc::EndMessage;
+      << EndMsg();
     
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("[ERROR] Failed to set CARD " + std::to_string(card_num) + " input");
@@ -875,9 +883,9 @@ void WingOSC::SetCardOutputName(int card_num, const std::string& name) {
     // Set CARD output name: /io/out/CRD/[1-32]/name
     std::string addr_name = "/io/out/CRD/" + std::to_string(card_num) + "/name";
     p.Clear();
-    p << osc::BeginMessage(addr_name.c_str())
+    p << BeginMsg(addr_name.c_str())
       << name.c_str()
-      << osc::EndMessage;
+      << EndMsg();
     
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("[ERROR] Failed to set CARD output " + std::to_string(card_num) + " name");
@@ -896,9 +904,9 @@ void WingOSC::SetCardInputName(int card_num, const std::string& name) {
     // Set CARD input name: /io/in/CRD/[1-32]/name
     std::string addr_name = "/io/in/CRD/" + std::to_string(card_num) + "/name";
     p.Clear();
-    p << osc::BeginMessage(addr_name.c_str())
+    p << BeginMsg(addr_name.c_str())
       << name.c_str()
-      << osc::EndMessage;
+      << EndMsg();
     
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("[ERROR] Failed to set CARD " + std::to_string(card_num) + " input name");
@@ -914,9 +922,9 @@ void WingOSC::ClearUSBOutput(int usb_num) {
     // Clear USB output by setting source group to OFF
     std::string addr_grp = "/io/out/USB/" + std::to_string(usb_num) + "/grp";
     p.Clear();
-    p << osc::BeginMessage(addr_grp.c_str())
+    p << BeginMsg(addr_grp.c_str())
       << "OFF"
-      << osc::EndMessage;
+      << EndMsg();
     
     SendRawPacket(p.Data(), p.Size());
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -929,9 +937,9 @@ void WingOSC::ClearCardOutput(int card_num) {
     // Clear CARD output by setting source group to OFF
     std::string addr_grp = "/io/out/CRD/" + std::to_string(card_num) + "/grp";
     p.Clear();
-    p << osc::BeginMessage(addr_grp.c_str())
+    p << BeginMsg(addr_grp.c_str())
       << "OFF"
-      << osc::EndMessage;
+      << EndMsg();
     
     SendRawPacket(p.Data(), p.Size());
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -947,9 +955,9 @@ void WingOSC::SetUSBInputMode(int usb_num, const std::string& mode) {
     // Set USB input mode: /io/in/USB/[1-48]/mode
     std::string addr_mode = "/io/in/USB/" + std::to_string(usb_num) + "/mode";
     p.Clear();
-    p << osc::BeginMessage(addr_mode.c_str())
+    p << BeginMsg(addr_mode.c_str())
       << mode.c_str()
-      << osc::EndMessage;
+      << EndMsg();
     
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("[ERROR] Failed to set USB " + std::to_string(usb_num) + " mode");
@@ -968,9 +976,9 @@ void WingOSC::SetCardInputMode(int card_num, const std::string& mode) {
     // Set CARD input mode: /io/in/CRD/[1-32]/mode
     std::string addr_mode = "/io/in/CRD/" + std::to_string(card_num) + "/mode";
     p.Clear();
-    p << osc::BeginMessage(addr_mode.c_str())
+    p << BeginMsg(addr_mode.c_str())
       << mode.c_str()
-      << osc::EndMessage;
+      << EndMsg();
     
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("[ERROR] Failed to set CARD " + std::to_string(card_num) + " mode");
@@ -986,18 +994,18 @@ void WingOSC::ClearUSBInput(int usb_num) {
         // Clear USB input by resetting mode and name
     std::string addr_mode = "/io/in/USB/" + std::to_string(usb_num) + "/mode";
     p.Clear();
-    p << osc::BeginMessage(addr_mode.c_str())
+    p << BeginMsg(addr_mode.c_str())
       << "M"
-      << osc::EndMessage;
+      << EndMsg();
     
     SendRawPacket(p.Data(), p.Size());
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
         std::string addr_name = "/io/in/USB/" + std::to_string(usb_num) + "/name";
         p.Clear();
-        p << osc::BeginMessage(addr_name.c_str())
+        p << BeginMsg(addr_name.c_str())
             << ""
-            << osc::EndMessage;
+            << EndMsg();
 
         SendRawPacket(p.Data(), p.Size());
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -1010,18 +1018,18 @@ void WingOSC::ClearCardInput(int card_num) {
         // Clear CARD input by resetting mode and name
     std::string addr_mode = "/io/in/CRD/" + std::to_string(card_num) + "/mode";
     p.Clear();
-    p << osc::BeginMessage(addr_mode.c_str())
+    p << BeginMsg(addr_mode.c_str())
       << "M"
-      << osc::EndMessage;
+      << EndMsg();
     
     SendRawPacket(p.Data(), p.Size());
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
         std::string addr_name = "/io/in/CRD/" + std::to_string(card_num) + "/name";
         p.Clear();
-        p << osc::BeginMessage(addr_name.c_str())
+        p << BeginMsg(addr_name.c_str())
             << ""
-            << osc::EndMessage;
+            << EndMsg();
 
         SendRawPacket(p.Data(), p.Size());
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -1032,9 +1040,9 @@ void WingOSC::LockUSBOutputs() {
     osc::OutboundPacketStream p(buffer, 256);
     
     // Lock USB recording outputs: /usbrec/lock 1
-    p << osc::BeginMessage("/usbrec/lock")
+    p << BeginMsg("/usbrec/lock")
       << (int32_t)1  // 0 = unlock, 1 = lock
-      << osc::EndMessage;
+      << EndMsg();
     
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("ERROR: Failed to lock USB outputs");
@@ -1130,14 +1138,14 @@ void WingOSC::QueryUserSignalInputs(int count) {
         // Query USR input source: /io/in/USR/[N]/user/grp (group)
         // Correct path discovered from Wing object model traversal
         std::string addr_grp = "/io/in/USR/" + std::to_string(i) + "/user/grp";
-        p << osc::BeginMessage(addr_grp.c_str()) << osc::EndMessage;
+        p << BeginMsg(addr_grp.c_str()) << EndMsg();
         SendRawPacket(p.Data(), p.Size());
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
         
         // Query USR input source: /io/in/USR/[N]/user/in (input number)
         std::string addr_in = "/io/in/USR/" + std::to_string(i) + "/user/in";
         p.Clear();
-        p << osc::BeginMessage(addr_in.c_str()) << osc::EndMessage;
+        p << BeginMsg(addr_in.c_str()) << EndMsg();
         SendRawPacket(p.Data(), p.Size());
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -1197,7 +1205,7 @@ void WingOSC::QueryUserSignalStereo(int count) {
             
             char buffer[256];
             osc::OutboundPacketStream p(buffer, 256);
-            p << osc::BeginMessage(path.c_str()) << osc::EndMessage;
+            p << BeginMsg(path.c_str()) << EndMsg();
             SendRawPacket(p.Data(), p.Size());
             
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -1265,7 +1273,7 @@ void WingOSC::QueryInputSourceNames(const std::set<std::pair<std::string, int>>&
         char buffer[256];
         osc::OutboundPacketStream p(buffer, 256);
         std::string addr_name = "/io/in/" + grp + "/" + std::to_string(in) + "/name";
-        p << osc::BeginMessage(addr_name.c_str()) << osc::EndMessage;
+        p << BeginMsg(addr_name.c_str()) << EndMsg();
         SendRawPacket(p.Data(), p.Size());
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
