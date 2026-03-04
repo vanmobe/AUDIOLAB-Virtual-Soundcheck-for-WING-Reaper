@@ -43,27 +43,6 @@
 #include "internal/logger.h"
 #include "internal/osc_helpers.h"
 #include "internal/osc_routing.h"
-#include "reaper_plugin_functions.h"
-
-#if defined(_WIN32)
-// REAPER/Windows headers define BeginMessage/EndMessage macros that conflict
-// with oscpack manipulators of the same names.
-#ifdef BeginMessage
-#undef BeginMessage
-#endif
-#ifdef EndMessage
-#undef EndMessage
-#endif
-#ifdef MessageTerminator
-#undef MessageTerminator
-#endif
-#ifdef OscPacketListener
-#undef OscPacketListener
-#endif
-#ifdef ReceivedMessage
-#undef ReceivedMessage
-#endif
-#endif
 
 #include "osc/OscReceivedElements.h"
 #include "osc/OscPacketListener.h"
