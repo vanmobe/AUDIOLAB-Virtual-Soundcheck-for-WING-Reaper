@@ -31,7 +31,17 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
-// Windows headers define BeginMessage/EndMessage macros that conflict with oscpack.
+#endif
+
+#include "wingconnector/wing_osc.h"
+#include "internal/logger.h"
+#include "internal/osc_helpers.h"
+#include "internal/osc_routing.h"
+#include "reaper_plugin_functions.h"
+
+#if defined(_WIN32)
+// REAPER/Windows headers define BeginMessage/EndMessage macros that conflict
+// with oscpack manipulators of the same names.
 #ifdef BeginMessage
 #undef BeginMessage
 #endif
@@ -40,11 +50,6 @@
 #endif
 #endif
 
-#include "wingconnector/wing_osc.h"
-#include "internal/logger.h"
-#include "internal/osc_helpers.h"
-#include "internal/osc_routing.h"
-#include "reaper_plugin_functions.h"
 #include "osc/OscReceivedElements.h"
 #include "osc/OscPacketListener.h"
 #include "osc/OscOutboundPacketStream.h"
