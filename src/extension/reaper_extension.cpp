@@ -201,7 +201,7 @@ void ReaperExtension::Shutdown() {
     track_manager_.reset();
 }
 
-// New version: Returns success/failure, doesn't auto-create tracks
+// Connects and verifies OSC reachability only; track creation is user-driven.
 bool ReaperExtension::ConnectToWing() {
     if (connected_) {
         Log("Wing Connector: Already connected\n");

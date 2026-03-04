@@ -87,12 +87,12 @@ static bool OnAction(KbdSectionInfo* sec, int cmd, int val, int valhw, int relmo
  * Register with REAPER:
  * 1. hookcommand2 callback to intercept user commands
  * 2. Custom action "Wing: Connect to Behringer Wing"
- * 3. Keyboard shortcut Ctrl+Shift+W for quick access
- * 
+ * 3. Optional keyboard shortcut Ctrl+Shift+W
+ *
  * REAPER will:
- * - Add the action to Extensions → Wing Connector menu
- * - Trigger OnAction() when the action is invoked
- * - Map Ctrl+Shift+W to the command ID
+ * - expose the custom action in the action system
+ * - trigger OnAction() when the action is invoked
+ * - map Ctrl+Shift+W to the command ID (if registration succeeds)
  */
 static void RegisterCommands() {
     Logger::Debug("RegisterCommands() called");

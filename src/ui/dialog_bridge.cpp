@@ -19,6 +19,8 @@ namespace {
 #ifndef __APPLE__
 void RunCrossPlatformDialog() {
     auto& extension = ReaperExtension::Instance();
+    // Non-macOS fallback path: run a minimal "connect + configure all channels"
+    // flow via standard REAPER dialogs.
     if (!extension.IsConnected()) {
         const bool connected = extension.ConnectToWing();
         if (!connected) {

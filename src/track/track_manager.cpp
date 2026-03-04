@@ -181,7 +181,7 @@ void TrackManager::ClearTrackHardwareOutputs(MediaTrack* track) {
 /**
  * SetTrackHardwareOutput() - Route track to hardware output
  * 
- * Creates a hardware output send (send type 1) rout the track to
+ * Creates a hardware output send (send type 1) to route the track to
  * a specific physical output or auxiliary bus.
  * 
  * Supports both mono and stereo routing:

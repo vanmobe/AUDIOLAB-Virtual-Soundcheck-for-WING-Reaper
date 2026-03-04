@@ -24,7 +24,7 @@ int StringFormat(char* buffer, size_t buffer_size, const char* format, ...);
 std::string GetPluginConfigDir();
 
 // Get config file path with fallbacks
-// Checks: primary plugin dir -> secondary plugin dir -> user home dir
+// Checks: plugin dir first, then ~/.wingconnector/config.json
 std::string GetConfigFilePath();
 
 // Platform detection helpers

@@ -1,200 +1,91 @@
 # Wing Connector Installation Guide
 
-> **Platform Support:** Wing Connector supports macOS, Windows, and Linux.
+Wing Connector provides ready-to-use installers for all supported desktop platforms.
 
-> **⚠️ Disclaimer:** This software is provided as-is for use at your own risk. No guarantees or official support are provided. See the main [README](README.md) for full warranty information.
+- macOS: `.pkg`
+- Windows: `.exe`
+- Linux: `.deb`
 
-## Installation by Platform
+Download installers from:
 
-- macOS: use the `.pkg` installer artifact
-- Windows: run the `.exe` installer artifact
-- Linux: install the `.deb` package artifact (double-click in GUI or use your package manager)
+- https://github.com/vanmobe/colab.reaper.wing/releases
 
-The repository release workflow (`.github/workflows/release.yml`) generates these artifacts automatically for tagged releases.
+## System Requirements
 
-## macOS Installation
+Runtime requirements for all platforms:
 
-Choose one of two installation methods:
+- REAPER 6.0 or newer
+- Behringer WING console (Compact, Rack, or Full)
+- Network connectivity between computer and WING
 
-### Method 1: Package Installer (Recommended for Most Users)
-### Method 2: Build from Source (For Developers)
+Platform requirements:
 
----
+- macOS: macOS 10.13+
+- Windows: Windows 10 or newer
+- Linux: Debian/Ubuntu-compatible system with `.deb` support
 
-## Method 1: Package Installer (Recommended)
+## macOS
 
-**Best for:** End users who want a simple, double-click installation.
+1. Download the latest `WingConnector-*-macos-installer.pkg`.
+2. Double-click the package and follow prompts.
+3. Restart REAPER.
+4. Open `Extensions -> Wing Connector`.
 
-### Download and Install
+Default plugin path:
 
-1. **Download the installer:**
-   - **[📦 Download WingConnector-1.0.0.pkg](../releases/WingConnector-1.0.0.pkg)**
-   - Or create it locally from source:
-     ```bash
-     ./create_installer_pkg.sh
-     ```
-   - Package location: `releases/WingConnector-1.0.0.pkg`
+- `~/Library/Application Support/REAPER/UserPlugins/`
 
-2. **Install the package:**
-   - Double-click `WingConnector-1.0.0.pkg`
-   - Follow the installation prompts
-   - The installer will place files in the correct REAPER UserPlugins directory
+## Windows
 
-3. **Restart REAPER**
+1. Download the latest `WingConnector-*-windows-setup.exe`.
+2. Run the installer and complete setup.
+3. Restart REAPER.
+4. Open `Extensions -> Wing Connector`.
 
-4. **Done!** Skip to [First Time Setup](#first-time-setup)
+Default plugin path:
 
----
+- `%APPDATA%\REAPER\UserPlugins\`
 
-## Method 2: Build from Source
+## Linux (Debian/Ubuntu)
 
-**Best for:** Developers who want to modify the code or build from the latest source.
-
-### Option A: Automated Build & Install
-
-The easiest way to build and install from source:
+1. Download the latest `wingconnector_*_amd64.deb` (or matching arch).
+2. Install with your package manager, for example:
 
 ```bash
-./install_macos.sh
+sudo apt install ./wingconnector_<version>_<arch>.deb
 ```
 
-This interactive script will:
-- ✓ Check for REAPER installation
-- ✓ Build the plugin (if needed)
-- ✓ Install to the correct location
-- ✓ Offer to restart REAPER
-- ✓ Show next steps
+3. Restart REAPER.
+4. Open `Extensions -> Wing Connector`.
 
-### Option B: Manual Build & Install
+Default plugin path:
 
-If you prefer to build and install manually:
+- `~/.config/REAPER/UserPlugins/`
 
-1. **Build the plugin:**
-   ```bash
-   ./build.sh
-   ```
+## First Run
 
-2. **Copy files:**
-   ```bash
-   cp build/reaper_wingconnector.dylib ~/Library/Application\ Support/REAPER/UserPlugins/
-   cp config.json ~/Library/Application\ Support/REAPER/UserPlugins/
-   ```
+1. Go to `Extensions -> Wing Connector -> Connect to Behringer Wing`.
+2. Set WING IP and port (default `2223`).
+3. Fetch channels and confirm track creation.
 
-3. **Restart REAPER**
+## Verify Installation
 
-## First Time Setup
+- Extension appears under the `Extensions` menu in REAPER.
+- Plugin binary exists in your `UserPlugins` directory.
+- Connection to WING succeeds without OSC timeout errors.
 
-After installation:
+## Optional: Wing Button MIDI Control
 
-1. **Open REAPER**
+For optional custom button mapping from WING to REAPER actions, see:
 
-2. **Open Wing Connector:**
-   - Go to: `Extensions → Wing Connector`
+- [snapshots/README.md](snapshots/README.md)
 
-3. **Configure your Wing:**
-   - Enter your Behringer Wing's IP address
-   - Default: `192.168.10.210`
-   - Click "Save Settings"
+## Uninstall
 
-4. **Connect:**
-   - Click "Connect to Wing"
-   - Your tracks will be automatically created
+Remove plugin and config from your REAPER `UserPlugins` path:
 
----
-
-## Optional: Configure Wing Buttons to Control REAPER
-
-Make your workflow even faster by controlling Wing Connector actions directly from your Behringer Wing console buttons!
-
-### Quick Setup (Using Snap File)
-
-**Coming Soon:** A pre-configured REAPER snapshot file will be available for easy import.
-
-Once available:
-1. **Download:** [wing-control-buttons.snap](../snapshots/) *(file will be uploaded soon)*
-2. **Import to REAPER:**
-   - Go to: `Actions → Show action list`
-   - Click `Import/export` → `Import`
-   - Select the downloaded snap file
-3. **Done!** Your Wing buttons are now mapped to REAPER actions
-
-### Manual Setup (Available Now)
-
-If you want to set this up manually now, or prefer custom configurations:
-
-**📖 See detailed instructions:** [snapshots/README.md](snapshots/README.md)
-
-The manual setup guide covers:
-- Configuring Wing custom buttons to send MIDI commands
-- Setting up REAPER to receive MIDI from Wing
-- Mapping Wing buttons to Wing Connector actions
-- Recommended button layouts
-- Troubleshooting MIDI connections
-
-**Quick overview:**
-1. Configure Wing custom buttons to send MIDI notes (via USB)
-2. Enable Wing MIDI input in REAPER preferences
-3. Map MIDI notes to Wing Connector actions in REAPER
-4. Press Wing buttons to trigger actions!
-
-**Suggested mappings:**
-- **Button 1** → Connect to Wing
-- **Button 2** → Refresh Tracks
-- **Button 3** → Toggle Monitoring
-- Plus transport controls (Record, Play, Stop)
-
----
-
-## Troubleshooting
-
-### Plugin not appearing in REAPER?
-
-1. Check plugin location:
-   ```bash
-   ls -la ~/Library/Application\ Support/REAPER/UserPlugins/reaper_wingconnector.dylib
-   ```
-
-2. Verify REAPER plugins path:
-   - Open REAPER
-   - Go to: `Preferences → Plug-ins → ReaScript`
-   - Check that the UserPlugins folder is listed
-
-### Connection issues?
-
-1. **Verify Wing IP address:**
-   - Check your Wing's network settings
-   - Make sure your Mac is on the same network
-
-2. **Check config file:**
-   ```bash
-   cat ~/Library/Application\ Support/REAPER/UserPlugins/config.json
-   ```
-
-3. **Check firewall:**
-   - System Preferences → Security & Privacy → Firewall
-   - Allow incoming connections for REAPER
-
-## Uninstallation
-
-To remove Wing Connector:
-
-```bash
-rm ~/Library/Application\ Support/REAPER/UserPlugins/reaper_wingconnector.dylib
-rm ~/Library/Application\ Support/REAPER/UserPlugins/config.json
-```
+- macOS: `reaper_wingconnector.dylib`, `config.json`
+- Windows: `reaper_wingconnector.dll`, `config.json`
+- Linux: `reaper_wingconnector.so`, `config.json`
 
 Then restart REAPER.
-
-## Requirements
-
-- macOS 10.13 (High Sierra) or later
-- REAPER 6.0 or later
-- CMake (for building from source)
-  - Install: `brew install cmake`
-
-## Support
-
-For issues or questions:
-- Check [README.md](README.md) for usage instructions
-- See [QUICKSTART.md](QUICKSTART.md) for step-by-step guide
-- Review [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for technical details

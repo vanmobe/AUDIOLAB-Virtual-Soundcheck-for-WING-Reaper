@@ -7,6 +7,17 @@ on:
       - '**'
 
 jobs:
+  docs:
+    name: Docs Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Markdown links and images
+        run: python3 scripts/validate_docs.py
+
   build:
     name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
