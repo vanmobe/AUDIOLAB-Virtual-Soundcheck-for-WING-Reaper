@@ -1,5 +1,5 @@
 /*
- * macOS Native Wing Connector Dialog Implementation
+ * macOS Native COLAB.wing.reaper.virtualsoundcheck Dialog Implementation
  * Provides consolidated dialog for all Wing operations
  */
 
@@ -183,7 +183,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
                                                                NSWindowStyleMaskMiniaturizable)
                                                        backing:NSBackingStoreBuffered
                                                          defer:NO];
-    [window setTitle:@"Wing Connector"];
+    [window setTitle:@"COLAB.wing.reaper.virtualsoundcheck"];
     [window center];
     
     self = [super initWithWindow:window];
@@ -264,7 +264,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     
     // Title
     NSTextField* titleLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(70, yPos + 20, 400, 24)];
-    [titleLabel setStringValue:@"Behringer Wing Connector"];
+    [titleLabel setStringValue:@"Behringer COLAB.wing.reaper.virtualsoundcheck"];
     [titleLabel setFont:[NSFont systemFontOfSize:18 weight:NSFontWeightMedium]];
     [titleLabel setBezeled:NO];
     [titleLabel setEditable:NO];

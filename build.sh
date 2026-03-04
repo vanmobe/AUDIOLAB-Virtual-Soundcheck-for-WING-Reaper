@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# Build script for Wing Connector Reaper Extension
+# Build script for COLAB.wing.reaper.virtualsoundcheck Reaper Extension
 # Supports macOS, Linux, and Windows (via WSL/MinGW)
 
 set -e
 
 echo "========================================="
-echo "Wing Connector - Build Script"
+echo "COLAB.wing.reaper.virtualsoundcheck - Build Script"
 echo "========================================="
 echo ""
 

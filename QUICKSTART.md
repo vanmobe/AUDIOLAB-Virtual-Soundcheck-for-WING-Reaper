@@ -12,7 +12,7 @@ On the Behringer WING console:
 4. Note the WING IP address.
 5. If you plan to use button MIDI actions, set `External MIDI Control` to `USB`.
 
-## 2. Install Wing Connector
+## 2. Install COLAB.wing.reaper.virtualsoundcheck
 
 Use the installer for your OS from GitHub Releases:
 
@@ -23,18 +23,18 @@ See [INSTALL.md](INSTALL.md) if needed.
 ## 3. Launch REAPER and Connect
 
 1. Restart REAPER after installation.
-2. Open `Extensions -> Wing Connector -> Connect to Behringer Wing`.
+2. Open `Extensions -> COLAB.wing.reaper.virtualsoundcheck -> Connect to Behringer Wing`.
 3. Enter the WING IP/port.
 4. Run channel fetch / connect in the dialog.
 
 Expected result:
 
-- Wing Connector connects successfully.
+- COLAB.wing.reaper.virtualsoundcheck connects successfully.
 - REAPER tracks are created or refreshed from WING channel data.
 
 ## 4. Optional: Configure Virtual Soundcheck
 
-Inside the Wing Connector dialog:
+Inside the COLAB.wing.reaper.virtualsoundcheck dialog:
 
 1. Configure soundcheck output mode (`USB` or `CARD`).
 2. Run virtual soundcheck setup.
@@ -49,7 +49,7 @@ Map WING custom controls to REAPER actions via MIDI:
 ## Troubleshooting Checklist
 
 - Confirm WING and computer are on the same network.
-- Verify IP/port in Wing Connector settings.
+- Verify IP/port in COLAB.wing.reaper.virtualsoundcheck settings.
 - Check firewall rules for UDP traffic.
 - Confirm REAPER loaded the extension from `UserPlugins`.
 

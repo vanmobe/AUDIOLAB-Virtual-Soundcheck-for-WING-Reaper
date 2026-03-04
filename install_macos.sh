@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Wing Connector for REAPER - macOS Installer
+# COLAB.wing.reaper.virtualsoundcheck for REAPER - macOS Installer
 # Version 1.0.0
 
 set -e
@@ -22,7 +22,7 @@ BUILD_DIR="build"
 print_header() {
     echo ""
     echo -e "${BLUE}=========================================${NC}"
-    echo -e "${BLUE}  Wing Connector for REAPER - Installer${NC}"
+    echo -e "${BLUE}  COLAB.wing.reaper.virtualsoundcheck for REAPER - Installer${NC}"
     echo -e "${BLUE}  Version 1.0.0${NC}"
     echo -e "${BLUE}=========================================${NC}"
     echo ""
@@ -66,7 +66,7 @@ check_build() {
 }
 
 build_plugin() {
-    print_info "Building Wing Connector plugin..."
+    print_info "Building COLAB.wing.reaper.virtualsoundcheck plugin..."
     
     # Check for CMake
     if ! command -v cmake &> /dev/null; then
@@ -97,7 +97,7 @@ build_plugin() {
 }
 
 install_plugin() {
-    print_info "Installing Wing Connector..."
+    print_info "Installing COLAB.wing.reaper.virtualsoundcheck..."
     
     # Create plugins directory if it doesn't exist
     mkdir -p "$REAPER_PLUGINS_DIR"
@@ -146,7 +146,7 @@ print_post_install() {
     echo ""
     echo "Next steps:"
     echo "  1. Open REAPER"
-    echo "  2. Go to Extensions → Wing Connector"
+    echo "  2. Go to Extensions → COLAB.wing.reaper.virtualsoundcheck"
     echo "  3. Configure your Behringer Wing IP address"
     echo "  4. Click 'Connect to Wing'"
     echo ""

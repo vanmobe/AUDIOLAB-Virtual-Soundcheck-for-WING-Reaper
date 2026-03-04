@@ -1,6 +1,6 @@
 # WING OSC Protocol Notes
 
-This document is a practical protocol reference for Wing Connector.
+This document is a practical protocol reference for COLAB.wing.reaper.virtualsoundcheck.
 
 It is split into:
 
@@ -15,7 +15,7 @@ It is split into:
 
 ## Implemented Subset (Plugin-Relevant)
 
-Wing Connector relies on core channel metadata and routing-related queries to:
+COLAB.wing.reaper.virtualsoundcheck relies on core channel metadata and routing-related queries to:
 
 - discover channels
 - read/update names and colors
@@ -59,7 +59,7 @@ The WING OSC ecosystem contains many additional paths beyond what this plugin re
 - `/scene/*`
 - `/config/*`
 
-These are useful for future features, but should not be interpreted as fully implemented behavior in Wing Connector.
+These are useful for future features, but should not be interpreted as fully implemented behavior in COLAB.wing.reaper.virtualsoundcheck.
 
 ## Sources and Validation
 

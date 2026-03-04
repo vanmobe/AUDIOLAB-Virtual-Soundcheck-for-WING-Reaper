@@ -2,14 +2,14 @@
 
 **Status:** Coming Soon
 
-This file will contain a pre-configured REAPER snapshot with MIDI mappings for controlling Wing Connector actions from your Behringer Wing custom buttons.
+This file will contain a pre-configured REAPER snapshot with MIDI mappings for controlling COLAB.wing.reaper.virtualsoundcheck actions from your Behringer Wing custom buttons.
 
 ## What Will Be Included
 
 When uploaded, this snap file will provide:
 
 - MIDI mappings for Wing custom buttons → REAPER actions
-- Wing Connector actions (Connect, Refresh, Toggle Monitoring)
+- COLAB.wing.reaper.virtualsoundcheck actions (Connect, Refresh, Toggle Monitoring)
 - Transport controls (Record, Play, Stop, Pause)
 - Optimized button layout for efficient workflow
 

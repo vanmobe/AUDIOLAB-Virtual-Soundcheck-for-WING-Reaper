@@ -1,6 +1,6 @@
 /*
  * macOS Native Settings Dialog Implementation
- * Provides native Cocoa dialogs for editing Wing Connector settings
+ * Provides native Cocoa dialogs for editing COLAB.wing.reaper.virtualsoundcheck settings
  */
 
 #ifdef __APPLE__
@@ -19,7 +19,7 @@ bool ShowSettingsDialog(const char* current_ip,
     @autoreleasepool {
         // Create alert dialog
         NSAlert* alert = [[NSAlert alloc] init];
-        [alert setMessageText:@"Wing Connector Settings"];
+        [alert setMessageText:@"COLAB.wing.reaper.virtualsoundcheck Settings"];
         [alert setInformativeText:@"Edit your Wing Console settings.\nRemember to enable OSC on the Wing (Setup > Network > OSC)."];
         [alert setAlertStyle:NSAlertStyleInformational];
         

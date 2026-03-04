@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# Dependency download script for Wing Connector
+# Dependency download script for COLAB.wing.reaper.virtualsoundcheck
 # Downloads required third-party libraries
 
 set -e
 
 echo "========================================="
-echo "Wing Connector - Dependency Setup"
+echo "COLAB.wing.reaper.virtualsoundcheck - Dependency Setup"
 echo "========================================="
 echo ""
 

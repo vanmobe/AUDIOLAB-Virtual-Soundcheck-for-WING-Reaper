@@ -1,6 +1,6 @@
 # Developer Setup Guide
 
-This guide covers building Wing Connector from source and installing it into REAPER for development.
+This guide covers building COLAB.wing.reaper.virtualsoundcheck from source and installing it into REAPER for development.
 
 ## Prerequisites
 
@@ -70,7 +70,7 @@ cp config.json ~/.config/REAPER/UserPlugins/
 ## Verify in REAPER
 
 1. Restart REAPER.
-2. Confirm `Extensions -> Wing Connector` is present.
+2. Confirm `Extensions -> COLAB.wing.reaper.virtualsoundcheck` is present.
 3. Run connect flow and verify channels/tracks sync.
 
 ## Packaging and Release

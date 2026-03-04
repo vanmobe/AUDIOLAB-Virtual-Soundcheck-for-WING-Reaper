@@ -72,6 +72,6 @@ jobs:
       - name: Upload staged artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wingconnector-${{ matrix.os }}-stage
+          name: colab-wing-reaper-virtualsoundcheck-${{ matrix.os }}-stage
           path: stage/
           if-no-files-found: error

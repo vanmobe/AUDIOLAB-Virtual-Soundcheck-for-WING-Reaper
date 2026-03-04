@@ -1,6 +1,6 @@
 /*
- * macOS Native Wing Connector Dialog Header
- * Consolidated dialog for all Wing Connector operations
+ * macOS Native COLAB.wing.reaper.virtualsoundcheck Dialog Header
+ * Consolidated dialog for all COLAB.wing.reaper.virtualsoundcheck operations
  */
 
 #ifndef WING_CONNECTOR_DIALOG_MACOS_H
@@ -23,10 +23,10 @@ enum class DialogAction {
     Close
 };
 
-// Main Wing Connector Dialog
+// Main COLAB.wing.reaper.virtualsoundcheck Dialog
 // This is a modeless window that stays open
 extern "C" {
-    // Show the main Wing Connector dialog
+    // Show the main COLAB.wing.reaper.virtualsoundcheck dialog
     // Returns the action the user wants to perform
     void ShowWingConnectorDialog();
 }

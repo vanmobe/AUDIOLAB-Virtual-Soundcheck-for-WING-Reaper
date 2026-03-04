@@ -1,8 +1,8 @@
-# Wing Connector Architecture
+# COLAB.wing.reaper.virtualsoundcheck Architecture
 
 ## Overview
 
-Wing Connector is a modular C++ REAPER extension with clear separation between:
+COLAB.wing.reaper.virtualsoundcheck is a modular C++ REAPER extension with clear separation between:
 
 - REAPER extension lifecycle
 - OSC communication with WING
@@ -35,7 +35,7 @@ Headers are split between:
 2. API function pointers are resolved.
 3. Extension singleton initializes configuration and runtime components.
 4. Custom action is registered (`Wing: Connect to Behringer Wing`).
-5. User triggers action; Wing Connector dialog starts workflow.
+5. User triggers action; COLAB.wing.reaper.virtualsoundcheck dialog starts workflow.
 6. OSC queries fetch channel data from WING.
 7. Track manager creates/updates REAPER tracks.
 8. Optional monitoring and virtual soundcheck actions operate from dialog controls.

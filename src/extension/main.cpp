@@ -1,5 +1,5 @@
 /*
- * Wing Connector - Reaper Extension Entry Point
+ * COLAB.wing.reaper.virtualsoundcheck - Reaper Extension Entry Point
  * Integrates Behringer Wing console with Reaper via OSC
  * 
  * This module handles the Reaper plugin lifecycle:
@@ -48,7 +48,7 @@ static int g_cmd_main_dialog = 0;
  * OnAction() - REAPER Command Dispatcher
  * 
  * Called by REAPER whenever an action/command is executed.
- * We filter for our Wing Connector action and launch the main dialog.
+ * We filter for our COLAB.wing.reaper.virtualsoundcheck action and launch the main dialog.
  * 
  * Args:
  *   sec     - Keyboard section info (unused)
@@ -69,7 +69,7 @@ static bool OnAction(KbdSectionInfo* sec, int cmd, int val, int valhw, int relmo
 
     Logger::Debug("OnAction() called with cmd=%d, g_cmd_main_dialog=%d", cmd, g_cmd_main_dialog);
 
-    // Check if this is our Wing Connector command
+    // Check if this is our COLAB.wing.reaper.virtualsoundcheck command
     if (cmd == g_cmd_main_dialog) {
         Logger::Debug("Main dialog command triggered!");
 
@@ -82,7 +82,7 @@ static bool OnAction(KbdSectionInfo* sec, int cmd, int val, int valhw, int relmo
 
 // ===== REGISTRATION =====
 /**
- * RegisterCommands() - Register Wing Connector UI Actions
+ * RegisterCommands() - Register COLAB.wing.reaper.virtualsoundcheck UI Actions
  * 
  * Register with REAPER:
  * 1. hookcommand2 callback to intercept user commands
@@ -109,13 +109,13 @@ static void RegisterCommands() {
     
     Logger::Debug("Registering custom action");
     
-    // Define the Wing Connector action
+    // Define the COLAB.wing.reaper.virtualsoundcheck action
     custom_action_register_t action;
     memset(&action, 0, sizeof(action));
     
     action.uniqueSectionId = 0;           // Main action section
-    action.idStr = "_WING_MAIN_DIALOG";   // Unique ID for this action
-    action.name = "Wing: Connect to Behringer Wing";  // Menu label
+    action.idStr = "_COLAB_VIRTUALSOUNDCHECK_MAIN_DIALOG";   // Unique ID for this action
+    action.name = "COLAB.wing.reaper.virtualsoundcheck: Connect to Behringer Wing";  // Menu label
     
     // Register and store the action ID for later reference
     int ret = g_rec->Register("custom_action", &action);

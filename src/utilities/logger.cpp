@@ -1,5 +1,5 @@
 /*
- * Unified Logging System for Wing Connector
+ * Unified Logging System for COLAB.wing.reaper.virtualsoundcheck
  */
 
 #include "internal/logger.h"

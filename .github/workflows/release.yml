@@ -18,11 +18,11 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            artifact_name: wingconnector-macos-installer
+            artifact_name: colab-wing-reaper-virtualsoundcheck-macos-installer
           - os: windows-latest
-            artifact_name: wingconnector-windows-setup-exe
+            artifact_name: colab-wing-reaper-virtualsoundcheck-windows-setup-exe
           - os: ubuntu-latest
-            artifact_name: wingconnector-linux-deb
+            artifact_name: colab-wing-reaper-virtualsoundcheck-linux-deb
 
     env:
       VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '1.0.0-dev' }}

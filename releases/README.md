@@ -8,9 +8,9 @@ Primary distribution is via GitHub Releases:
 
 ## Installer Types
 
-- macOS: `WingConnector-<version>-macos-installer.pkg`
-- Windows: `WingConnector-<version>-windows-setup.exe`
-- Linux: `wingconnector_<version>_<arch>.deb`
+- macOS: `COLAB-wing-reaper-virtualsoundcheck-<version>-macos-installer.pkg`
+- Windows: `COLAB-wing-reaper-virtualsoundcheck-<version>-windows-setup.exe`
+- Linux: `colab-wing-reaper-virtualsoundcheck_<version>_<arch>.deb`
 
 ## How Releases Are Built
 

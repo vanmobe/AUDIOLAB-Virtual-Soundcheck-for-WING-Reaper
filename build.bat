@@ -1,8 +1,8 @@
 @echo off
-REM Build script for Wing Connector (Windows)
+REM Build script for COLAB.wing.reaper.virtualsoundcheck (Windows)
 
 echo =========================================
-echo Wing Connector - Build Script (Windows)
+echo COLAB.wing.reaper.virtualsoundcheck - Build Script (Windows)
 echo =========================================
 echo.
 

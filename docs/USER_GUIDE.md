@@ -1,12 +1,12 @@
-# Wing Connector User Guide
+# COLAB.wing.reaper.virtualsoundcheck User Guide
 
 Practical guide for daily operation in REAPER with a Behringer WING.
 
 ## 1. Validate Installation
 
-1. Restart REAPER after installing Wing Connector.
-2. Confirm menu entry exists: `Extensions -> Wing Connector`.
-3. Open: `Extensions -> Wing Connector -> Connect to Behringer Wing`.
+1. Restart REAPER after installing COLAB.wing.reaper.virtualsoundcheck.
+2. Confirm menu entry exists: `Extensions -> COLAB.wing.reaper.virtualsoundcheck`.
+3. Open: `Extensions -> COLAB.wing.reaper.virtualsoundcheck -> Connect to Behringer Wing`.
 
 ![Extensions actions](images/actions-menu.png)
 
@@ -14,12 +14,12 @@ If the menu is missing, verify plugin files are in your REAPER `UserPlugins` fol
 
 ## 2. Connect to WING and Fetch Channels
 
-1. In the Wing Connector dialog, enter WING IP and port.
+1. In the COLAB.wing.reaper.virtualsoundcheck dialog, enter WING IP and port.
 2. Use default port `2223` unless changed on the console.
 3. Start connect/fetch.
 4. Wait for channel discovery and track creation/update.
 
-![Wing Connector dialog](images/wing-connector.png)
+![COLAB.wing.reaper.virtualsoundcheck dialog](images/wing-connector.png)
 
 Expected result:
 

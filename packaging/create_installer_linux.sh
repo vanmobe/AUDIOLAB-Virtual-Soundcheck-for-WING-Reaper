@@ -7,7 +7,7 @@ OUT_DIR="${3:-releases}"
 
 PLUGIN_NAME="reaper_wingconnector.so"
 CONFIG_NAME="config.json"
-PACKAGE_NAME="wingconnector"
+PACKAGE_NAME="colab-wing-reaper-virtualsoundcheck"
 ARCH="${ARCH_OVERRIDE:-$(dpkg --print-architecture)}"
 
 if [[ ! -f "$STAGE_DIR/$PLUGIN_NAME" ]]; then
@@ -22,10 +22,11 @@ fi
 mkdir -p "$OUT_DIR"
 TMP_ROOT="$(mktemp -d)"
 PKG_DIR="$TMP_ROOT/${PACKAGE_NAME}_${VERSION}_${ARCH}"
-mkdir -p "$PKG_DIR/DEBIAN" "$PKG_DIR/usr/share/wingconnector"
+SHARE_DIR="/usr/share/${PACKAGE_NAME}"
+mkdir -p "$PKG_DIR/DEBIAN" "$PKG_DIR${SHARE_DIR}"
 
-cp "$STAGE_DIR/$PLUGIN_NAME" "$PKG_DIR/usr/share/wingconnector/$PLUGIN_NAME"
-cp "$STAGE_DIR/$CONFIG_NAME" "$PKG_DIR/usr/share/wingconnector/$CONFIG_NAME"
+cp "$STAGE_DIR/$PLUGIN_NAME" "$PKG_DIR${SHARE_DIR}/$PLUGIN_NAME"
+cp "$STAGE_DIR/$CONFIG_NAME" "$PKG_DIR${SHARE_DIR}/$CONFIG_NAME"
 
 cat > "$PKG_DIR/DEBIAN/control" << EOF
 Package: ${PACKAGE_NAME}
@@ -34,15 +35,15 @@ Section: sound
 Priority: optional
 Architecture: ${ARCH}
 Maintainer: CO LAB <noreply@example.com>
-Description: Wing Connector REAPER extension for Behringer Wing
- Installs the REAPER Wing Connector plugin and config file.
+Description: COLAB.wing.reaper.virtualsoundcheck REAPER extension for Behringer Wing
+ Installs the REAPER COLAB.wing.reaper.virtualsoundcheck plugin and config file.
 EOF
 
 cat > "$PKG_DIR/DEBIAN/postinst" << 'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-SOURCE_DIR="/usr/share/wingconnector"
+SOURCE_DIR="/usr/share/colab-wing-reaper-virtualsoundcheck"
 for home_dir in /home/*; do
   [[ -d "$home_dir" ]] || continue
   user_name="$(basename "$home_dir")"
@@ -78,7 +79,7 @@ exit 0
 EOF
 chmod 755 "$PKG_DIR/DEBIAN/postrm"
 
-OUT_FILE="$OUT_DIR/wingconnector_${VERSION}_${ARCH}.deb"
+OUT_FILE="$OUT_DIR/colab-wing-reaper-virtualsoundcheck_${VERSION}_${ARCH}.deb"
 dpkg-deb --build "$PKG_DIR" "$OUT_FILE" >/dev/null
 rm -rf "$TMP_ROOT"
 

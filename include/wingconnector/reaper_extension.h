@@ -115,13 +115,13 @@ private:
         int cc_number;
     };
     static constexpr MidiAction MIDI_ACTIONS[] = {
-        {40157, "Wing: Set Marker", 20},
-        {40172, "Wing: Previous Marker", 21},
-        {40173, "Wing: Next Marker", 22},
-        {1013, "Wing: Record", 23},
-        {1016, "Wing: Stop", 24},
-        {1007, "Wing: Play", 25},
-        {1008, "Wing: Pause", 26}
+        {40157, "COLAB.wing.reaper.virtualsoundcheck: Set Marker", 20},
+        {40172, "COLAB.wing.reaper.virtualsoundcheck: Previous Marker", 21},
+        {40173, "COLAB.wing.reaper.virtualsoundcheck: Next Marker", 22},
+        {1013, "COLAB.wing.reaper.virtualsoundcheck: Record", 23},
+        {1016, "COLAB.wing.reaper.virtualsoundcheck: Stop", 24},
+        {1007, "COLAB.wing.reaper.virtualsoundcheck: Play", 25},
+        {1008, "COLAB.wing.reaper.virtualsoundcheck: Pause", 26}
     };
     
     void RegisterMidiShortcuts();

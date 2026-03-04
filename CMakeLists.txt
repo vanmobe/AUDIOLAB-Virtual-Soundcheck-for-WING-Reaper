@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 
-project(WingConnector VERSION 1.0.0 LANGUAGES CXX)
+project(COLABWingReaperVirtualSoundcheck VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -207,7 +207,7 @@ install(FILES config.json
 )
 
 # Print build info
-message(STATUS "WingConnector ${PROJECT_VERSION}")
+message(STATUS "COLAB.wing.reaper.virtualsoundcheck ${PROJECT_VERSION}")
 message(STATUS "Building for: ${CMAKE_SYSTEM_NAME}")
 message(STATUS "Extension suffix: ${EXTENSION_SUFFIX}")
 message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
