@@ -209,6 +209,10 @@ bool ReaperExtension::ConnectToWing() {
     Log("Wing Connector: Connecting to Wing...\n");
     status_message_ = "Connecting...";
     
+    // Wing OSC is fixed to 2223.
+    config_.wing_port = 2223;
+    config_.listen_port = 2223;
+
     // Create OSC handler
     osc_handler_ = std::make_unique<WingOSC>(
         config_.wing_ip,
@@ -440,6 +444,127 @@ bool ReaperExtension::CheckOutputModeAvailability(const std::string& output_mode
     details = mode + " mode available in REAPER device I/O (" +
               std::to_string(available_inputs) + " in / " +
               std::to_string(available_outputs) + " out).";
+    return true;
+}
+
+bool ReaperExtension::ValidateLiveRecordingSetup(std::string& details) {
+    if (!connected_ || !osc_handler_) {
+        details = "Not connected to Wing.";
+        return false;
+    }
+
+    // Refresh channel/ALT state from the console before validating.
+    osc_handler_->QueryAllChannels(config_.channel_count);
+    std::this_thread::sleep_for(std::chrono::milliseconds(kQueryResponseWaitMs));
+
+    const auto& channel_data = osc_handler_->GetChannelData();
+    if (channel_data.empty()) {
+        details = "No channel data received from Wing.";
+        return false;
+    }
+
+    const bool card_mode = (config_.soundcheck_output_mode == "CARD");
+    std::set<std::string> accepted_alt_groups;
+    if (card_mode) {
+        accepted_alt_groups.insert("CARD");
+        accepted_alt_groups.insert("CRD");
+    } else {
+        accepted_alt_groups.insert("USB");
+    }
+
+    // Gather channels that are wired for live/soundcheck switching.
+    std::set<int> expected_track_inputs_1based;
+    int routable_channels = 0;
+    int alt_configured_channels = 0;
+    for (const auto& [ch_num, ch] : channel_data) {
+        (void)ch_num;
+        if (ch.primary_source_group.empty() || ch.primary_source_group == "OFF" || ch.primary_source_input <= 0) {
+            continue;
+        }
+        routable_channels++;
+
+        if (accepted_alt_groups.count(ch.alt_source_group) > 0 && ch.alt_source_input > 0) {
+            alt_configured_channels++;
+            expected_track_inputs_1based.insert(ch.alt_source_input);
+        }
+    }
+
+    if (routable_channels == 0) {
+        details = "Wing has no routable input channels.";
+        return false;
+    }
+
+    if (expected_track_inputs_1based.empty()) {
+        details = "Wing ALT sources are not configured for " + std::string(card_mode ? "CARD" : "USB") + ".";
+        return false;
+    }
+
+    // Validate REAPER tracks against expected I/O mapping:
+    // - Track record input should map to ALT input
+    // - Track should have a matching hardware output send
+    ReaProject* proj = EnumProjects(-1, nullptr, 0);
+    if (!proj) {
+        details = "No active REAPER project.";
+        return false;
+    }
+
+    int matching_tracks = 0;
+    std::set<int> matched_inputs_1based;
+    const int track_count = CountTracks(proj);
+    for (int i = 0; i < track_count; ++i) {
+        MediaTrack* track = GetTrack(proj, i);
+        if (!track) {
+            continue;
+        }
+
+        int rec_input = (int)GetMediaTrackInfo_Value(track, "I_RECINPUT");
+        if (rec_input < 0) {
+            continue;
+        }
+
+        const int rec_input_index = rec_input & 0x3FF;  // 0-based device channel index
+        const int rec_input_1based = rec_input_index + 1;
+        if (expected_track_inputs_1based.count(rec_input_1based) == 0) {
+            continue;
+        }
+
+        bool has_matching_hw_send = false;
+        const int hw_send_count = GetTrackNumSends(track, 1);
+        for (int s = 0; s < hw_send_count; ++s) {
+            const int dst = (int)GetTrackSendInfo_Value(track, 1, s, "I_DSTCHAN");
+            const int dst_index = dst & 0x3FF;  // mono/stereo encoded in high bits
+            if (dst_index == rec_input_index) {
+                has_matching_hw_send = true;
+                break;
+            }
+        }
+
+        if (!has_matching_hw_send) {
+            continue;
+        }
+
+        matching_tracks++;
+        matched_inputs_1based.insert(rec_input_1based);
+    }
+
+    if (matching_tracks == 0 || matched_inputs_1based.empty()) {
+        details = "No REAPER tracks match Wing ALT input/hardware routing.";
+        return false;
+    }
+
+    if (matched_inputs_1based.size() < expected_track_inputs_1based.size()) {
+        std::ostringstream msg;
+        msg << "Partial setup: matched " << matched_inputs_1based.size()
+            << " of " << expected_track_inputs_1based.size()
+            << " expected ALT-mapped input routes.";
+        details = msg.str();
+        return false;
+    }
+
+    std::ostringstream ok;
+    ok << "Validated: " << alt_configured_channels << " Wing channels have ALT routing and "
+       << matching_tracks << " REAPER tracks match live I/O routing.";
+    details = ok.str();
     return true;
 }
 
@@ -700,19 +825,15 @@ void ReaperExtension::ShowSettings() {
     fflush(dbg);
     
     char ip_buffer[256];
-    char port_buffer[16];
     
     strncpy(ip_buffer, config_.wing_ip.c_str(), sizeof(ip_buffer) - 1);
     ip_buffer[sizeof(ip_buffer) - 1] = '\0';
-    
-    snprintf(port_buffer, sizeof(port_buffer), "%u", config_.listen_port);
     fprintf(dbg, "[ShowSettings] Buffers prepared, calling ShowSettingsDialog\n");
     fflush(dbg);
     
     // Show native Cocoa dialog
-    if (ShowSettingsDialog(config_.wing_ip.c_str(), config_.listen_port,
-                          ip_buffer, sizeof(ip_buffer),
-                          port_buffer, sizeof(port_buffer))) {
+    if (ShowSettingsDialog(config_.wing_ip.c_str(),
+                          ip_buffer, sizeof(ip_buffer))) {
         fprintf(dbg, "[ShowSettings] Dialog confirmed\n");
         fflush(dbg);
         // Validate IP
@@ -722,18 +843,10 @@ void ReaperExtension::ShowSettings() {
                           "Wing Connector - Error", 0);
             return;
         }
-        
-        // Validate port
-        int new_port = atoi(port_buffer);
-        if (new_port < 1024 || new_port > 65535) {
-            ShowMessageBox("Invalid port number.\nPlease enter a value between 1024 and 65535.", 
-                          "Wing Connector - Error", 0);
-            return;
-        }
-        
         // Update configuration
         config_.wing_ip = new_ip;
-        config_.listen_port = static_cast<uint16_t>(new_port);
+        config_.wing_port = 2223;
+        config_.listen_port = 2223;
         
         // Save to file
         const std::string config_path = WingConfig::GetConfigPath();
@@ -742,10 +855,9 @@ void ReaperExtension::ShowSettings() {
             snprintf(success_msg, sizeof(success_msg),
                 "Settings saved successfully!\n\n"
                 "IP: %s\n"
-                "Port: %d\n\n"
+                "OSC Port: 2223\n\n"
                 "Changes will apply on next connection.",
-                config_.wing_ip.c_str(),
-                config_.listen_port);
+                config_.wing_ip.c_str());
             
             ShowMessageBox(success_msg, "Wing Connector - Settings Saved", 0);
             Log("Wing Connector: Settings updated from dialog\n");
@@ -765,10 +877,9 @@ void ReaperExtension::ShowSettings() {
         "Wing Connector Settings\n\n"
         "Current Configuration:\n"
         "  Wing IP: %s\n"
-        "  Listen Port: %u\n"
+        "  OSC Port: 2223\n"
         "\nEdit config.json to change settings.\n",
-        config_.wing_ip.c_str(),
-        config_.listen_port);
+        config_.wing_ip.c_str());
     
     ShowMessageBox(settings_msg, "Wing Connector - Settings", 0);
     #endif

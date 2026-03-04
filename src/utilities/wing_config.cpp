@@ -32,13 +32,15 @@ bool WingConfig::LoadFromFile(const std::string& filepath) {
         
         // Extract values with defaults
         wing_ip = config.value("wing_ip", "127.0.0.1");
-        wing_port = config.value("wing_port", 9000);
-        listen_port = config.value("listen_port", 9001);
+        // Wing OSC port is fixed to 2223; keep ports constant in-memory.
+        wing_port = 2223;
+        listen_port = 2223;
         channel_count = config.value("channel_count", 48);
         timeout_ms = config.value("timeout", 10) * 1000;  // Convert to ms
         track_prefix = config.value("track_prefix", "");
         include_channels = config.value("include_channels", "");
         exclude_channels = config.value("exclude_channels", "");
+        soundcheck_output_mode = config.value("soundcheck_output_mode", "USB");
         create_stereo_pairs = config.value("create_stereo_pairs", true);
         color_tracks = config.value("color_tracks", true);
         configure_midi_actions = config.value("configure_midi_actions", false);
@@ -71,13 +73,12 @@ bool WingConfig::SaveToFile(const std::string& filepath) {
         // Create JSON object
         json config;
         config["wing_ip"] = wing_ip;
-        config["wing_port"] = wing_port;
-        config["listen_port"] = listen_port;
         config["channel_count"] = channel_count;
         config["timeout"] = timeout_ms / 1000;  // Convert to seconds
         config["track_prefix"] = track_prefix;
         config["color_tracks"] = color_tracks;
         config["create_stereo_pairs"] = create_stereo_pairs;
+        config["soundcheck_output_mode"] = soundcheck_output_mode;
         config["include_channels"] = include_channels;
         config["exclude_channels"] = exclude_channels;
         config["configure_midi_actions"] = configure_midi_actions;

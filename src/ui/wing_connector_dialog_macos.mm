@@ -134,6 +134,8 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     NSTextField* statusLabel;
     NSButton* setupSoundcheckButton;
     NSButton* toggleSoundcheckButton;
+    NSButton* connectButton;
+    NSTextField* setupSoundcheckDescriptionLabel;
     NSTextView* activityLogView;
     NSScrollView* logScrollView;
     NSSegmentedControl* outputModeControl;
@@ -141,13 +143,16 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     
     BOOL isConnected;
     BOOL isWorking;  // Prevents re-entrant button clicks while an operation is in progress
-    BOOL soundcheckSetupComplete;  // Tracks if live recording setup has been done
+    BOOL liveSetupValidated;  // True when Wing + REAPER routing validate as a complete live setup
+    BOOL validationInProgress;  // Prevent overlapping auto-connect/validation runs
 }
 
 - (instancetype)init;
 - (void)setupUI;
 - (void)updateConnectionStatus;
 - (void)updateToggleSoundcheckButtonLabel;
+- (void)updateSetupSoundcheckButtonLabel;
+- (void)refreshLiveSetupValidation;
 - (void)appendToLog:(NSString*)message;
 - (void)setWorkingState:(BOOL)working;
 
@@ -155,6 +160,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 - (void)populateDropdownWithItems:(NSArray*)items ips:(NSArray*)ips;
 - (void)onWingDropdownChanged:(id)sender;
 - (void)onScanClicked:(id)sender;
+- (void)onConnectClicked:(id)sender;
 - (NSString*)selectedWingIP;
 
 - (void)onSetupSoundcheckClicked:(id)sender;
@@ -190,7 +196,8 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     discoveredIPs = [[NSMutableArray alloc] init];  // Explicitly retain
     isConnected = NO;
     isWorking = NO;
-    soundcheckSetupComplete = NO;
+    liveSetupValidated = NO;
+    validationInProgress = NO;
     
     // MUST call setupUI FIRST to initialize activityLogView!
     [self setupUI];
@@ -229,6 +236,8 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [statusLabel release];
     [setupSoundcheckButton release];
     [toggleSoundcheckButton release];
+    [connectButton release];
+    [setupSoundcheckDescriptionLabel release];
     [activityLogView release];
     [logScrollView release];
     [outputModeControl release];
@@ -326,6 +335,13 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [statusLabel setBackgroundColor:[NSColor clearColor]];
     [statusLabel setTextColor:[NSColor labelColor]];
     [contentView addSubview:statusLabel];
+
+    connectButton = [[NSButton alloc] initWithFrame:NSMakeRect(560, yPos - 2, 120, 28)];
+    [connectButton setBezelStyle:NSBezelStyleRounded];
+    [connectButton setTitle:@"Connect"];
+    [connectButton setTarget:self];
+    [connectButton setAction:@selector(onConnectClicked:)];
+    [contentView addSubview:connectButton];
     yPos -= 30;
     
     // ===== ACTIONS =====
@@ -398,15 +414,15 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [setupSoundcheckButton setAction:@selector(onSetupSoundcheckClicked:)];
     [contentView addSubview:setupSoundcheckButton];
     
-    NSTextField* soundcheckDesc = [[NSTextField alloc] initWithFrame:NSMakeRect(230, yPos+8, 450, 20)];
-    [soundcheckDesc setStringValue:@"Configure live recording tracks and routing"];
-    [soundcheckDesc setFont:[NSFont systemFontOfSize:11]];
-    [soundcheckDesc setBezeled:NO];
-    [soundcheckDesc setEditable:NO];
-    [soundcheckDesc setSelectable:NO];
-    [soundcheckDesc setBackgroundColor:[NSColor clearColor]];
-    [soundcheckDesc setTextColor:[NSColor secondaryLabelColor]];
-    [contentView addSubview:soundcheckDesc];
+    setupSoundcheckDescriptionLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(230, yPos+8, 450, 20)];
+    [setupSoundcheckDescriptionLabel setStringValue:@"Configure live recording tracks and routing"];
+    [setupSoundcheckDescriptionLabel setFont:[NSFont systemFontOfSize:11]];
+    [setupSoundcheckDescriptionLabel setBezeled:NO];
+    [setupSoundcheckDescriptionLabel setEditable:NO];
+    [setupSoundcheckDescriptionLabel setSelectable:NO];
+    [setupSoundcheckDescriptionLabel setBackgroundColor:[NSColor clearColor]];
+    [setupSoundcheckDescriptionLabel setTextColor:[NSColor secondaryLabelColor]];
+    [contentView addSubview:setupSoundcheckDescriptionLabel];
     yPos -= 42;
     
     // Toggle Soundcheck Button
@@ -469,16 +485,21 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     
     if (isConnected) {
         [statusLabel setStringValue:@"🟢 Connected"];
+        [connectButton setTitle:@"Disconnect"];
     } else {
         [statusLabel setStringValue:@"⚪ Not Connected"];
+        [connectButton setTitle:@"Connect"];
     }
     // Re-enable buttons only if no operation is currently running
     if (!isWorking) {
         [setupSoundcheckButton setEnabled:YES];
         [scanButton setEnabled:YES];
+        [connectButton setEnabled:YES];
         // Toggle button handled in updateToggleSoundcheckButtonLabel
     }
     [self updateToggleSoundcheckButtonLabel];
+    [self updateSetupSoundcheckButtonLabel];
+    [self refreshLiveSetupValidation];
 }
 
 - (void)updateToggleSoundcheckButtonLabel {
@@ -490,20 +511,104 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
         [toggleSoundcheckButton setTitle:@"🎙️ Live Mode"];
     }
     
-    // Only enable if live recording setup has been completed
-    if (soundcheckSetupComplete && !isWorking) {
+    // Only enable when live setup validates against Wing + REAPER state.
+    if (liveSetupValidated && !isWorking) {
         [toggleSoundcheckButton setEnabled:YES];
     } else {
         [toggleSoundcheckButton setEnabled:NO];
     }
 }
 
+- (void)updateSetupSoundcheckButtonLabel {
+    auto& extension = ReaperExtension::Instance();
+    const bool existing_patching_detected = liveSetupValidated || extension.IsSoundcheckModeEnabled();
+    if (existing_patching_detected) {
+        [setupSoundcheckButton setTitle:@"Setup Live Recording (Overwrite)"];
+        [setupSoundcheckDescriptionLabel setStringValue:@"⚠ Existing live patching detected; running setup will overwrite routing"];
+        [setupSoundcheckDescriptionLabel setTextColor:[NSColor systemOrangeColor]];
+    } else {
+        [setupSoundcheckButton setTitle:@"Setup Live Recording"];
+        [setupSoundcheckDescriptionLabel setStringValue:@"Configure live recording tracks and routing"];
+        [setupSoundcheckDescriptionLabel setTextColor:[NSColor secondaryLabelColor]];
+    }
+}
+
+- (void)refreshLiveSetupValidation {
+    // Never block the UI thread with network/OSC queries.
+    if (validationInProgress || isWorking) {
+        return;
+    }
+
+    auto& extension = ReaperExtension::Instance();
+    auto& config = extension.GetConfig();
+
+    std::string candidate_ip;
+    NSString* selectedIP = [self selectedWingIP];
+    if (selectedIP && [selectedIP length] > 0) {
+        candidate_ip = std::string([selectedIP UTF8String]);
+    } else if (!config.wing_ip.empty()) {
+        candidate_ip = config.wing_ip;
+    }
+
+    if (!extension.IsConnected() && candidate_ip.empty()) {
+        liveSetupValidated = NO;
+        [self updateToggleSoundcheckButtonLabel];
+        [self updateSetupSoundcheckButtonLabel];
+        [self appendToLog:@"Live setup validation: NOT READY — no Wing IP available to validate against.\n"];
+        return;
+    }
+
+    validationInProgress = YES;
+    WingConnectorWindowController* blockSelf = self;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        bool connected_now = extension.IsConnected();
+        std::string details;
+
+        // Only validate against Wing when already connected. Explicit connect/disconnect
+        // is controlled by the UI button to keep behavior predictable.
+        if (!connected_now) {
+            config.wing_ip = candidate_ip;
+            details = "Not connected to Wing. Connect first to validate setup.";
+            dispatch_async(dispatch_get_main_queue(), ^{
+                blockSelf->validationInProgress = NO;
+                blockSelf->isConnected = NO;
+                [blockSelf->statusLabel setStringValue:@"⚪ Not Connected"];
+                    blockSelf->liveSetupValidated = NO;
+                    [blockSelf updateToggleSoundcheckButtonLabel];
+                    [blockSelf updateSetupSoundcheckButtonLabel];
+                    [blockSelf appendToLog:[NSString stringWithFormat:@"Live setup validation: NOT READY — %s\n",
+                                            details.c_str()]];
+                });
+            return;
+        }
+
+        bool valid = extension.ValidateLiveRecordingSetup(details);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            blockSelf->validationInProgress = NO;
+            // Avoid changing state while another operation is in progress.
+            if (blockSelf->isWorking) {
+                return;
+            }
+            blockSelf->isConnected = extension.IsConnected() ? YES : NO;
+            [blockSelf->statusLabel setStringValue:blockSelf->isConnected ? @"🟢 Connected" : @"⚪ Not Connected"];
+            blockSelf->liveSetupValidated = valid ? YES : NO;
+            [blockSelf updateToggleSoundcheckButtonLabel];
+            [blockSelf updateSetupSoundcheckButtonLabel];
+            [blockSelf appendToLog:[NSString stringWithFormat:@"Live setup validation: %s — %s\n",
+                                    valid ? "READY" : "NOT READY",
+                                    details.c_str()]];
+        });
+    });
+}
+
 - (void)setWorkingState:(BOOL)working {
     isWorking = working;
     [setupSoundcheckButton setEnabled:!working];
     [scanButton setEnabled:!working];
+    [connectButton setEnabled:!working];
     // Toggle button state depends on both working state and setup completion
     [self updateToggleSoundcheckButtonLabel];
+    [self updateSetupSoundcheckButtonLabel];
 }
 
 - (void)appendToLog:(NSString*)message {
@@ -581,6 +686,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
         for (NSString* title in items) {
             [self appendToLog:[NSString stringWithFormat:@"  \u2022 %@\n", title]];
         }
+        [self refreshLiveSetupValidation];
     }
 }
 
@@ -599,6 +705,60 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [self startDiscoveryScan];
 }
 
+- (void)onConnectClicked:(id)sender {
+    if (isWorking || validationInProgress) return;
+
+    WingConnectorWindowController* blockSelf = self;
+    [self setWorkingState:YES];
+
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        auto& extension = ReaperExtension::Instance();
+        auto& config = extension.GetConfig();
+
+        if (extension.IsConnected()) {
+            extension.DisconnectFromWing();
+            dispatch_async(dispatch_get_main_queue(), ^{
+                blockSelf->liveSetupValidated = NO;
+                [blockSelf appendToLog:@"Disconnected from Wing.\n"];
+                [blockSelf setWorkingState:NO];
+                [blockSelf updateConnectionStatus];
+            });
+            return;
+        }
+
+        NSString* wingIP = [blockSelf selectedWingIP];
+        if (wingIP && [wingIP length] > 0) {
+            config.wing_ip = std::string([wingIP UTF8String]);
+        }
+
+        if (config.wing_ip.empty()) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [blockSelf appendToLog:@"✗ No Wing selected. Press Scan and choose a console first.\n"];
+                [blockSelf setWorkingState:NO];
+                [blockSelf updateConnectionStatus];
+            });
+            return;
+        }
+
+        if (!extension.ConnectToWing()) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [blockSelf appendToLog:[NSString stringWithFormat:@"✗ Connection failed to %s.\n",
+                                        config.wing_ip.c_str()]];
+                [blockSelf setWorkingState:NO];
+                [blockSelf updateConnectionStatus];
+            });
+            return;
+        }
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [blockSelf appendToLog:[NSString stringWithFormat:@"✓ Connected to %s\n",
+                                    config.wing_ip.c_str()]];
+            [blockSelf setWorkingState:NO];
+            [blockSelf updateConnectionStatus];
+        });
+    });
+}
+
 - (NSString*)selectedWingIP {
     if (!wingDropdown || !discoveredIPs) {
         fprintf(stderr, "[WING] ERROR: selectedWingIP called but UI not initialized (wingDropdown=%p, discoveredIPs=%p)\n", 
@@ -614,8 +774,25 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 
 - (void)onSetupSoundcheckClicked:(id)sender {
     if (isWorking) return;  // Prevent re-entrant clicks
+
+    auto& extension = ReaperExtension::Instance();
+    const bool existing_patching_detected = liveSetupValidated || extension.IsSoundcheckModeEnabled();
+    if (existing_patching_detected) {
+        NSAlert* overwriteAlert = [[NSAlert alloc] init];
+        [overwriteAlert setMessageText:@"Existing Live Setup Detected"];
+        [overwriteAlert setInformativeText:@"Wing and REAPER routing appear to already be configured for live recording.\n\nRunning setup again will overwrite current patching/routing. Continue?"];
+        [overwriteAlert addButtonWithTitle:@"Continue"];
+        [overwriteAlert addButtonWithTitle:@"Cancel"];
+        NSInteger result = [overwriteAlert runModal];
+        [overwriteAlert release];
+        if (result != NSAlertFirstButtonReturn) {
+            [self appendToLog:@"Live setup cancelled by user (existing patching preserved).\n"];
+            return;
+        }
+    }
+
     // Update output mode from UI
-    auto& config = ReaperExtension::Instance().GetConfig();
+    auto& config = extension.GetConfig();
     config.soundcheck_output_mode = ([outputModeControl selectedSegment] == 0) ? "USB" : "CARD";
     
     [self appendToLog:[NSString stringWithFormat:@"\n=== Setting up Virtual Soundcheck (%s mode) ===\n",
@@ -701,9 +878,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
             }
             auto& config = extension.GetConfig();
             config.wing_ip = std::string([wingIP UTF8String]);
-            config.wing_port = 2223;
-            config.listen_port = 2223;
-            fprintf(stderr, "[WING] Connecting to %s:2223 (listen on %u)...\n", config.wing_ip.c_str(), config.listen_port); fflush(stderr);
+            fprintf(stderr, "[WING] Connecting to %s:2223...\n", config.wing_ip.c_str()); fflush(stderr);
             if (!extension.ConnectToWing()) {
                 fprintf(stderr, "[WING] ERROR: ConnectToWing failed\n"); fflush(stderr);
                 dispatch_async(dispatch_get_main_queue(), ^{
@@ -784,8 +959,8 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
             extension.SetupSoundcheckFromSelection(blockChannels, setup_soundcheck);
             fprintf(stderr, "[WING] SetupSoundcheckFromSelection complete\n"); fflush(stderr);
             [blockSelf appendToLog:@"✓ Live recording setup complete\n"];
-            blockSelf->soundcheckSetupComplete = YES;
             [blockSelf setWorkingState:NO];
+            [blockSelf refreshLiveSetupValidation];
         });
         fprintf(stderr, "[WING] runSetupSoundcheckFlow complete\n"); fflush(stderr);
     });
@@ -811,8 +986,6 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
             }
             auto& config = extension.GetConfig();
             config.wing_ip = std::string([wingIP UTF8String]);
-            config.wing_port = 2223;
-            config.listen_port = 2223;
             if (!extension.ConnectToWing()) {
                 dispatch_async(dispatch_get_main_queue(), ^{
                     [blockSelf appendToLog:@"✗ Auto-connect failed. Check that the Wing is reachable.\n"];
@@ -841,6 +1014,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
             }
             [blockSelf updateToggleSoundcheckButtonLabel];
             [blockSelf setWorkingState:NO];
+            [blockSelf refreshLiveSetupValidation];
         });
     });
 }

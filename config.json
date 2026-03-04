@@ -1,13 +1,12 @@
 {
   "wing_ip": "192.168.10.210",
-  "wing_port": 2223,
-  "listen_port": 2223,
   "channel_count": 48,
   "create_stereo_pairs": false,
   "timeout": 5,
   "track_prefix": "",
   "color_tracks": true,
   "configure_midi_actions": true,
+  "soundcheck_output_mode": "USB",
   "include_channels": "",
   "exclude_channels": "",
   "default_track_color": {
@@ -15,16 +14,5 @@
     "g": 150,
     "b": 200
   },
-  "_comment": "USR routing mapping: if Wing doesn't respond to OSC queries, use this config",
-  "_comment2": "Format: 'usr_routing': { 'USR:24': 'A:27', 'USR:25': 'A:8' }",
-  "usr_routing": {
-    "USR:25": "A:8",
-    "USR:26": "A:9"
-  },
-  "_stereo_links_comment": "Channels to force as stereo linked pairs for soundcheck testing",
-  "stereo_links": [
-    {"ch1": 8, "ch2": 9},
-    {"ch1": 19, "ch2": 20}
-  ]
+  "_comment": "OSC port is fixed to 2223 on Wing and is not configurable."
 }
-

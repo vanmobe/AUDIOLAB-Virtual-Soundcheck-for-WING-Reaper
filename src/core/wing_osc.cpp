@@ -1206,9 +1206,7 @@ std::pair<std::string, int> WingOSC::ResolveRoutingChain(const std::string& grp,
     if (it == usr_routing_data_.end()) {
         Log("[NOTICE] USR:" + std::to_string(in) + " - Wing console doesn't expose USR routing via OSC");
         Log("         (Wing firmware limitation: /usr/*/in/conn/* queries return no response)");
-        Log("         To fix: either (a) reconfigure channels to not use USR, or");
-        Log("                  (b) add USR routing to config: 'usr_routing': { 'USR:" + 
-            std::to_string(in) + "': 'GROUP:NUMBER' }");
+        Log("         To fix: reconfigure channels to use direct (non-USR) sources.");
         Log("         Falling back to non-resolved USB routing...");
         return {grp, in};
     }
@@ -1677,9 +1675,8 @@ void WingOSC::HandleOscMessage(const std::string& address, const void* data, siz
     };
     
     // Try to parse as channel message: /ch/N/param
-    size_t ch_pos = address.find("/ch/");
-    if (ch_pos != std::string::npos) {
-        size_t num_start = ch_pos + 4;
+    if (address.rfind("/ch/", 0) == 0) {
+        size_t num_start = 4;
         size_t num_end   = address.find('/', num_start);
         if (num_end == std::string::npos) return;  // bare /ch/N with no param
         
@@ -1688,139 +1685,146 @@ void WingOSC::HandleOscMessage(const std::string& address, const void* data, siz
             channel_num = std::stoi(address.substr(num_start, num_end - num_start));
         } catch (...) { return; }
         
-        std::lock_guard<std::mutex> lock(data_mutex_);
-        
-        // Ensure channel exists in map
-        if (channel_data_.find(channel_num) == channel_data_.end()) {
-            channel_data_[channel_num] = ChannelInfo();
-            channel_data_[channel_num].channel_number = channel_num;
-        }
-        
+        bool should_callback = false;
+        ChannelInfo callback_data{};
+
         try {
-            std::string param = address.substr(num_end + 1); // e.g. "name", "col", "icon", "clink", "in/conn/grp"
-            
-            if (param == "name") {
-                // Response: ,s  -> first arg is the name string
-                auto arg = msg->ArgumentsBegin();
-                if (arg != msg->ArgumentsEnd() && arg->IsString()) {
-                    ParseChannelName(channel_num, arg->AsString());
-                }
-            }
-            else if (param == "col") {
-                // Response: ,sfi -> third arg (int) is the color index
-                auto arg = skip(msg->ArgumentsBegin(), 2);
-                if (arg != msg->ArgumentsEnd() && arg->IsInt32()) {
-                    ParseChannelColor(channel_num, arg->AsInt32());
-                }
-            }
-            else if (param == "icon") {
-                // Response: ,sfi -> third arg (int) is the icon index
-                auto arg = skip(msg->ArgumentsBegin(), 2);
-                if (arg != msg->ArgumentsEnd() && arg->IsInt32()) {
-                    channel_data_[channel_num].icon = std::to_string(arg->AsInt32());
-                }
-            }
-            // Routing parameters (virtual soundcheck)
-            // NOTE: stereo_linked is set exclusively by /io/in/{grp}/{num}/mode responses
-            else if (param == "in/conn/grp") {
-                // Primary source group: ,s -> string
-                auto arg = msg->ArgumentsBegin();
-                if (arg != msg->ArgumentsEnd() && arg->IsString()) {
-                    channel_data_[channel_num].primary_source_group = arg->AsString();
-                    Log("Channel " + std::to_string(channel_num) + " primary source: " + arg->AsString());
-                }
-            }
-            else if (param == "in/conn/in") {
-                // Primary source input: Wing may return either string-form (e.g. "fi25=")
-                // or numeric in alternate arg slots. Group-dependent preference:
-                // - USR: prefer string form
-                // - Others: prefer int32 form
-                int parsed_from_string = -1;
-                int parsed_from_int = -1;
+            {
+                std::lock_guard<std::mutex> lock(data_mutex_);
 
-                auto arg0 = msg->ArgumentsBegin();
-                if (arg0 != msg->ArgumentsEnd() && arg0->IsString()) {
-                    std::string in_str = arg0->AsString();
-                    int value = 0;
-                    bool has_digit = false;
-                    for (char c : in_str) {
-                        if (std::isdigit(static_cast<unsigned char>(c))) {
-                            value = value * 10 + (c - '0');
-                            has_digit = true;
+                // Ensure channel exists in map
+                if (channel_data_.find(channel_num) == channel_data_.end()) {
+                    channel_data_[channel_num] = ChannelInfo();
+                    channel_data_[channel_num].channel_number = channel_num;
+                }
+
+                std::string param = address.substr(num_end + 1); // e.g. "name", "col", "icon", "clink", "in/conn/grp"
+
+                if (param == "name") {
+                    // Response: ,s  -> first arg is the name string
+                    auto arg = msg->ArgumentsBegin();
+                    if (arg != msg->ArgumentsEnd() && arg->IsString()) {
+                        ParseChannelName(channel_num, arg->AsString());
+                    }
+                }
+                else if (param == "col") {
+                    // Response: ,sfi -> third arg (int) is the color index
+                    auto arg = skip(msg->ArgumentsBegin(), 2);
+                    if (arg != msg->ArgumentsEnd() && arg->IsInt32()) {
+                        ParseChannelColor(channel_num, arg->AsInt32());
+                    }
+                }
+                else if (param == "icon") {
+                    // Response: ,sfi -> third arg (int) is the icon index
+                    auto arg = skip(msg->ArgumentsBegin(), 2);
+                    if (arg != msg->ArgumentsEnd() && arg->IsInt32()) {
+                        channel_data_[channel_num].icon = std::to_string(arg->AsInt32());
+                    }
+                }
+                // Routing parameters (virtual soundcheck)
+                // NOTE: stereo_linked is set exclusively by /io/in/{grp}/{num}/mode responses
+                else if (param == "in/conn/grp") {
+                    // Primary source group: ,s -> string
+                    auto arg = msg->ArgumentsBegin();
+                    if (arg != msg->ArgumentsEnd() && arg->IsString()) {
+                        channel_data_[channel_num].primary_source_group = arg->AsString();
+                        Log("Channel " + std::to_string(channel_num) + " primary source: " + arg->AsString());
+                    }
+                }
+                else if (param == "in/conn/in") {
+                    // Primary source input: Wing may return either string-form (e.g. "fi25=")
+                    // or numeric in alternate arg slots.
+                    int parsed_from_string = -1;
+                    int parsed_from_int = -1;
+
+                    auto arg0 = msg->ArgumentsBegin();
+                    if (arg0 != msg->ArgumentsEnd() && arg0->IsString()) {
+                        std::string in_str = arg0->AsString();
+                        int value = 0;
+                        bool has_digit = false;
+                        for (char c : in_str) {
+                            if (std::isdigit(static_cast<unsigned char>(c))) {
+                                value = value * 10 + (c - '0');
+                                has_digit = true;
+                            }
+                        }
+                        if (has_digit) {
+                            parsed_from_string = value;
                         }
                     }
-                    if (has_digit) {
-                        parsed_from_string = value;
+
+                    auto arg = skip(msg->ArgumentsBegin(), 2);
+                    if (arg != msg->ArgumentsEnd() && arg->IsInt32()) {
+                        parsed_from_int = arg->AsInt32();
+                    }
+
+                    // Use string arg for all groups - it reliably contains the correct input number.
+                    // The int arg (arg2) gives wrong values for A-group inputs on this firmware.
+                    int parsed_input = (parsed_from_string >= 0) ? parsed_from_string : parsed_from_int;
+
+                    if (parsed_input >= 0) {
+                        channel_data_[channel_num].primary_source_input = parsed_input;
                     }
                 }
-
-                auto arg = skip(msg->ArgumentsBegin(), 2);
-                if (arg != msg->ArgumentsEnd() && arg->IsInt32()) {
-                    parsed_from_int = arg->AsInt32();
+                else if (param == "in/conn/altgrp") {
+                    // ALT source group: ,s -> string
+                    auto arg = msg->ArgumentsBegin();
+                    if (arg != msg->ArgumentsEnd() && arg->IsString()) {
+                        channel_data_[channel_num].alt_source_group = arg->AsString();
+                        Log("Channel " + std::to_string(channel_num) + " ALT source: " + arg->AsString());
+                    }
                 }
+                else if (param == "in/conn/altin") {
+                    // ALT source input: same mixed payload behavior as primary input.
+                    int parsed_from_string = -1;
+                    int parsed_from_int = -1;
 
-                // Use string arg for all groups - it reliably contains the correct input number.
-                // The int arg (arg2) gives wrong values for A-group inputs on this firmware.
-                int parsed_input = (parsed_from_string >= 0) ? parsed_from_string : parsed_from_int;
-
-                if (parsed_input >= 0) {
-                    channel_data_[channel_num].primary_source_input = parsed_input;
-                }
-            }
-            else if (param == "in/conn/altgrp") {
-                // ALT source group: ,s -> string
-                auto arg = msg->ArgumentsBegin();
-                if (arg != msg->ArgumentsEnd() && arg->IsString()) {
-                    channel_data_[channel_num].alt_source_group = arg->AsString();
-                    Log("Channel " + std::to_string(channel_num) + " ALT source: " + arg->AsString());
-                }
-            }
-            else if (param == "in/conn/altin") {
-                // ALT source input: same mixed payload behavior as primary input.
-                int parsed_from_string = -1;
-                int parsed_from_int = -1;
-
-                auto arg0 = msg->ArgumentsBegin();
-                if (arg0 != msg->ArgumentsEnd() && arg0->IsString()) {
-                    std::string in_str = arg0->AsString();
-                    int value = 0;
-                    bool has_digit = false;
-                    for (char c : in_str) {
-                        if (std::isdigit(static_cast<unsigned char>(c))) {
-                            value = value * 10 + (c - '0');
-                            has_digit = true;
+                    auto arg0 = msg->ArgumentsBegin();
+                    if (arg0 != msg->ArgumentsEnd() && arg0->IsString()) {
+                        std::string in_str = arg0->AsString();
+                        int value = 0;
+                        bool has_digit = false;
+                        for (char c : in_str) {
+                            if (std::isdigit(static_cast<unsigned char>(c))) {
+                                value = value * 10 + (c - '0');
+                                has_digit = true;
+                            }
+                        }
+                        if (has_digit) {
+                            parsed_from_string = value;
                         }
                     }
-                    if (has_digit) {
-                        parsed_from_string = value;
+
+                    auto arg = skip(msg->ArgumentsBegin(), 2);
+                    if (arg != msg->ArgumentsEnd() && arg->IsInt32()) {
+                        parsed_from_int = arg->AsInt32();
+                    }
+
+                    // Use string arg for all groups - it reliably contains the correct input number.
+                    int parsed_input = (parsed_from_string >= 0) ? parsed_from_string : parsed_from_int;
+
+                    if (parsed_input >= 0) {
+                        channel_data_[channel_num].alt_source_input = parsed_input;
+                    }
+                }
+                else if (param == "in/set/altsrc") {
+                    // ALT source enabled: ,sfi -> third arg (int) 0=disabled 1=enabled
+                    auto arg = skip(msg->ArgumentsBegin(), 2);
+                    if (arg != msg->ArgumentsEnd() && arg->IsInt32()) {
+                        channel_data_[channel_num].alt_source_enabled = (arg->AsInt32() != 0);
+                        Log("Channel " + std::to_string(channel_num) + " ALT " +
+                            (channel_data_[channel_num].alt_source_enabled ? "enabled" : "disabled"));
                     }
                 }
 
-                auto arg = skip(msg->ArgumentsBegin(), 2);
-                if (arg != msg->ArgumentsEnd() && arg->IsInt32()) {
-                    parsed_from_int = arg->AsInt32();
-                }
-
-                // Use string arg for all groups - it reliably contains the correct input number.
-                int parsed_input = (parsed_from_string >= 0) ? parsed_from_string : parsed_from_int;
-
-                if (parsed_input >= 0) {
-                    channel_data_[channel_num].alt_source_input = parsed_input;
+                should_callback = (channel_callback_ != nullptr);
+                if (should_callback) {
+                    callback_data = channel_data_[channel_num];
                 }
             }
-            else if (param == "in/set/altsrc") {
-                // ALT source enabled: ,sfi -> third arg (int) 0=disabled 1=enabled
-                auto arg = skip(msg->ArgumentsBegin(), 2);
-                if (arg != msg->ArgumentsEnd() && arg->IsInt32()) {
-                    channel_data_[channel_num].alt_source_enabled = (arg->AsInt32() != 0);
-                    Log("Channel " + std::to_string(channel_num) + " ALT " + 
-                        (channel_data_[channel_num].alt_source_enabled ? "enabled" : "disabled"));
-                }
-            }
-            
-            // Trigger callback
-            if (channel_callback_) {
-                channel_callback_(channel_data_[channel_num]);
+
+            if (should_callback) {
+                channel_callback_(callback_data);
             }
         }
         catch (osc::Exception& e) {
@@ -1833,6 +1837,7 @@ void WingOSC::HandleOscMessage(const std::string& address, const void* data, siz
     // mode = "M" (mono), "ST" (stereo), "MS" (mid-side).
     // Maps back to channels by matching primary_source_group/input.
     {
+        std::vector<ChannelInfo> callbacks;
         const std::string kPrefix = "/io/in/";
         if (address.compare(0, kPrefix.size(), kPrefix) == 0) {
             size_t grp_start = kPrefix.size();
@@ -1859,11 +1864,14 @@ void WingOSC::HandleOscMessage(const std::string& address, const void* data, siz
                                         ch_info.primary_source_input == src_num) {
                                         ch_info.stereo_linked = is_stereo;
                                         if (channel_callback_) {
-                                            channel_callback_(ch_info);
+                                            callbacks.push_back(ch_info);
                                         }
                                     }
                                 }
                             }
+                        }
+                        for (const auto& ch_info : callbacks) {
+                            channel_callback_(ch_info);
                         }
                         return;
                     }
@@ -1873,9 +1881,8 @@ void WingOSC::HandleOscMessage(const std::string& address, const void* data, siz
     }
 
     // Try to parse as input source name message: /io/in/A/N/name
-    size_t in_a_pos = address.find("/io/in/A/");
-    if (in_a_pos != std::string::npos) {
-        size_t num_start = in_a_pos + 9;  // After "/io/in/A/"
+    if (address.rfind("/io/in/A/", 0) == 0) {
+        size_t num_start = 9;  // After "/io/in/A/"
         size_t num_end = address.find('/', num_start);
         if (num_end != std::string::npos) {
             int in_num = 0;
@@ -1902,9 +1909,8 @@ void WingOSC::HandleOscMessage(const std::string& address, const void* data, siz
 
     // Try to parse as User Signal input message: /io/in/USR/N/user/grp or /io/in/USR/N/user/in
     // Correct paths discovered from Wing object model (Patrick Gillot manual method)
-    size_t usr_pos = address.find("/io/in/USR/");
-    if (usr_pos != std::string::npos) {
-        size_t num_start = usr_pos + 11;  // After "/io/in/USR/"
+    if (address.rfind("/io/in/USR/", 0) == 0) {
+        size_t num_start = 11;  // After "/io/in/USR/"
         size_t num_end = address.find('/', num_start);
         if (num_end == std::string::npos) return;  // No parameter specified
         

@@ -47,6 +47,7 @@ public:
     void CreateTracksFromSelection(const std::vector<ChannelSelectionInfo>& channels);
     void SetupSoundcheckFromSelection(const std::vector<ChannelSelectionInfo>& channels, bool setup_soundcheck = true);
     bool CheckOutputModeAvailability(const std::string& output_mode, std::string& details) const;
+    bool ValidateLiveRecordingSetup(std::string& details);
     
     // MIDI action mapping
     void EnableMidiActions(bool enable);

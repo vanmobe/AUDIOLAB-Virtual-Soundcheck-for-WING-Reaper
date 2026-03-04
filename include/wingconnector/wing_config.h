@@ -8,6 +8,7 @@ namespace WingConnector {
 
 struct WingConfig {
     std::string wing_ip = "192.168.1.100";
+    // Wing OSC is fixed to 2223 on supported firmware.
     uint16_t wing_port = 2223;
     uint16_t listen_port = 2223;
     int channel_count = 48;
