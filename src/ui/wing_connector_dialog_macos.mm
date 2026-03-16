@@ -51,21 +51,24 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
         int yPos = numChannels * rowHeight - rowHeight;
         for (int i = 0; i < numChannels; i++) {
             const auto& ch = channels[i];
+            const std::string display_name = ch.name.empty()
+                ? ("Channel " + std::to_string(ch.channel_number))
+                : ch.name;
             
             // Create title showing channel info
             NSString* title = nil;
             if (ch.stereo_linked && !ch.partner_source_group.empty()) {
-                title = [NSString stringWithFormat:@"CH%02d: %s (%s%d / %s%d) [Stereo]",
+                title = [NSString stringWithFormat:@"CH%02d  %s  [%s%d / %s%d] [Stereo]",
                          ch.channel_number,
-                         ch.name.c_str(),
+                         display_name.c_str(),
                          ch.source_group.c_str(),
                          ch.source_input,
                          ch.partner_source_group.c_str(),
                          ch.partner_source_input];
             } else {
-                title = [NSString stringWithFormat:@"CH%02d: %s (%s%d)%s",
+                title = [NSString stringWithFormat:@"CH%02d  %s  [%s%d]%s",
                          ch.channel_number,
-                         ch.name.c_str(),
+                         display_name.c_str(),
                          ch.source_group.c_str(),
                          ch.source_input,
                          ch.stereo_linked ? " [Stereo]" : ""];

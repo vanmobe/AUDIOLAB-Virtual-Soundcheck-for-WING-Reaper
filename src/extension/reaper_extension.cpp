@@ -452,19 +452,24 @@ std::vector<ChannelSelectionInfo> ReaperExtension::GetAvailableChannels() {
     osc_handler_->QueryUserSignalInputs(48);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-    // Query source labels for A-inputs used by selected channels (for name fallback).
+    auto use_direct_display_source = [](const std::string& grp) {
+        return grp == "A" || grp == "LCL" || grp == "USR";
+    };
+
+    // Query source labels used by the selection popup (for name fallback).
     std::set<std::pair<std::string, int>> source_endpoints;
     for (const auto& pair : channel_data) {
         const ChannelInfo& ch = pair.second;
         if (ch.primary_source_group.empty() || ch.primary_source_input <= 0) {
             continue;
         }
-        auto resolved = osc_handler_->ResolveRoutingChain(ch.primary_source_group, ch.primary_source_input);
-        source_endpoints.insert(resolved);
-        // For stereo sources, also fetch the name of the partner input (source_input + 1)
+        std::pair<std::string, int> display_source =
+            use_direct_display_source(ch.primary_source_group)
+                ? std::make_pair(ch.primary_source_group, ch.primary_source_input)
+                : osc_handler_->ResolveRoutingChain(ch.primary_source_group, ch.primary_source_input);
+        source_endpoints.insert(display_source);
         if (ch.stereo_linked) {
-            auto partner_resolved = osc_handler_->ResolveRoutingChain(ch.primary_source_group, ch.primary_source_input + 1);
-            source_endpoints.insert(partner_resolved);
+            source_endpoints.insert({display_source.first, display_source.second + 1});
         }
     }
     osc_handler_->QueryInputSourceNames(source_endpoints);
@@ -493,10 +498,13 @@ std::vector<ChannelSelectionInfo> ReaperExtension::GetAvailableChannels() {
         // stereo if source mode was "ST" or "MS" (set by QueryChannelSourceStereo)
         bool is_stereo = ch.stereo_linked;
         
-        // Resolve the source to final endpoint
-        auto resolved = osc_handler_->ResolveRoutingChain(info.source_group, info.source_input);
-        info.source_group = resolved.first;
-        info.source_input = resolved.second;
+        const std::pair<std::string, int> raw_source = {ch.primary_source_group, ch.primary_source_input};
+        const std::pair<std::string, int> display_source =
+            use_direct_display_source(raw_source.first)
+                ? raw_source
+                : osc_handler_->ResolveRoutingChain(raw_source.first, raw_source.second);
+        info.source_group = display_source.first;
+        info.source_input = display_source.second;
 
         // For stereo sources, the partner is always source_input+1 in the same group
         if (is_stereo) {
@@ -504,15 +512,20 @@ std::vector<ChannelSelectionInfo> ReaperExtension::GetAvailableChannels() {
             info.partner_source_input = info.source_input + 1;
         }
 
-        if (ch.name.empty()) {
+        const bool has_generic_channel_name =
+            info.name.empty() || info.name.rfind("CH", 0) == 0 || info.name.rfind("Channel ", 0) == 0;
+        if (has_generic_channel_name) {
             std::string src_name = osc_handler_->GetInputSourceName(info.source_group, info.source_input);
+            if (src_name.empty()) {
+                src_name = osc_handler_->QueryInputSourceNameDirect(info.source_group, info.source_input);
+            }
             if (!src_name.empty()) {
                 info.name = src_name;
             }
         }
 
         info.stereo_linked = is_stereo;
-        info.selected = !info.name.empty() && info.name.rfind("CH", 0) != 0;
+        info.selected = !info.name.empty() && info.name.rfind("CH", 0) != 0 && info.name.rfind("Channel ", 0) != 0;
 
         result.push_back(info);
     }
@@ -793,6 +806,7 @@ void ReaperExtension::SetupSoundcheckFromSelection(const std::vector<ChannelSele
     // Get output mode for display
     std::string output_mode = config_.soundcheck_output_mode;
     std::string output_type = (output_mode == "CARD") ? "CARD" : "USB";
+    const int wing_bank_limit = (output_mode == "CARD") ? 32 : 48;
 
     int required_io_channels = 0;
     for (const auto& alloc : allocations) {
@@ -802,6 +816,23 @@ void ReaperExtension::SetupSoundcheckFromSelection(const std::vector<ChannelSele
         if (alloc.usb_end > required_io_channels) {
             required_io_channels = alloc.usb_end;
         }
+    }
+
+    if (required_io_channels > wing_bank_limit) {
+        std::ostringstream err;
+        err << "AUDIOLAB.wing.reaper.virtualsoundcheck: Selected channels exceed the Wing "
+            << output_type << " bank. Required by current selection: " << required_io_channels
+            << ", available on Wing: " << wing_bank_limit << ".\n";
+        Log(err.str());
+
+        std::ostringstream msg;
+        msg << "Selected " << output_type << " routing needs " << required_io_channels
+            << " channels, but the Wing exposes only " << wing_bank_limit
+            << " " << output_type << " slots.\n\n"
+            << "The last stereo pair would be incomplete or missing.\n\n"
+            << "Choose fewer channels or switch output mode.";
+        ShowMessageBox(msg.str().c_str(), "AUDIOLAB.wing.reaper.virtualsoundcheck - Output Bank Exceeded", 0);
+        return;
     }
 
     const int available_inputs = GetNumAudioInputs();
@@ -1747,6 +1778,25 @@ void ReaperExtension::ConfigureVirtualSoundcheck() {
     
     // Calculate USB allocation with gap backfilling for selected channels
     auto allocations = osc_handler_->CalculateUSBAllocation(selected_channels);
+    const int wing_bank_limit = 48;
+    int required_io_channels = 0;
+    for (const auto& alloc : allocations) {
+        if (!alloc.allocation_note.empty() && alloc.allocation_note.find("ERROR") != std::string::npos) {
+            continue;
+        }
+        if (alloc.usb_end > required_io_channels) {
+            required_io_channels = alloc.usb_end;
+        }
+    }
+    if (required_io_channels > wing_bank_limit) {
+        std::ostringstream msg;
+        msg << "Selected USB routing needs " << required_io_channels
+            << " channels, but the Wing exposes only " << wing_bank_limit
+            << " USB slots.";
+        Log(msg.str() + "\n");
+        ShowMessageBox(msg.str().c_str(), "AUDIOLAB.wing.reaper.virtualsoundcheck - Output Bank Exceeded", 0);
+        return;
+    }
     
     // Show what will be configured
     Log("Channels to configure:\n");

@@ -145,6 +145,7 @@ public:
     bool IsUserSignalStereo(int usr_num) const;  // Check if USR input is stereo (based on odd/even fallback)
     void QueryInputSourceNames(const std::set<std::pair<std::string, int>>& sources);
     std::string GetInputSourceName(const std::string& grp, int in) const;
+    std::string QueryInputSourceNameDirect(const std::string& grp, int in) const;
     
     // Additional Wing commands
     void GetConsoleInfo();
@@ -221,6 +222,7 @@ private:
     bool PerformHandshake();
     bool SendRawPacket(const char* data, std::size_t size);
     void Log(const std::string& message) const;
+    std::pair<std::string, int> ResolveRoutingChainLocked(const std::string& grp, int in) const;
     
     // Format channel number for OSC address (e.g., "01", "02", etc.)
     static std::string FormatChannelNum(int num);

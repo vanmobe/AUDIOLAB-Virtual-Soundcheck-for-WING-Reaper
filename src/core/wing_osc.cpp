@@ -111,6 +111,219 @@ namespace {
 constexpr uint16_t kWingHandshakePort = 2222;  // Wing discovery port
 constexpr const char* kWingHandshakeProbe = "WING?";  // Discovery message
 constexpr int kHandshakeTimeoutMs = 1500;  // Discovery timeout
+
+bool QueryInputModeDirect(const std::string& wing_ip,
+                          uint16_t wing_port,
+                          const std::string& grp,
+                          int input,
+                          std::string& mode_out) {
+#if defined(_WIN32)
+    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock == INVALID_SOCKET) {
+        return false;
+    }
+#else
+    int sock = ::socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        return false;
+    }
+#endif
+
+    auto closeSocket = [&]() {
+#if defined(_WIN32)
+        if (sock != INVALID_SOCKET) {
+            closesocket(sock);
+            sock = INVALID_SOCKET;
+        }
+#else
+        if (sock >= 0) {
+            ::close(sock);
+            sock = -1;
+        }
+#endif
+    };
+
+#if defined(_WIN32)
+    DWORD timeout = 700;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
+               reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+#else
+    timeval tv{};
+    tv.tv_sec = 0;
+    tv.tv_usec = 700000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#endif
+
+    sockaddr_in dest{};
+    dest.sin_family = AF_INET;
+    dest.sin_port = htons(wing_port);
+    if (inet_pton(AF_INET, wing_ip.c_str(), &dest.sin_addr) != 1) {
+        closeSocket();
+        return false;
+    }
+
+    char buffer[256];
+    osc::OutboundPacketStream p(buffer, sizeof(buffer));
+    std::string address = "/io/in/" + grp + "/" + std::to_string(input) + "/mode";
+    p << osc::BeginMessage(address.c_str()) << osc::EndMessage;
+
+    auto bytes_sent = sendto(sock, p.Data(), static_cast<int>(p.Size()), 0,
+                             reinterpret_cast<sockaddr*>(&dest), sizeof(dest));
+#if defined(_WIN32)
+    if (bytes_sent == SOCKET_ERROR) {
+#else
+    if (bytes_sent < 0) {
+#endif
+        closeSocket();
+        return false;
+    }
+
+    char recv_buffer[1024];
+    sockaddr_in from{};
+#if defined(_WIN32)
+    int from_len = sizeof(from);
+    int received = recvfrom(sock, recv_buffer, sizeof(recv_buffer), 0,
+                            reinterpret_cast<sockaddr*>(&from), &from_len);
+    if (received == SOCKET_ERROR) {
+#else
+    socklen_t from_len = sizeof(from);
+    ssize_t received = recvfrom(sock, recv_buffer, sizeof(recv_buffer), 0,
+                                reinterpret_cast<sockaddr*>(&from), &from_len);
+    if (received < 0) {
+#endif
+        closeSocket();
+        return false;
+    }
+
+    try {
+        osc::ReceivedPacket packet(recv_buffer, static_cast<int>(received));
+        if (!packet.IsMessage()) {
+            closeSocket();
+            return false;
+        }
+        osc::ReceivedMessage msg(packet);
+        auto arg = msg.ArgumentsBegin();
+        if (arg != msg.ArgumentsEnd() && arg->IsString()) {
+            mode_out = arg->AsString();
+            closeSocket();
+            return true;
+        }
+    } catch (...) {
+    }
+
+    closeSocket();
+    return false;
+}
+
+bool QueryInputNameDirect(const std::string& wing_ip,
+                          uint16_t wing_port,
+                          const std::string& grp,
+                          int input,
+                          std::string& name_out) {
+#if defined(_WIN32)
+    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock == INVALID_SOCKET) {
+        return false;
+    }
+#else
+    int sock = ::socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        return false;
+    }
+#endif
+
+    auto closeSocket = [&]() {
+#if defined(_WIN32)
+        if (sock != INVALID_SOCKET) {
+            closesocket(sock);
+            sock = INVALID_SOCKET;
+        }
+#else
+        if (sock >= 0) {
+            ::close(sock);
+            sock = -1;
+        }
+#endif
+    };
+
+#if defined(_WIN32)
+    DWORD timeout = 700;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
+               reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+#else
+    timeval tv{};
+    tv.tv_sec = 0;
+    tv.tv_usec = 700000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#endif
+
+    sockaddr_in dest{};
+    dest.sin_family = AF_INET;
+    dest.sin_port = htons(wing_port);
+    if (inet_pton(AF_INET, wing_ip.c_str(), &dest.sin_addr) != 1) {
+        closeSocket();
+        return false;
+    }
+
+    char buffer[256];
+    osc::OutboundPacketStream p(buffer, sizeof(buffer));
+    std::string address = "/io/in/" + grp + "/" + std::to_string(input) + "/name";
+    p << osc::BeginMessage(address.c_str()) << osc::EndMessage;
+
+    auto bytes_sent = sendto(sock, p.Data(), static_cast<int>(p.Size()), 0,
+                             reinterpret_cast<sockaddr*>(&dest), sizeof(dest));
+#if defined(_WIN32)
+    if (bytes_sent == SOCKET_ERROR) {
+#else
+    if (bytes_sent < 0) {
+#endif
+        closeSocket();
+        return false;
+    }
+
+    char recv_buffer[1024];
+    sockaddr_in from{};
+#if defined(_WIN32)
+    int from_len = sizeof(from);
+    int received = recvfrom(sock, recv_buffer, sizeof(recv_buffer), 0,
+                            reinterpret_cast<sockaddr*>(&from), &from_len);
+    if (received == SOCKET_ERROR) {
+#else
+    socklen_t from_len = sizeof(from);
+    ssize_t received = recvfrom(sock, recv_buffer, sizeof(recv_buffer), 0,
+                                reinterpret_cast<sockaddr*>(&from), &from_len);
+    if (received < 0) {
+#endif
+        closeSocket();
+        return false;
+    }
+
+    try {
+        osc::ReceivedPacket packet(recv_buffer, static_cast<int>(received));
+        if (!packet.IsMessage()) {
+            closeSocket();
+            return false;
+        }
+        osc::ReceivedMessage msg(packet);
+        auto arg = msg.ArgumentsBegin();
+        if (arg != msg.ArgumentsEnd() && arg->IsString()) {
+            name_out = arg->AsString();
+            closeSocket();
+            return true;
+        }
+    } catch (...) {
+    }
+
+    closeSocket();
+    return false;
+}
+
+bool IsDirectOutputSourceGroup(const std::string& grp) {
+    static const std::set<std::string> groups = {
+        "LCL", "AUX", "A", "B", "C", "SC", "USB", "CRD", "CARD", "MOD", "REC", "AES", "USR"
+    };
+    return groups.count(grp) > 0;
+}
 }
 
 namespace WingConnector {
@@ -700,24 +913,41 @@ void WingOSC::QueryChannelSourceStereo(int channel_num) {
     // Can be called only after source routing has been queried.
     std::string grp;
     int input = 0;
+    std::string raw_grp;
+    int raw_input = 0;
     {
         std::lock_guard<std::mutex> lock(data_mutex_);
         auto it = channel_data_.find(channel_num);
         if (it == channel_data_.end()) return;
-        grp = it->second.primary_source_group;
-        input = it->second.primary_source_input;
+        raw_grp = it->second.primary_source_group;
+        raw_input = it->second.primary_source_input;
+        auto resolved = ResolveRoutingChainLocked(it->second.primary_source_group,
+                                                  it->second.primary_source_input);
+        grp = resolved.first;
+        input = resolved.second;
     }
     
-    if (grp.empty() || grp == "OFF" || input <= 0) {
+    if (raw_grp.empty() || raw_grp == "OFF" || raw_input <= 0) {
         Log("CH" + std::to_string(channel_num) + ": no source, skipping stereo mode query");
         return;
     }
-    
-    std::string address = "/io/in/" + grp + "/" + std::to_string(input) + "/mode";
-    char buffer[256];
-    osc::OutboundPacketStream p(buffer, 256);
-    p << MakeOscBeginToken(address.c_str()) << MakeOscEndToken();
-    SendRawPacket(p.Data(), p.Size());
+
+    std::string mode;
+    if (!QueryInputModeDirect(wing_ip_, wing_port_, grp, input, mode)) {
+        if (!QueryInputModeDirect(wing_ip_, wing_port_, raw_grp, raw_input, mode)) {
+            Log("CH" + std::to_string(channel_num) + ": stereo mode query failed for " +
+                grp + ":" + std::to_string(input) + " and fallback " +
+                raw_grp + ":" + std::to_string(raw_input));
+            return;
+        }
+    }
+
+    const bool is_stereo = (mode == "ST" || mode == "MS");
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    auto it = channel_data_.find(channel_num);
+    if (it != channel_data_.end()) {
+        it->second.stereo_linked = is_stereo;
+    }
 }
 
 // Channel routing configuration for virtual soundcheck
@@ -1526,6 +1756,11 @@ void WingOSC::QueryUserSignalStereo(int count) {
 }
 
 std::pair<std::string, int> WingOSC::ResolveRoutingChain(const std::string& grp, int in) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    return ResolveRoutingChainLocked(grp, in);
+}
+
+std::pair<std::string, int> WingOSC::ResolveRoutingChainLocked(const std::string& grp, int in) const {
     // If source is NOT a User Signal input, return it as-is
     if (grp != "USR") {
         return {grp, in};
@@ -1545,7 +1780,7 @@ std::pair<std::string, int> WingOSC::ResolveRoutingChain(const std::string& grp,
     const auto& [resolved_grp, resolved_in] = it->second;
     if (resolved_grp == "USR") {
         // Recurse to follow the full chain
-        return ResolveRoutingChain(resolved_grp, resolved_in);
+        return ResolveRoutingChainLocked(resolved_grp, resolved_in);
     }
     
     return {resolved_grp, resolved_in};
@@ -1572,8 +1807,8 @@ void WingOSC::QueryInputSourceNames(const std::set<std::pair<std::string, int>>&
             continue;
         }
 
-        // Currently needed for popup naming; can be extended for other groups later.
-        if (grp != "A") {
+        // Query source labels for directly readable input groups used by the selection popup.
+        if (grp != "A" && grp != "LCL" && grp != "USR") {
             continue;
         }
 
@@ -1594,6 +1829,21 @@ std::string WingOSC::GetInputSourceName(const std::string& grp, int in) const {
     auto it = input_source_names_.find(key);
     if (it != input_source_names_.end()) {
         return it->second;
+    }
+    return "";
+}
+
+std::string WingOSC::QueryInputSourceNameDirect(const std::string& grp, int in) const {
+    if (in <= 0) {
+        return "";
+    }
+    if (grp != "A" && grp != "LCL" && grp != "USR") {
+        return "";
+    }
+
+    std::string name;
+    if (QueryInputNameDirect(wing_ip_, wing_port_, grp, in, name)) {
+        return name;
     }
     return "";
 }
@@ -1696,19 +1946,26 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
             // ===== OUTPUT CONFIGURATION (Wing console sends TO REAPER) =====
             Log("\n         [CONFIGURE " + output_type + " OUTPUTS] (Wing console → REAPER via " + output_type + ")");
             
-            // Resolve left source routing chain (handles USR → A indirection)
-            auto [left_src_grp, left_src_in] = ResolveRoutingChain(ch_info.primary_source_group, ch_info.primary_source_input);
-            // Right source is always the next input in the same group
+            // For output routing, prefer the direct source group as configured on the channel.
+            // User Signal inputs are valid USB/CARD output sources on the Wing and must not be
+            // resolved to CH:* endpoints, which are not queryable/routable here.
+            std::string left_src_grp = ch_info.primary_source_group;
+            int left_src_in = ch_info.primary_source_input;
+            if (!IsDirectOutputSourceGroup(left_src_grp)) {
+                auto resolved = ResolveRoutingChain(ch_info.primary_source_group, ch_info.primary_source_input);
+                left_src_grp = resolved.first;
+                left_src_in = resolved.second;
+                if (left_src_grp != ch_info.primary_source_group || left_src_in != ch_info.primary_source_input) {
+                    Log("           (LEFT  resolved: " + ch_info.primary_source_group + ":" +
+                        std::to_string(ch_info.primary_source_input) + " → " + left_src_grp + ":" +
+                        std::to_string(left_src_in) + ")");
+                }
+            }
+
+            // Right side is the adjacent source in the same source group.
             std::string right_src_grp = left_src_grp;
             int right_src_in = left_src_in + 1;
-            
-            // Log the resolved routing if it was different from original
-            if (left_src_grp != ch_info.primary_source_group || left_src_in != ch_info.primary_source_input) {
-                Log("           (LEFT  resolved: " + ch_info.primary_source_group + ":" + 
-                    std::to_string(ch_info.primary_source_input) + " → " + left_src_grp + ":" + 
-                    std::to_string(left_src_in) + ")");
-                Log("           (RIGHT derived: " + right_src_grp + ":" + std::to_string(right_src_in) + ")");
-            }
+            Log("           (RIGHT derived: " + right_src_grp + ":" + std::to_string(right_src_in) + ")");
             
             // Configure output 1 (LEFT channel)
             Log("           " + output_type + " OUTPUT " + std::to_string(alloc.usb_start) + 
@@ -1830,14 +2087,19 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
             // ===== OUTPUT CONFIGURATION (Wing console sends TO REAPER) =====
             Log("\n       [CONFIGURE " + output_type + " OUTPUT] (Wing console → REAPER via " + output_type + ")");
             
-            // Resolve routing chain (in case it uses a USR input)
-            auto [src_grp, src_in] = ResolveRoutingChain(ch_info.primary_source_group, ch_info.primary_source_input);
-            
-            // Log the resolved routing if it was different from original
-            if (src_grp != ch_info.primary_source_group || src_in != ch_info.primary_source_input) {
-                Log("         (resolved: " + ch_info.primary_source_group + ":" + 
-                    std::to_string(ch_info.primary_source_input) + " → " + src_grp + ":" + 
-                    std::to_string(src_in) + ")");
+            // Prefer the direct configured source when routing outputs. In particular, USR
+            // sources are routable on Wing USB/CARD outputs and should stay as USR:*.
+            std::string src_grp = ch_info.primary_source_group;
+            int src_in = ch_info.primary_source_input;
+            if (!IsDirectOutputSourceGroup(src_grp)) {
+                auto resolved = ResolveRoutingChain(ch_info.primary_source_group, ch_info.primary_source_input);
+                src_grp = resolved.first;
+                src_in = resolved.second;
+                if (src_grp != ch_info.primary_source_group || src_in != ch_info.primary_source_input) {
+                    Log("         (resolved: " + ch_info.primary_source_group + ":" +
+                        std::to_string(ch_info.primary_source_input) + " → " + src_grp + ":" +
+                        std::to_string(src_in) + ")");
+                }
             }
             
             Log("         " + output_type + " OUTPUT " + std::to_string(alloc.usb_start) + 
@@ -1983,14 +2245,20 @@ void WingOSC::QueryAllChannels(int count) {
         QueryChannel(i);
     }
     
+    // Query USR routing before stereo detection so routed sources can be
+    // resolve to the final /io/in/{grp}/{num}/mode endpoint.
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    QueryUserSignalInputs(48);
+
     // Second pass: query source stereo mode via /io/in/{grp}/{num}/mode.
-    // Relies on primary_source_group/input being populated from the first pass.
-    // Wait for routing responses to arrive before querying modes.
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // Routing responses can arrive after the first pass, so retry a few times.
     Log("Second pass: querying source stereo modes via /io/in/{grp}/{num}/mode...");
-    for (int i = 1; i <= count; ++i) {
-        QueryChannelSourceStereo(i);
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        for (int i = 1; i <= count; ++i) {
+            QueryChannelSourceStereo(i);
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 }
 
@@ -2273,7 +2541,7 @@ void WingOSC::HandleOscMessage(const std::string& address, const void* data, siz
     
     // Handle /io/in/{grp}/{num}/mode responses: source stereo status.
     // mode = "M" (mono), "ST" (stereo), "MS" (mid-side).
-    // Maps back to channels by matching primary_source_group/input.
+    // Map responses back to channels using both raw and resolved source paths.
     {
         std::vector<ChannelInfo> callbacks;
         const std::string kPrefix = "/io/in/";
@@ -2298,8 +2566,12 @@ void WingOSC::HandleOscMessage(const std::string& address, const void* data, siz
                                 bool is_stereo = (mode_str == "ST" || mode_str == "MS");
                                 std::lock_guard<std::mutex> lock(data_mutex_);
                                 for (auto& [ch_num, ch_info] : channel_data_) {
-                                    if (ch_info.primary_source_group == src_grp &&
-                                        ch_info.primary_source_input == src_num) {
+                                    auto resolved = ResolveRoutingChainLocked(ch_info.primary_source_group,
+                                                                              ch_info.primary_source_input);
+                                    if ((ch_info.primary_source_group == src_grp &&
+                                         ch_info.primary_source_input == src_num) ||
+                                        (resolved.first == src_grp &&
+                                         resolved.second == src_num)) {
                                         ch_info.stereo_linked = is_stereo;
                                         if (channel_callback_) {
                                             callbacks.push_back(ch_info);
@@ -2318,28 +2590,39 @@ void WingOSC::HandleOscMessage(const std::string& address, const void* data, siz
         }
     }
 
-    // Try to parse as input source name message: /io/in/A/N/name
-    if (address.rfind("/io/in/A/", 0) == 0) {
-        size_t num_start = 9;  // After "/io/in/A/"
-        size_t num_end = address.find('/', num_start);
-        if (num_end != std::string::npos) {
-            int in_num = 0;
-            try {
-                in_num = std::stoi(address.substr(num_start, num_end - num_start));
-            } catch (...) {
-                in_num = 0;
-            }
-
-            if (in_num > 0) {
-                std::string param = address.substr(num_end + 1);
-                if (param == "name") {
-                    auto* msg_local = static_cast<const osc::ReceivedMessage*>(data);
-                    auto arg = msg_local->ArgumentsBegin();
-                    if (arg != msg_local->ArgumentsEnd() && arg->IsString()) {
-                        std::lock_guard<std::mutex> lock(data_mutex_);
-                        input_source_names_["A:" + std::to_string(in_num)] = arg->AsString();
+    // Try to parse as input source name message: /io/in/{grp}/{n}/name
+    {
+        const std::string kPrefix = "/io/in/";
+        if (address.rfind(kPrefix, 0) == 0) {
+            size_t grp_start = kPrefix.size();
+            size_t grp_end = address.find('/', grp_start);
+            if (grp_end != std::string::npos) {
+                std::string grp = address.substr(grp_start, grp_end - grp_start);
+                size_t num_start = grp_end + 1;
+                size_t num_end = address.find('/', num_start);
+                if (num_end != std::string::npos) {
+                    int in_num = 0;
+                    try {
+                        in_num = std::stoi(address.substr(num_start, num_end - num_start));
+                    } catch (...) {
+                        in_num = 0;
                     }
-                    return;
+
+                    if (in_num > 0) {
+                        std::string param = address.substr(num_end + 1);
+                        if (param == "name" &&
+                            grp != "USB" &&
+                            grp != "CRD" &&
+                            grp != "CH") {
+                            auto* msg_local = static_cast<const osc::ReceivedMessage*>(data);
+                            auto arg = msg_local->ArgumentsBegin();
+                            if (arg != msg_local->ArgumentsEnd() && arg->IsString()) {
+                                std::lock_guard<std::mutex> lock(data_mutex_);
+                                input_source_names_[grp + ":" + std::to_string(in_num)] = arg->AsString();
+                            }
+                            return;
+                        }
+                    }
                 }
             }
         }
