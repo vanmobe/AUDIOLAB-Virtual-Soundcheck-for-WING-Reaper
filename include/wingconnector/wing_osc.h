@@ -93,7 +93,7 @@ public:
     // Set callback for when channel data is received
     void SetChannelCallback(ChannelDataCallback callback) { channel_callback_ = callback; }
     
-    // Wing-specific OSC commands (based on Patrick Gillot's manual)
+    // Wing-specific OSC commands (based on Patrick-Gilles Maillot's manual)
     void GetChannelName(int channel_num);
     void GetChannelColor(int channel_num);
     void GetChannelConfig(int channel_num);

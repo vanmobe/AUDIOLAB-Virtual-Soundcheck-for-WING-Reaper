@@ -64,7 +64,7 @@ These are useful for future features, but should not be interpreted as fully imp
 ## Sources and Validation
 
 - Behringer WING official documentation
-- Community protocol references (including Patrick-Gilles Maillot material)
+- Community protocol references (including Patrick-Gilles Maillot material) - https://sites.google.com/site/patrickmaillot/wing#h.xitnoyg1gpny
 - Empirical validation in this codebase through integration behavior
 
 When adding new OSC features, verify addresses and value ranges against live console behavior before documenting them as supported.
