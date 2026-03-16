@@ -1,6 +1,6 @@
 /*
  * Wing OSC Communication Implementation
- * Based on Patrick Gillot's Behringer Wing OSC Manual
+ * Based on Patric-Gilles Maillot's Behringer Wing OSC Manual
  * 
  * This module implements the Behringer Wing OSC (Open Sound Control) protocol.
  * It handles:
@@ -821,7 +821,7 @@ void WingOSC::Log(const std::string& message) const {
     Logger::Debug("%s", message.c_str());
 }
 
-// Wing OSC Commands based on Patrick Gillot's manual
+// Wing OSC Commands based on Patrick-Gilles Maillot's manual
 void WingOSC::GetChannelName(int channel_num) {
     std::string ch = FormatChannelNum(channel_num);
     std::string address = "/ch/" + ch + "/name";
@@ -2629,7 +2629,7 @@ void WingOSC::HandleOscMessage(const std::string& address, const void* data, siz
     }
 
     // Try to parse as User Signal input message: /io/in/USR/N/user/grp or /io/in/USR/N/user/in
-    // Correct paths discovered from Wing object model (Patrick Gillot manual method)
+    // Correct paths discovered from Wing object model (Patrick-Gilles Maillot manual method)
     if (address.rfind("/io/in/USR/", 0) == 0) {
         size_t num_start = 11;  // After "/io/in/USR/"
         size_t num_end = address.find('/', num_start);
