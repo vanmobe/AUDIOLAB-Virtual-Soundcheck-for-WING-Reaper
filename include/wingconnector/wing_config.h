@@ -41,6 +41,7 @@ struct WingConfig {
     int sd_lr_left_input = 1;
     int sd_lr_right_input = 2;
     bool sd_auto_record_with_reaper = false;
+    bool show_debug_log = false;
 
     // OSC paths sent to WING (wing_ip:2223)
     std::string osc_warning_path = "/wing/record/warning";

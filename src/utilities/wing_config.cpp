@@ -60,6 +60,7 @@ bool WingConfig::LoadFromFile(const std::string& filepath) {
         sd_lr_left_input = config.value("sd_lr_left_input", 1);
         sd_lr_right_input = config.value("sd_lr_right_input", 2);
         sd_auto_record_with_reaper = config.value("sd_auto_record_with_reaper", false);
+        show_debug_log = config.value("show_debug_log", false);
         osc_warning_path = config.value("osc_warning_path", "/wing/record/warning");
         osc_start_path = config.value("osc_start_path", "/wing/record/start");
         osc_stop_path = config.value("osc_stop_path", "/wing/record/stop");
@@ -125,6 +126,7 @@ bool WingConfig::SaveToFile(const std::string& filepath) {
         config["sd_lr_left_input"] = sd_lr_left_input;
         config["sd_lr_right_input"] = sd_lr_right_input;
         config["sd_auto_record_with_reaper"] = sd_auto_record_with_reaper;
+        config["show_debug_log"] = show_debug_log;
         config["osc_warning_path"] = osc_warning_path;
         config["osc_start_path"] = osc_start_path;
         config["osc_stop_path"] = osc_stop_path;

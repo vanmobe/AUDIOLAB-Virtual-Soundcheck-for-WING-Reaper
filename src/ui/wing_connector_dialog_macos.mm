@@ -144,6 +144,9 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     NSTextField* setupSoundcheckDescriptionLabel;
     NSTextView* activityLogView;
     NSScrollView* logScrollView;
+    NSButton* debugLogToggleButton;
+    NSBox* logSeparator;
+    NSTextField* logHeaderLabel;
     NSSegmentedControl* outputModeControl;
     NSSegmentedControl* midiActionsControl;
     NSSegmentedControl* autoRecordEnableControl;
@@ -177,6 +180,8 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 - (void)refreshLiveSetupValidation;
 - (void)appendToLog:(NSString*)message;
 - (void)setWorkingState:(BOOL)working;
+- (void)updateDebugLogVisibility;
+- (void)onDebugLogToggled:(id)sender;
 
 - (void)startDiscoveryScan;
 - (void)populateDropdownWithItems:(NSArray*)items ips:(NSArray*)ips;
@@ -206,7 +211,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 
 - (instancetype)init {
     // Create the window with modern styling
-    NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 700, 980)
+    NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 700, 760)
                                                      styleMask:(NSWindowStyleMaskTitled |
                                                                NSWindowStyleMaskClosable |
                                                                NSWindowStyleMaskMiniaturizable |
@@ -214,7 +219,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
                                                        backing:NSBackingStoreBuffered
                                                          defer:NO];
     [window setTitle:@"Behringer Wing"];
-    [window setMinSize:NSMakeSize(700, 780)];
+    [window setMinSize:NSMakeSize(700, 760)];
     [window center];
     
     self = [super initWithWindow:window];
@@ -233,6 +238,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     
     // MUST call setupUI FIRST to initialize activityLogView!
     [self setupUI];
+    [self updateDebugLogVisibility];
     [self updateConnectionStatus];
     
     // Set up log callback to capture C++ Log() calls
@@ -270,6 +276,9 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [setupSoundcheckDescriptionLabel release];
     [activityLogView release];
     [logScrollView release];
+    [debugLogToggleButton release];
+    [logSeparator release];
+    [logHeaderLabel release];
     [outputModeControl release];
     [midiActionsControl release];
     [autoRecordEnableControl release];
@@ -716,21 +725,28 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 
     yPos -= 10;
     
-    // ===== ACTIVITY LOG =====
-    NSBox* separator2 = [[NSBox alloc] initWithFrame:NSMakeRect(20, yPos, 660, 1)];
-    [separator2 setBoxType:NSBoxSeparator];
-    [contentView addSubview:separator2];
+    // ===== DEBUG LOG =====
+    logSeparator = [[NSBox alloc] initWithFrame:NSMakeRect(20, yPos, 660, 1)];
+    [logSeparator setBoxType:NSBoxSeparator];
+    [contentView addSubview:logSeparator];
     yPos -= 30;
-    
-    NSTextField* logHeader = [[NSTextField alloc] initWithFrame:NSMakeRect(20, yPos, 200, 20)];
-    [logHeader setStringValue:@"Activity Log"];
-    [logHeader setFont:[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold]];
-    [logHeader setBezeled:NO];
-    [logHeader setEditable:NO];
-    [logHeader setSelectable:NO];
-    [logHeader setBackgroundColor:[NSColor clearColor]];
-    [logHeader setTextColor:[NSColor labelColor]];
-    [contentView addSubview:logHeader];
+
+    debugLogToggleButton = [[NSButton alloc] initWithFrame:NSMakeRect(20, yPos - 2, 180, 24)];
+    [debugLogToggleButton setButtonType:NSButtonTypePushOnPushOff];
+    [debugLogToggleButton setBezelStyle:NSBezelStyleRounded];
+    [debugLogToggleButton setTarget:self];
+    [debugLogToggleButton setAction:@selector(onDebugLogToggled:)];
+    [contentView addSubview:debugLogToggleButton];
+
+    logHeaderLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(220, yPos, 220, 20)];
+    [logHeaderLabel setStringValue:@"Debug Log"];
+    [logHeaderLabel setFont:[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold]];
+    [logHeaderLabel setBezeled:NO];
+    [logHeaderLabel setEditable:NO];
+    [logHeaderLabel setSelectable:NO];
+    [logHeaderLabel setBackgroundColor:[NSColor clearColor]];
+    [logHeaderLabel setTextColor:[NSColor labelColor]];
+    [contentView addSubview:logHeaderLabel];
     yPos -= 30;
     
     // Activity log scroll view and text view
@@ -1223,6 +1239,36 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     } else {
         [self appendToLog:@"⚠ Failed to save config.json\n"];
     }
+}
+
+- (void)updateDebugLogVisibility {
+    auto& config = ReaperExtension::Instance().GetConfig();
+    const BOOL showLog = config.show_debug_log ? YES : NO;
+    [debugLogToggleButton setTitle:(showLog ? @"Hide Debug Log" : @"Show Debug Log")];
+    [logHeaderLabel setHidden:!showLog];
+    [logScrollView setHidden:!showLog];
+
+    NSWindow* window = [self window];
+    if (!window) {
+        return;
+    }
+    NSRect frame = [window frame];
+    const CGFloat collapsedHeight = 760.0;
+    const CGFloat expandedHeight = 980.0;
+    const CGFloat targetHeight = showLog ? expandedHeight : collapsedHeight;
+    if (fabs(NSHeight(frame) - targetHeight) > 1.0) {
+        frame.origin.y += NSHeight(frame) - targetHeight;
+        frame.size.height = targetHeight;
+        [window setFrame:frame display:YES animate:YES];
+    }
+}
+
+- (void)onDebugLogToggled:(id)sender {
+    (void)sender;
+    auto& config = ReaperExtension::Instance().GetConfig();
+    config.show_debug_log = !config.show_debug_log;
+    [self updateDebugLogVisibility];
+    [self persistConfigAndLog:nil];
 }
 
 - (void)onAutoRecordSettingsChanged:(id)sender {
