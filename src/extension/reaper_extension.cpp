@@ -330,6 +330,10 @@ void ReaperExtension::MainThreadTimerTick() {
             Main_OnCommand(midi_cmd, 0);
         }
     }
+
+    const int play_state_after_actions = GetPlayState();
+    const bool is_recording_after_actions = (play_state_after_actions & kReaperPlayStateRecordingBit) != 0;
+    ext.SyncSDRecorderWithReaperState(is_recording_after_actions);
 }
 
 // Connects and verifies OSC reachability only; track creation is user-driven.
@@ -957,6 +961,8 @@ void ReaperExtension::DisconnectFromWing() {
     if (!connected_) {
         return;
     }
+    StopSDRecorderFollow();
+    last_known_reaper_recording_state_ = false;
     StopAutoRecordMonitor();
     
     Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Disconnecting...\n");
@@ -1103,6 +1109,10 @@ void ReaperExtension::StopAutoRecordMonitor() {
 
 void ReaperExtension::ApplyAutoRecordSettings() {
     StopAutoRecordMonitor();
+    if (!config_.sd_auto_record_with_reaper) {
+        StopSDRecorderFollow();
+        last_known_reaper_recording_state_ = false;
+    }
     if (connected_ && config_.auto_record_enabled) {
         StartAutoRecordMonitor();
     }
@@ -1248,10 +1258,6 @@ void ReaperExtension::MonitorAutoRecordLoop() {
                         pending_record_start_ = true;
                         auto_record_started_by_plugin_ = true;
                         record_started_at = std::chrono::steady_clock::now();
-                        if (config_.sd_auto_record_with_reaper && osc_handler_) {
-                            ApplySDRoutingNoDialog();
-                            osc_handler_->StartSDRecorder();
-                        }
                         SendOscToWing(config_, config_.osc_start_path, 1);
                     }
                     above_since = {};
@@ -1308,9 +1314,6 @@ void ReaperExtension::MonitorAutoRecordLoop() {
                            (last_signal_at.time_since_epoch().count() == 0 || now - last_signal_at >= hold_needed) &&
                            now - record_started_at >= min_record_time) {
                     pending_record_stop_ = true;
-                    if (config_.sd_auto_record_with_reaper && osc_handler_) {
-                        osc_handler_->StopSDRecorder();
-                    }
                     SendOscToWing(config_, config_.osc_stop_path, 0);
                     auto_record_started_by_plugin_ = false;
                     ClearLayerState();
@@ -1416,15 +1419,15 @@ void ReaperExtension::ApplyMidiShortcutButtonCommands() {
         return;
     }
     const int layer = std::min(16, std::max(1, config_.warning_flash_cc_layer));
-    // Top row (bu): play/record as toggle, soundcheck/stop as push
-    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 1, 1, MIDI_ACTIONS[0].cc_number, 0, false, true);
-    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 2, 1, MIDI_ACTIONS[1].cc_number, 0, false, true);
+    // Map all assigned CC buttons as push buttons, not toggles.
+    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 1, 1, MIDI_ACTIONS[0].cc_number, 0, false, false);
+    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 2, 1, MIDI_ACTIONS[1].cc_number, 0, false, false);
     osc_handler_->SetUserControlButtonMidiCCToggle(layer, 3, 1, MIDI_ACTIONS[2].cc_number, 0, false, false);
     osc_handler_->SetUserControlButtonMidiCCToggle(layer, 4, 1, MIDI_ACTIONS[3].cc_number, 0, false, false);
     // Bottom row (bd): set/prev/next marker on buttons 1..3
-    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 1, 1, MIDI_ACTIONS[4].cc_number, 0, true, true);
-    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 2, 1, MIDI_ACTIONS[5].cc_number, 0, true, true);
-    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 3, 1, MIDI_ACTIONS[6].cc_number, 0, true, true);
+    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 1, 1, MIDI_ACTIONS[4].cc_number, 0, true, false);
+    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 2, 1, MIDI_ACTIONS[5].cc_number, 0, true, false);
+    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 3, 1, MIDI_ACTIONS[6].cc_number, 0, true, false);
     // Force all mapped button values off so enabling mappings does not trigger stale toggle states.
     for (int b = 1; b <= 4; ++b) {
         osc_handler_->SetUserControlButtonValue(layer, b, 0, false);
@@ -1569,7 +1572,7 @@ void ReaperExtension::RouteMainLRToCardForSDRecording() {
                             ", 2=" + group + ":" + std::to_string(right_input) + "\n";
     Log(msg);
     ShowMessageBox(
-        "Configured CARD 1/2 from Main LR source.\nUse Wing SD recorder to start capture.",
+        "Requested CARD 1/2 routing from Main LR.\nVerify the routing on WING before starting SD capture.",
         "AUDIOLAB.wing.reaper.virtualsoundcheck",
         0
     );
@@ -1586,6 +1589,48 @@ void ReaperExtension::ApplySDRoutingNoDialog() {
     osc_handler_->SetCardOutputSource(2, group, right_input);
     osc_handler_->SetCardOutputName(1, "Main L");
     osc_handler_->SetCardOutputName(2, "Main R");
+}
+
+void ReaperExtension::StartSDRecorderFollow() {
+    if (!config_.sd_auto_record_with_reaper || !connected_ || !osc_handler_) {
+        return;
+    }
+    if (sd_recorder_started_by_plugin_.exchange(true)) {
+        return;
+    }
+
+    ApplySDRoutingNoDialog();
+    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: SD CARD routing applied (best effort; verify on WING).\n");
+    osc_handler_->StartSDRecorder();
+    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: SD recorder start requested (best effort OSC; verify recorder state on WING).\n");
+}
+
+void ReaperExtension::StopSDRecorderFollow() {
+    if (!sd_recorder_started_by_plugin_.exchange(false)) {
+        return;
+    }
+    if (!osc_handler_) {
+        return;
+    }
+    osc_handler_->StopSDRecorder();
+    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: SD recorder stop requested (best effort OSC; verify recorder state on WING).\n");
+}
+
+void ReaperExtension::SyncSDRecorderWithReaperState(bool is_recording_now) {
+    const bool was_recording = last_known_reaper_recording_state_.exchange(is_recording_now);
+
+    if (!config_.sd_auto_record_with_reaper || !connected_ || !osc_handler_) {
+        if (sd_recorder_started_by_plugin_) {
+            StopSDRecorderFollow();
+        }
+        return;
+    }
+
+    if (is_recording_now && !was_recording) {
+        StartSDRecorderFollow();
+    } else if (!is_recording_now && was_recording) {
+        StopSDRecorderFollow();
+    }
 }
 
 double ReaperExtension::ReadCurrentTriggerLevel() {

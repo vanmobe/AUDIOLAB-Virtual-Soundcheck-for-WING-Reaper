@@ -53,6 +53,7 @@ static reaper_plugin_info_t* g_rec = nullptr;
 
 // Command IDs
 static int g_cmd_main_dialog = 0;
+static int g_cmd_route_sd_card = 0;
 
 // ===== COMMAND HOOK (hookcommand2) =====
 /**
@@ -78,7 +79,8 @@ static bool OnAction(KbdSectionInfo* sec, int cmd, int val, int valhw, int relmo
     (void)relmode;
     (void)hwnd;
 
-    Logger::Debug("OnAction() called with cmd=%d, g_cmd_main_dialog=%d", cmd, g_cmd_main_dialog);
+    Logger::Debug("OnAction() called with cmd=%d, g_cmd_main_dialog=%d, g_cmd_route_sd_card=%d",
+                  cmd, g_cmd_main_dialog, g_cmd_route_sd_card);
 
     // Check if this is our AUDIOLAB.wing.reaper.virtualsoundcheck command
     if (cmd == g_cmd_main_dialog) {
@@ -86,6 +88,12 @@ static bool OnAction(KbdSectionInfo* sec, int cmd, int val, int valhw, int relmo
 
         ShowMainDialog();
         return true;  // Command handled
+    }
+
+    if (cmd == g_cmd_route_sd_card) {
+        Logger::Debug("Route SD card command triggered!");
+        ReaperExtension::Instance().RouteMainLRToCardForSDRecording();
+        return true;
     }
 
     return false;  // Not our command, pass to next handler
@@ -118,21 +126,26 @@ static void RegisterCommands() {
     // Register the command hook - REAPER will call OnAction() for all commands
     g_rec->Register("hookcommand2", (void*)OnAction);
     
-    Logger::Debug("Registering custom action");
-    
-    // Define the AUDIOLAB.wing.reaper.virtualsoundcheck action
-    custom_action_register_t action;
-    memset(&action, 0, sizeof(action));
-    
-    action.uniqueSectionId = 0;           // Main action section
-    action.idStr = "_AUDIOLAB_VIRTUALSOUNDCHECK_MAIN_DIALOG";   // Unique ID for this action
-    action.name = "Behringer Wing: Configure Virtual Soundcheck/Recording";  // Menu label
-    
-    // Register and store the action ID for later reference
-    int ret = g_rec->Register("custom_action", &action);
-    g_cmd_main_dialog = ret;
-    
-    Logger::Debug("Custom action registered with ID: %d", ret);
+    Logger::Debug("Registering custom actions");
+
+    auto register_action = [&](const char* id, const char* name) {
+        custom_action_register_t action;
+        memset(&action, 0, sizeof(action));
+        action.uniqueSectionId = 0;
+        action.idStr = id;
+        action.name = name;
+        return g_rec->Register("custom_action", &action);
+    };
+
+    g_cmd_main_dialog = register_action(
+        "_AUDIOLAB_VIRTUALSOUNDCHECK_MAIN_DIALOG",
+        "Behringer Wing: Configure Virtual Soundcheck/Recording");
+    Logger::Debug("Main dialog action registered with ID: %d", g_cmd_main_dialog);
+
+    g_cmd_route_sd_card = register_action(
+        "_AUDIOLAB_VIRTUALSOUNDCHECK_ROUTE_SD_CARD",
+        "AUDIOLAB.wing.reaper.virtualsoundcheck: Route Main LR to CARD 1/2 (SD)");
+    Logger::Debug("SD route action registered with ID: %d", g_cmd_route_sd_card);
     
     // Register keyboard shortcut Ctrl+Shift+W for quick access
     if (g_cmd_main_dialog > 0) {

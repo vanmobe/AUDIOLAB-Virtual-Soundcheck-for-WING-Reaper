@@ -152,6 +152,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     NSTextField* holdField;
     NSPopUpButton* monitorTrackDropdown;
     NSPopUpButton* sdSourceDropdown;
+    NSButton* sdRouteOnConnectCheckbox;
     NSButton* sdAutoRecordCheckbox;
     NSButton* oscOutEnableCheckbox;
     NSTextField* oscHostField;
@@ -276,6 +277,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [holdField release];
     [monitorTrackDropdown release];
     [sdSourceDropdown release];
+    [sdRouteOnConnectCheckbox release];
     [sdAutoRecordCheckbox release];
     [oscOutEnableCheckbox release];
     [oscHostField release];
@@ -638,9 +640,18 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 
     yPos -= 4;
 
-    sdAutoRecordCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(20, yPos + 4, 330, 20)];
+    sdRouteOnConnectCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(20, yPos + 4, 330, 20)];
+    [sdRouteOnConnectCheckbox setButtonType:NSButtonTypeSwitch];
+    [sdRouteOnConnectCheckbox setTitle:@"Route Main LR to CARD 1/2 when connected"];
+    [sdRouteOnConnectCheckbox setState:cfg.sd_lr_route_enabled ? NSControlStateValueOn : NSControlStateValueOff];
+    [sdRouteOnConnectCheckbox setTarget:self];
+    [sdRouteOnConnectCheckbox setAction:@selector(onAutoRecordSettingsChanged:)];
+    [contentView addSubview:sdRouteOnConnectCheckbox];
+    yPos -= 26;
+
+    sdAutoRecordCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(20, yPos + 4, 420, 20)];
     [sdAutoRecordCheckbox setButtonType:NSButtonTypeSwitch];
-    [sdAutoRecordCheckbox setTitle:@"Start/stop WING SD recorder with auto record"];
+    [sdAutoRecordCheckbox setTitle:@"Follow REAPER record start/stop for WING SD recorder"];
     [sdAutoRecordCheckbox setState:cfg.sd_auto_record_with_reaper ? NSControlStateValueOn : NSControlStateValueOff];
     [sdAutoRecordCheckbox setTarget:self];
     [sdAutoRecordCheckbox setAction:@selector(onAutoRecordSettingsChanged:)];
@@ -648,7 +659,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     yPos -= 30;
 
     NSTextField* sdSourceLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(40, yPos + 8, 100, 20)];
-    [sdSourceLabel setStringValue:@"SD source:"];
+    [sdSourceLabel setStringValue:@"SD source (MAIN pair):"];
     [sdSourceLabel setFont:[NSFont systemFontOfSize:11]];
     [sdSourceLabel setBezeled:NO];
     [sdSourceLabel setEditable:NO];
@@ -807,16 +818,18 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 }
 
 - (void)updateAutoTriggerControlsEnabled {
-    const BOOL enabled = (liveSetupValidated && !isWorking) ? YES : NO;
-    [midiActionsControl setEnabled:enabled];
-    [monitorTrackDropdown setEnabled:enabled];
-    [autoRecordEnableControl setEnabled:enabled];
-    [autoRecordModeControl setEnabled:enabled];
-    [thresholdField setEnabled:enabled];
-    [holdField setEnabled:enabled];
-    [ccLayerDropdown setEnabled:enabled];
-    [sdAutoRecordCheckbox setEnabled:enabled];
-    [sdSourceDropdown setEnabled:enabled];
+    const BOOL liveSetupControlsEnabled = (liveSetupValidated && !isWorking) ? YES : NO;
+    const BOOL sdControlsEnabled = isWorking ? NO : YES;
+    [midiActionsControl setEnabled:liveSetupControlsEnabled];
+    [monitorTrackDropdown setEnabled:liveSetupControlsEnabled];
+    [autoRecordEnableControl setEnabled:liveSetupControlsEnabled];
+    [autoRecordModeControl setEnabled:liveSetupControlsEnabled];
+    [thresholdField setEnabled:liveSetupControlsEnabled];
+    [holdField setEnabled:liveSetupControlsEnabled];
+    [ccLayerDropdown setEnabled:liveSetupControlsEnabled];
+    [sdRouteOnConnectCheckbox setEnabled:sdControlsEnabled];
+    [sdAutoRecordCheckbox setEnabled:sdControlsEnabled];
+    [sdSourceDropdown setEnabled:sdControlsEnabled];
 }
 
 - (void)refreshLiveSetupValidation {
@@ -1199,6 +1212,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     config.auto_record_monitor_track = selectedTrackItem ? (int)[selectedTrackItem tag] : 0;
     NSMenuItem* selectedLayerItem = [ccLayerDropdown selectedItem];
     config.warning_flash_cc_layer = selectedLayerItem ? (int)[selectedLayerItem tag] : 1;
+    config.sd_lr_route_enabled = ([sdRouteOnConnectCheckbox state] == NSControlStateValueOn);
     config.sd_auto_record_with_reaper = ([sdAutoRecordCheckbox state] == NSControlStateValueOn);
     NSMenuItem* sdItem = [sdSourceDropdown selectedItem];
     int sdLeft = sdItem ? (int)[sdItem tag] : 1;
