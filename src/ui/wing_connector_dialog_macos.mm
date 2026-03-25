@@ -151,6 +151,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     NSTextField* thresholdField;
     NSTextField* holdField;
     NSPopUpButton* monitorTrackDropdown;
+    NSSegmentedControl* recorderTargetControl;
     NSPopUpButton* sdSourceDropdown;
     NSButton* sdRouteOnConnectCheckbox;
     NSButton* sdAutoRecordCheckbox;
@@ -276,6 +277,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [thresholdField release];
     [holdField release];
     [monitorTrackDropdown release];
+    [recorderTargetControl release];
     [sdSourceDropdown release];
     [sdRouteOnConnectCheckbox release];
     [sdAutoRecordCheckbox release];
@@ -640,18 +642,38 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 
     yPos -= 4;
 
-    sdRouteOnConnectCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(20, yPos + 4, 330, 20)];
+    NSTextField* recorderTargetLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(20, yPos + 8, 110, 20)];
+    [recorderTargetLabel setStringValue:@"Recorder target:"];
+    [recorderTargetLabel setFont:[NSFont systemFontOfSize:11]];
+    [recorderTargetLabel setBezeled:NO];
+    [recorderTargetLabel setEditable:NO];
+    [recorderTargetLabel setSelectable:NO];
+    [recorderTargetLabel setBackgroundColor:[NSColor clearColor]];
+    [contentView addSubview:recorderTargetLabel];
+    [recorderTargetLabel release];
+
+    recorderTargetControl = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(140, yPos + 4, 300, 24)];
+    [recorderTargetControl setSegmentCount:2];
+    [recorderTargetControl setLabel:@"SD (WING-LIVE)" forSegment:0];
+    [recorderTargetControl setLabel:@"USB Recorder" forSegment:1];
+    [recorderTargetControl setSelectedSegment:(cfg.recorder_target == "USBREC") ? 1 : 0];
+    [recorderTargetControl setTarget:self];
+    [recorderTargetControl setAction:@selector(onAutoRecordSettingsChanged:)];
+    [contentView addSubview:recorderTargetControl];
+    yPos -= 32;
+
+    sdRouteOnConnectCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(20, yPos + 4, 380, 20)];
     [sdRouteOnConnectCheckbox setButtonType:NSButtonTypeSwitch];
-    [sdRouteOnConnectCheckbox setTitle:@"Route Main LR to CARD 1/2 when connected"];
+    [sdRouteOnConnectCheckbox setTitle:@"Route Main LR to selected recorder 1/2 when connected"];
     [sdRouteOnConnectCheckbox setState:cfg.sd_lr_route_enabled ? NSControlStateValueOn : NSControlStateValueOff];
     [sdRouteOnConnectCheckbox setTarget:self];
     [sdRouteOnConnectCheckbox setAction:@selector(onAutoRecordSettingsChanged:)];
     [contentView addSubview:sdRouteOnConnectCheckbox];
     yPos -= 26;
 
-    sdAutoRecordCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(20, yPos + 4, 420, 20)];
+    sdAutoRecordCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(20, yPos + 4, 470, 20)];
     [sdAutoRecordCheckbox setButtonType:NSButtonTypeSwitch];
-    [sdAutoRecordCheckbox setTitle:@"Follow REAPER record start/stop for WING SD recorder"];
+    [sdAutoRecordCheckbox setTitle:@"Start/stop selected recorder only for auto-trigger recordings"];
     [sdAutoRecordCheckbox setState:cfg.sd_auto_record_with_reaper ? NSControlStateValueOn : NSControlStateValueOff];
     [sdAutoRecordCheckbox setTarget:self];
     [sdAutoRecordCheckbox setAction:@selector(onAutoRecordSettingsChanged:)];
@@ -659,7 +681,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     yPos -= 30;
 
     NSTextField* sdSourceLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(40, yPos + 8, 100, 20)];
-    [sdSourceLabel setStringValue:@"SD source (MAIN pair):"];
+    [sdSourceLabel setStringValue:@"Source (MAIN pair):"];
     [sdSourceLabel setFont:[NSFont systemFontOfSize:11]];
     [sdSourceLabel setBezeled:NO];
     [sdSourceLabel setEditable:NO];
@@ -827,6 +849,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [thresholdField setEnabled:liveSetupControlsEnabled];
     [holdField setEnabled:liveSetupControlsEnabled];
     [ccLayerDropdown setEnabled:liveSetupControlsEnabled];
+    [recorderTargetControl setEnabled:sdControlsEnabled];
     [sdRouteOnConnectCheckbox setEnabled:sdControlsEnabled];
     [sdAutoRecordCheckbox setEnabled:sdControlsEnabled];
     [sdSourceDropdown setEnabled:sdControlsEnabled];
@@ -1215,6 +1238,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     config.warning_flash_cc_layer = selectedLayerItem ? (int)[selectedLayerItem tag] : 1;
     config.sd_lr_route_enabled = ([sdRouteOnConnectCheckbox state] == NSControlStateValueOn);
     config.sd_auto_record_with_reaper = ([sdAutoRecordCheckbox state] == NSControlStateValueOn);
+    config.recorder_target = ([recorderTargetControl selectedSegment] == 1) ? "USBREC" : "WLIVE";
     NSMenuItem* sdItem = [sdSourceDropdown selectedItem];
     int sdLeft = sdItem ? (int)[sdItem tag] : 1;
     config.sd_lr_group = "MAIN";
@@ -1223,19 +1247,27 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     extension.ApplyAutoRecordSettings();
     extension.SyncMidiActionsToWing();
 
-    const bool sdRouteChanged = (sender == sdRouteOnConnectCheckbox || sender == sdSourceDropdown);
+    const bool sdRouteChanged = (sender == sdRouteOnConnectCheckbox ||
+                                sender == sdSourceDropdown ||
+                                sender == recorderTargetControl);
+    NSString* recorderLabel = ([recorderTargetControl selectedSegment] == 1)
+        ? @"USB recorder"
+        : @"SD card (WING-LIVE)";
     if (sdRouteChanged && extension.IsConnected()) {
         if (config.sd_lr_route_enabled) {
-            extension.ApplySDRoutingNoDialog();
-            [self appendToLog:@"Requested CARD 1/2 routing from Main LR (verify on WING).\n"];
+            extension.ApplyRecorderRoutingNoDialog();
+            [self appendToLog:[NSString stringWithFormat:@"Requested Main LR routing to %@ 1/2 (verify on WING).\n",
+                               recorderLabel]];
         } else {
-            [self appendToLog:@"SD route-on-connect disabled. Existing WING CARD routing was not restored automatically.\n"];
+            [self appendToLog:[NSString stringWithFormat:@"%@ route-on-connect disabled. Existing WING routing was not restored automatically.\n",
+                               recorderLabel]];
         }
     }
 
-    [self appendToLog:[NSString stringWithFormat:@"Auto trigger: %s, mode=%s, source=REAPER, threshold=%.1f dBFS, hold=%dms, track=%d, ccLayer=%d\n",
+    [self appendToLog:[NSString stringWithFormat:@"Auto trigger: %s, mode=%s, source=REAPER, recorder=%@, threshold=%.1f dBFS, hold=%dms, track=%d, ccLayer=%d\n",
                        config.auto_record_enabled ? "ON" : "OFF",
                        config.auto_record_warning_only ? "WARNING" : "RECORD",
+                       recorderLabel,
                        config.auto_record_threshold_db,
                        config.auto_record_hold_ms,
                        config.auto_record_monitor_track,

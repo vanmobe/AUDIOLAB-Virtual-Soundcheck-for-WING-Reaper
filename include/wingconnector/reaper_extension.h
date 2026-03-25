@@ -52,7 +52,7 @@ public:
     bool CheckOutputModeAvailability(const std::string& output_mode, std::string& details) const;
     bool ValidateLiveRecordingSetup(std::string& details);
     void RouteMainLRToCardForSDRecording();
-    void ApplySDRoutingNoDialog();
+    void ApplyRecorderRoutingNoDialog();
     double ReadCurrentTriggerLevel();
     void ApplyAutoRecordSettings();
     void SyncMidiActionsToWing();
@@ -157,9 +157,9 @@ private:
     void ClearMidiShortcutButtonCommands();
     void TriggerManualTransportFlash(int color_index);
     void StopManualTransportFlash();
-    void SyncSDRecorderWithReaperState(bool is_recording_now);
-    void StartSDRecorderFollow();
-    void StopSDRecorderFollow();
+    void SyncExternalRecorderWithReaperState(bool is_recording_now);
+    void StartExternalRecorderFollow();
+    void StopExternalRecorderFollow();
     
     // Callbacks
     void OnChannelDataReceived(const ChannelInfo& channel);
@@ -183,7 +183,7 @@ private:
     std::atomic<long long> suppress_record_cc_until_ms_{0};
     std::atomic<long long> suppress_all_cc_until_ms_{0};
     std::atomic<bool> suppress_midi_processing_{false};
-    std::atomic<bool> sd_recorder_started_by_plugin_{false};
+    std::atomic<bool> external_recorder_started_by_plugin_{false};
     std::atomic<bool> last_known_reaper_recording_state_{false};
     std::unique_ptr<std::thread> manual_transport_flash_thread_;
     std::mutex manual_transport_flash_mutex_;

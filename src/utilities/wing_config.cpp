@@ -55,6 +55,7 @@ bool WingConfig::LoadFromFile(const std::string& filepath) {
         auto_record_poll_ms = config.value("auto_record_poll_ms", 50);
         auto_record_monitor_track = config.value("auto_record_monitor_track", 0);
         sd_lr_route_enabled = config.value("sd_lr_route_enabled", false);
+        recorder_target = config.value("recorder_target", "WLIVE");
         sd_lr_group = config.value("sd_lr_group", "MAIN");
         sd_lr_left_input = config.value("sd_lr_left_input", 1);
         sd_lr_right_input = config.value("sd_lr_right_input", 2);
@@ -119,6 +120,7 @@ bool WingConfig::SaveToFile(const std::string& filepath) {
         config["auto_record_poll_ms"] = auto_record_poll_ms;
         config["auto_record_monitor_track"] = auto_record_monitor_track;
         config["sd_lr_route_enabled"] = sd_lr_route_enabled;
+        config["recorder_target"] = recorder_target;
         config["sd_lr_group"] = sd_lr_group;
         config["sd_lr_left_input"] = sd_lr_left_input;
         config["sd_lr_right_input"] = sd_lr_right_input;

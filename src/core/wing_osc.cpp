@@ -1159,6 +1159,59 @@ void WingOSC::SetCardOutputName(int card_num, const std::string& name) {
     Log("[OSC] " + addr_name + " = " + name);
 }
 
+void WingOSC::SetRecorderOutputSource(int recorder_num, const std::string& grp, int in) {
+    char buffer[256];
+    osc::OutboundPacketStream p(buffer, 256);
+
+    Log("[OSC] SetRecorderOutputSource: RECORDER OUTPUT " + std::to_string(recorder_num) +
+        " routing to " + grp + ":" + std::to_string(in));
+
+    std::string addr_grp = "/io/out/REC/" + std::to_string(recorder_num) + "/grp";
+    p.Clear();
+    p << MakeOscBeginToken(addr_grp.c_str())
+      << grp.c_str()
+      << MakeOscEndToken();
+
+    if (!SendRawPacket(p.Data(), p.Size())) {
+        Log("[ERROR] Failed to set RECORDER " + std::to_string(recorder_num) + " group");
+        return;
+    }
+    Log("[OSC] " + addr_grp + " = " + grp);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+    std::string addr_in = "/io/out/REC/" + std::to_string(recorder_num) + "/in";
+    p.Clear();
+    p << MakeOscBeginToken(addr_in.c_str())
+      << (int32_t)in
+      << MakeOscEndToken();
+
+    if (!SendRawPacket(p.Data(), p.Size())) {
+        Log("[ERROR] Failed to set RECORDER " + std::to_string(recorder_num) + " input");
+        return;
+    }
+    Log("[OSC] " + addr_in + " = " + std::to_string(in));
+}
+
+void WingOSC::SetRecorderOutputName(int recorder_num, const std::string& name) {
+    char buffer[256];
+    osc::OutboundPacketStream p(buffer, 256);
+
+    Log("[OSC] SetRecorderOutputName: RECORDER OUTPUT " + std::to_string(recorder_num) +
+        " name = '" + name + "'");
+
+    std::string addr_name = "/io/out/REC/" + std::to_string(recorder_num) + "/name";
+    p.Clear();
+    p << MakeOscBeginToken(addr_name.c_str())
+      << name.c_str()
+      << MakeOscEndToken();
+
+    if (!SendRawPacket(p.Data(), p.Size())) {
+        Log("[ERROR] Failed to set RECORDER output " + std::to_string(recorder_num) + " name");
+        return;
+    }
+    Log("[OSC] " + addr_name + " = " + name);
+}
+
 void WingOSC::SetCardInputName(int card_num, const std::string& name) {
     char buffer[256];
     osc::OutboundPacketStream p(buffer, 256);
@@ -1237,6 +1290,46 @@ void WingOSC::StopSDRecorder() {
         p << MakeOscBeginToken(path.c_str()) << (int32_t)0 << MakeOscEndToken();
         if (SendRawPacket(p.Data(), p.Size())) {
             Log("SD stop OSC sent: " + path);
+        }
+    }
+}
+
+void WingOSC::StartUSBRecorder() {
+    const std::vector<std::string> paths = {
+        "/rec/$action", "/rec/state"
+    };
+    for (const auto& path : paths) {
+        char buffer[256];
+        osc::OutboundPacketStream p(buffer, 256);
+        p << MakeOscBeginToken(path.c_str());
+        if (path == "/rec/$action") {
+            p << "REC";
+        } else {
+            p << (int32_t)1;
+        }
+        p << MakeOscEndToken();
+        if (SendRawPacket(p.Data(), p.Size())) {
+            Log("USB recorder start OSC sent: " + path);
+        }
+    }
+}
+
+void WingOSC::StopUSBRecorder() {
+    const std::vector<std::string> paths = {
+        "/rec/$action", "/rec/state"
+    };
+    for (const auto& path : paths) {
+        char buffer[256];
+        osc::OutboundPacketStream p(buffer, 256);
+        p << MakeOscBeginToken(path.c_str());
+        if (path == "/rec/$action") {
+            p << "STOP";
+        } else {
+            p << (int32_t)0;
+        }
+        p << MakeOscEndToken();
+        if (SendRawPacket(p.Data(), p.Size())) {
+            Log("USB recorder stop OSC sent: " + path);
         }
     }
 }
@@ -1478,6 +1571,20 @@ void WingOSC::ClearCardOutput(int card_num) {
       << "OFF"
       << MakeOscEndToken();
     
+    SendRawPacket(p.Data(), p.Size());
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+}
+
+void WingOSC::ClearRecorderOutput(int recorder_num) {
+    char buffer[256];
+    osc::OutboundPacketStream p(buffer, 256);
+
+    std::string addr_grp = "/io/out/REC/" + std::to_string(recorder_num) + "/grp";
+    p.Clear();
+    p << MakeOscBeginToken(addr_grp.c_str())
+      << "OFF"
+      << MakeOscEndToken();
+
     SendRawPacket(p.Data(), p.Size());
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
 }
