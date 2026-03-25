@@ -190,6 +190,9 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 - (void)updateSetupSoundcheckButtonLabel;
 - (void)updateAutoTriggerControlsEnabled;
 - (void)refreshLiveSetupValidation;
+- (void)finalizeFormLayout;
+- (void)adjustWindowHeightToFitContent;
+- (void)updateFormLayoutForCurrentWindowSize;
 - (void)appendToLog:(NSString*)message;
 - (void)setWorkingState:(BOOL)working;
 - (void)onDebugLogToggled:(id)sender;
@@ -778,6 +781,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     
     [logScrollView setDocumentView:activityLogView];
     [self createDebugLogWindow];
+    [self finalizeFormLayout];
 }
 
 - (void)updateConnectionStatus {
@@ -1264,13 +1268,92 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 
 - (void)windowDidResize:(NSNotification*)notification {
     (void)notification;
+    [self updateFormLayoutForCurrentWindowSize];
+}
+
+- (void)finalizeFormLayout {
+    if (!formContentView) {
+        return;
+    }
+
+    CGFloat minY = CGFLOAT_MAX;
+    CGFloat maxY = 0.0;
+    for (NSView* subview in [formContentView subviews]) {
+        if ([subview isHidden]) {
+            continue;
+        }
+        const NSRect frame = [subview frame];
+        minY = std::min(minY, NSMinY(frame));
+        maxY = std::max(maxY, NSMaxY(frame));
+    }
+
+    if (minY == CGFLOAT_MAX) {
+        expandedContentHeight = collapsedContentHeight;
+        [self updateFormLayoutForCurrentWindowSize];
+        return;
+    }
+
+    const CGFloat desiredBottomPadding = 24.0;
+    if (minY < desiredBottomPadding) {
+        const CGFloat shift = desiredBottomPadding - minY;
+        for (NSView* subview in [formContentView subviews]) {
+            NSRect frame = [subview frame];
+            frame.origin.y += shift;
+            [subview setFrame:frame];
+        }
+        maxY += shift;
+    }
+
+    const CGFloat desiredTopPadding = 20.0;
+    expandedContentHeight = std::max(collapsedContentHeight, maxY + desiredTopPadding);
+    [self adjustWindowHeightToFitContent];
+    [self updateFormLayoutForCurrentWindowSize];
+}
+
+- (void)adjustWindowHeightToFitContent {
+    NSWindow* window = [self window];
+    if (!window) {
+        return;
+    }
+
+    NSRect currentFrame = [window frame];
+    NSRect currentContentRect = [window contentRectForFrameRect:currentFrame];
+    const CGFloat desiredContentHeight = expandedContentHeight;
+    if (currentContentRect.size.height >= desiredContentHeight) {
+        return;
+    }
+
+    NSScreen* screen = [window screen];
+    if (!screen) {
+        screen = [NSScreen mainScreen];
+    }
+    if (!screen) {
+        return;
+    }
+
+    const NSRect visibleFrame = [screen visibleFrame];
+    NSRect maxContentRect = [window contentRectForFrameRect:visibleFrame];
+    const CGFloat maxContentHeight = maxContentRect.size.height;
+    const CGFloat targetContentHeight = std::min(desiredContentHeight, maxContentHeight);
+    if (targetContentHeight <= currentContentRect.size.height) {
+        return;
+    }
+
+    const CGFloat delta = targetContentHeight - currentContentRect.size.height;
+    currentFrame.origin.y -= delta;
+    currentFrame.size.height += delta;
+    [window setFrame:currentFrame display:NO];
+}
+
+- (void)updateFormLayoutForCurrentWindowSize {
     if (!mainScrollView || !formContentView) {
         return;
     }
     NSSize clipSize = [[mainScrollView contentView] bounds].size;
-    [formContentView setFrame:NSMakeRect(0, 0, std::max(clipSize.width, (CGFloat)700.0), expandedContentHeight)];
+    const CGFloat targetHeight = std::max(expandedContentHeight, clipSize.height);
+    [formContentView setFrame:NSMakeRect(0, 0, std::max(clipSize.width, (CGFloat)700.0), targetHeight)];
     NSClipView* clipView = [mainScrollView contentView];
-    CGFloat topOriginY = std::max(0.0, expandedContentHeight - NSHeight([clipView bounds]));
+    CGFloat topOriginY = std::max(0.0, targetHeight - NSHeight([clipView bounds]));
     [clipView scrollToPoint:NSMakePoint(0, topOriginY)];
     [mainScrollView reflectScrolledClipView:clipView];
 }
