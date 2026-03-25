@@ -144,6 +144,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     // UI Elements
     NSScrollView* mainScrollView;
     WingConnectorFlippedView* formContentView;
+    NSWindow* debugLogWindow;
     NSPopUpButton* wingDropdown;
     NSTextField* manualIPField;
     NSButton* scanButton;
@@ -156,8 +157,6 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     NSTextView* activityLogView;
     NSScrollView* logScrollView;
     NSButton* debugLogToggleButton;
-    NSBox* logSeparator;
-    NSTextField* logHeaderLabel;
     NSSegmentedControl* outputModeControl;
     NSSegmentedControl* midiActionsControl;
     NSSegmentedControl* autoRecordEnableControl;
@@ -193,9 +192,9 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 - (void)refreshLiveSetupValidation;
 - (void)appendToLog:(NSString*)message;
 - (void)setWorkingState:(BOOL)working;
-- (void)updateDebugLogVisibility;
 - (void)onDebugLogToggled:(id)sender;
 - (void)windowDidResize:(NSNotification*)notification;
+- (void)createDebugLogWindow;
 
 - (void)startDiscoveryScan;
 - (void)populateDropdownWithItems:(NSArray*)items ips:(NSArray*)ips;
@@ -250,11 +249,10 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     validationInProgress = NO;
     meterPreviewTimer = nil;
     collapsedContentHeight = 760.0;
-    expandedContentHeight = 980.0;
+    expandedContentHeight = 760.0;
     
     // MUST call setupUI FIRST to initialize activityLogView!
     [self setupUI];
-    [self updateDebugLogVisibility];
     [self updateConnectionStatus];
     
     // Set up log callback to capture C++ Log() calls
@@ -285,6 +283,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [wingDropdown release];
     [mainScrollView release];
     [formContentView release];
+    [debugLogWindow release];
     [manualIPField release];
     [scanButton release];
     [statusLabel release];
@@ -295,8 +294,6 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [activityLogView release];
     [logScrollView release];
     [debugLogToggleButton release];
-    [logSeparator release];
-    [logHeaderLabel release];
     [outputModeControl release];
     [midiActionsControl release];
     [autoRecordEnableControl release];
@@ -756,31 +753,16 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     yPos -= 10;
     
     // ===== DEBUG LOG =====
-    logSeparator = [[NSBox alloc] initWithFrame:NSMakeRect(20, yPos, 660, 1)];
-    [logSeparator setBoxType:NSBoxSeparator];
-    [contentView addSubview:logSeparator];
-    yPos -= 30;
-
     debugLogToggleButton = [[NSButton alloc] initWithFrame:NSMakeRect(20, yPos - 2, 180, 24)];
-    [debugLogToggleButton setButtonType:NSButtonTypePushOnPushOff];
+    [debugLogToggleButton setButtonType:NSButtonTypeMomentaryPushIn];
     [debugLogToggleButton setBezelStyle:NSBezelStyleRounded];
+    [debugLogToggleButton setTitle:@"Open Debug Log"];
     [debugLogToggleButton setTarget:self];
     [debugLogToggleButton setAction:@selector(onDebugLogToggled:)];
     [contentView addSubview:debugLogToggleButton];
-
-    logHeaderLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(220, yPos, 220, 20)];
-    [logHeaderLabel setStringValue:@"Debug Log"];
-    [logHeaderLabel setFont:[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold]];
-    [logHeaderLabel setBezeled:NO];
-    [logHeaderLabel setEditable:NO];
-    [logHeaderLabel setSelectable:NO];
-    [logHeaderLabel setBackgroundColor:[NSColor clearColor]];
-    [logHeaderLabel setTextColor:[NSColor labelColor]];
-    [contentView addSubview:logHeaderLabel];
     yPos -= 30;
-    
-    // Activity log scroll view and text view
-    const int logHeight = std::max(220, yPos - 20);
+
+    const int logHeight = 320;
     logScrollView = [[NSScrollView alloc] initWithFrame:NSMakeRect(20, 20, 660, logHeight)];
     [logScrollView setHasVerticalScroller:YES];
     [logScrollView setHasHorizontalScroller:NO];
@@ -795,7 +777,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [activityLogView setBackgroundColor:[NSColor textBackgroundColor]];
     
     [logScrollView setDocumentView:activityLogView];
-    [contentView addSubview:logScrollView];
+    [self createDebugLogWindow];
 }
 
 - (void)updateConnectionStatus {
@@ -1271,36 +1253,46 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     }
 }
 
-- (void)updateDebugLogVisibility {
-    auto& config = ReaperExtension::Instance().GetConfig();
-    const BOOL showLog = config.show_debug_log ? YES : NO;
-    [debugLogToggleButton setTitle:(showLog ? @"Hide Debug Log" : @"Show Debug Log")];
-    [logHeaderLabel setHidden:!showLog];
-    [logScrollView setHidden:!showLog];
-
-    if (!mainScrollView || !formContentView) {
-        return;
-    }
-    NSSize clipSize = [[mainScrollView contentView] bounds].size;
-    const CGFloat targetHeight = expandedContentHeight;
-    [formContentView setFrame:NSMakeRect(0, 0, std::max(clipSize.width, (CGFloat)700.0), targetHeight)];
-    NSClipView* clipView = [mainScrollView contentView];
-    CGFloat topOriginY = std::max(0.0, targetHeight - NSHeight([clipView bounds]));
-    [clipView scrollToPoint:NSMakePoint(0, topOriginY)];
-    [mainScrollView reflectScrolledClipView:clipView];
-}
-
 - (void)onDebugLogToggled:(id)sender {
     (void)sender;
-    auto& config = ReaperExtension::Instance().GetConfig();
-    config.show_debug_log = !config.show_debug_log;
-    [self updateDebugLogVisibility];
-    [self persistConfigAndLog:nil];
+    if (!debugLogWindow) {
+        [self createDebugLogWindow];
+    }
+    [debugLogWindow makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
 }
 
 - (void)windowDidResize:(NSNotification*)notification {
     (void)notification;
-    [self updateDebugLogVisibility];
+    if (!mainScrollView || !formContentView) {
+        return;
+    }
+    NSSize clipSize = [[mainScrollView contentView] bounds].size;
+    [formContentView setFrame:NSMakeRect(0, 0, std::max(clipSize.width, (CGFloat)700.0), expandedContentHeight)];
+    NSClipView* clipView = [mainScrollView contentView];
+    CGFloat topOriginY = std::max(0.0, expandedContentHeight - NSHeight([clipView bounds]));
+    [clipView scrollToPoint:NSMakePoint(0, topOriginY)];
+    [mainScrollView reflectScrolledClipView:clipView];
+}
+
+- (void)createDebugLogWindow {
+    if (debugLogWindow) {
+        return;
+    }
+    debugLogWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 700, 360)
+                                                 styleMask:(NSWindowStyleMaskTitled |
+                                                           NSWindowStyleMaskClosable |
+                                                           NSWindowStyleMaskMiniaturizable |
+                                                           NSWindowStyleMaskResizable)
+                                                   backing:NSBackingStoreBuffered
+                                                     defer:NO];
+    [debugLogWindow setTitle:@"Behringer Wing Debug Log"];
+    [debugLogWindow setMinSize:NSMakeSize(520, 220)];
+
+    NSView* logContentView = [debugLogWindow contentView];
+    [logScrollView setFrame:[logContentView bounds]];
+    [logScrollView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+    [logContentView addSubview:logScrollView];
 }
 
 - (void)onAutoRecordSettingsChanged:(id)sender {

@@ -124,6 +124,7 @@ public:
     void SetCardOutputName(int card_num, const std::string& name);
     void SetCardInputName(int card_num, const std::string& name);    // Name CARD input (REAPER sends back to)
     void ClearCardOutput(int card_num);  // Clear CARD output routing (set to OFF)
+    void SetWLiveRecordTrackCount(int slot, int tracks);
     void SetRecorderOutputSource(int recorder_num, const std::string& grp, int in);
     void SetRecorderOutputName(int recorder_num, const std::string& name);
     void ClearRecorderOutput(int recorder_num);

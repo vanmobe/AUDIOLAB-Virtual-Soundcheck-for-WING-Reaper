@@ -1728,6 +1728,7 @@ void ReaperExtension::RouteMainLRToCardForSDRecording() {
         osc_handler_->SetRecorderOutputName(1, "Main L");
         osc_handler_->SetRecorderOutputName(2, "Main R");
     } else {
+        osc_handler_->SetWLiveRecordTrackCount(1, 4);
         osc_handler_->SetCardOutputSource(1, group, left_input);
         osc_handler_->SetCardOutputSource(2, group, right_input);
         osc_handler_->SetCardOutputName(1, "Main L");
@@ -1760,6 +1761,7 @@ void ReaperExtension::ApplyRecorderRoutingNoDialog() {
         osc_handler_->SetRecorderOutputName(1, "Main L");
         osc_handler_->SetRecorderOutputName(2, "Main R");
     } else {
+        osc_handler_->SetWLiveRecordTrackCount(1, 4);
         osc_handler_->SetCardOutputSource(1, group, left_input);
         osc_handler_->SetCardOutputSource(2, group, right_input);
         osc_handler_->SetCardOutputName(1, "Main L");

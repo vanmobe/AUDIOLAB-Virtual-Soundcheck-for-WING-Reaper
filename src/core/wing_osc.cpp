@@ -1260,6 +1260,20 @@ void WingOSC::SetCardOutputName(int card_num, const std::string& name) {
     Log("[OSC] " + addr_name + " = " + name);
 }
 
+void WingOSC::SetWLiveRecordTrackCount(int slot, int tracks) {
+    if (slot < 1 || slot > 2) {
+        return;
+    }
+    const int clamped_tracks = std::max(2, tracks);
+    char buffer[256];
+    osc::OutboundPacketStream p(buffer, 256);
+    const std::string addr = "/cards/wlive/" + std::to_string(slot) + "/cfg/rectracks";
+    p << MakeOscBeginToken(addr.c_str()) << std::to_string(clamped_tracks).c_str() << MakeOscEndToken();
+    if (SendRawPacket(p.Data(), p.Size())) {
+        Log("[OSC] " + addr + " = " + std::to_string(clamped_tracks));
+    }
+}
+
 void WingOSC::SetRecorderOutputSource(int recorder_num, const std::string& grp, int in) {
     char buffer[256];
     osc::OutboundPacketStream p(buffer, 256);
@@ -1368,32 +1382,20 @@ std::vector<double> WingOSC::GetLastMeterValues() const {
 }
 
 void WingOSC::StartSDRecorder() {
-    const std::vector<std::string> paths = {
-        "/cards/wlive/1/$ctl/control",
-        "/cards/wlive/2/$ctl/control"
-    };
-    for (const auto& path : paths) {
-        char buffer[256];
-        osc::OutboundPacketStream p(buffer, 256);
-        p << MakeOscBeginToken(path.c_str()) << "REC" << MakeOscEndToken();
-        if (SendRawPacket(p.Data(), p.Size())) {
-            Log("WING-LIVE start OSC sent: " + path + " = REC");
-        }
+    char buffer[256];
+    osc::OutboundPacketStream p(buffer, 256);
+    p << MakeOscBeginToken("/cards/wlive/1/$ctl/control") << "REC" << MakeOscEndToken();
+    if (SendRawPacket(p.Data(), p.Size())) {
+        Log("WING-LIVE start OSC sent: /cards/wlive/1/$ctl/control = REC");
     }
 }
 
 void WingOSC::StopSDRecorder() {
-    const std::vector<std::string> paths = {
-        "/cards/wlive/1/$ctl/control",
-        "/cards/wlive/2/$ctl/control"
-    };
-    for (const auto& path : paths) {
-        char buffer[256];
-        osc::OutboundPacketStream p(buffer, 256);
-        p << MakeOscBeginToken(path.c_str()) << "STOP" << MakeOscEndToken();
-        if (SendRawPacket(p.Data(), p.Size())) {
-            Log("WING-LIVE stop OSC sent: " + path + " = STOP");
-        }
+    char buffer[256];
+    osc::OutboundPacketStream p(buffer, 256);
+    p << MakeOscBeginToken("/cards/wlive/1/$ctl/control") << "STOP" << MakeOscEndToken();
+    if (SendRawPacket(p.Data(), p.Size())) {
+        Log("WING-LIVE stop OSC sent: /cards/wlive/1/$ctl/control = STOP");
     }
 }
 
