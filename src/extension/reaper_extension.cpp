@@ -139,7 +139,7 @@ bool PollRecorderStarted(const WingConfig& cfg, WingOSC* osc_handler, std::strin
         detail_out = "recorder status unavailable";
         return false;
     }
-    for (int attempt = 0; attempt < 6; ++attempt) {
+    for (int attempt = 0; attempt < 30; ++attempt) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         if (RecorderTargetKey(cfg) == "USBREC") {
             std::string active_state;
@@ -179,7 +179,7 @@ bool PollRecorderStopped(const WingConfig& cfg, WingOSC* osc_handler, std::strin
         detail_out = "recorder status unavailable";
         return false;
     }
-    for (int attempt = 0; attempt < 6; ++attempt) {
+    for (int attempt = 0; attempt < 20; ++attempt) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         if (RecorderTargetKey(cfg) == "USBREC") {
             std::string active_state;
@@ -455,7 +455,10 @@ void ReaperExtension::MainThreadTimerTick() {
     if (ext.pending_record_start_.exchange(false)) {
         // Record action is a toggle in REAPER; only issue it when not already recording.
         if (!is_recording_now) {
+            ext.Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Auto-trigger requesting REAPER transport record.\n");
             Main_OnCommand(kCmdTransportRecord, 0);  // Transport: Record (main thread)
+        } else {
+            ext.Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Auto-trigger requested record, but REAPER was already recording.\n");
         }
     }
     if (ext.pending_record_stop_.exchange(false)) {
@@ -480,6 +483,10 @@ void ReaperExtension::MainThreadTimerTick() {
 
     const int play_state_after_actions = GetPlayState();
     const bool is_recording_after_actions = (play_state_after_actions & kReaperPlayStateRecordingBit) != 0;
+    if (is_recording_after_actions != is_recording_now) {
+        ext.Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: REAPER transport changed to ") +
+                (is_recording_after_actions ? "RECORDING.\n" : "STOPPED.\n"));
+    }
     ext.SyncExternalRecorderWithReaperState(is_recording_after_actions);
 }
 
@@ -1407,6 +1414,7 @@ void ReaperExtension::MonitorAutoRecordLoop() {
                         pending_record_start_ = true;
                         auto_record_started_by_plugin_ = true;
                         record_started_at = std::chrono::steady_clock::now();
+                        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Auto-trigger threshold met; queued REAPER record start.\n");
                         SendOscToWing(config_, config_.osc_start_path, 1);
                     }
                     above_since = {};
@@ -1825,9 +1833,16 @@ void ReaperExtension::SyncExternalRecorderWithReaperState(bool is_recording_now)
 
     if (is_recording_now && !was_recording) {
         if (auto_record_started_by_plugin_) {
+            Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: REAPER entered record from auto-trigger; starting ") +
+                RecorderTargetLabel(config_) + ".\n");
             StartExternalRecorderFollow();
+        } else {
+            Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: REAPER entered record, but no plugin-owned auto-trigger session was active; not starting ") +
+                RecorderTargetLabel(config_) + ".\n");
         }
     } else if (!is_recording_now && was_recording && external_recorder_started_by_plugin_) {
+        Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: REAPER left record; stopping ") +
+            RecorderTargetLabel(config_) + ".\n");
         StopExternalRecorderFollow();
     }
 }
