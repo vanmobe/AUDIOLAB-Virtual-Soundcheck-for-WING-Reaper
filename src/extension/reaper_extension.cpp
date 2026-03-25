@@ -82,6 +82,145 @@ const char* RecorderTargetLabel(const WingConfig& cfg) {
     return RecorderTargetKey(cfg) == "USBREC" ? "USB recorder" : "SD card (WING-LIVE)";
 }
 
+bool IsRecorderActiveState(const std::string& state) {
+    return state == "REC" || state == "RECORD" || state == "RECORDING" || state == "PLAYREC";
+}
+
+std::string DescribeUSBRecorderStatus(WingOSC* osc_handler) {
+    if (!osc_handler) {
+        return "USB recorder status unavailable";
+    }
+    std::string active_state;
+    std::string action_state;
+    if (!osc_handler->GetUSBRecorderStatus(active_state, action_state)) {
+        return "USB recorder status query failed";
+    }
+    return "USB recorder state=" + (active_state.empty() ? "?" : active_state) +
+           ", action=" + (action_state.empty() ? "?" : action_state);
+}
+
+std::string DescribeWLiveRecorderStatus(WingOSC* osc_handler) {
+    if (!osc_handler) {
+        return "WING-LIVE recorder status unavailable";
+    }
+    std::vector<std::string> slot_descriptions;
+    for (int slot = 1; slot <= 2; ++slot) {
+        std::string state;
+        std::string media_state;
+        std::string error_message;
+        std::string error_code;
+        if (!osc_handler->GetWLiveRecorderStatus(slot, state, media_state, error_message, error_code)) {
+            slot_descriptions.push_back("slot" + std::to_string(slot) + "=query failed");
+            continue;
+        }
+        std::string slot_desc = "slot" + std::to_string(slot) +
+                                " state=" + (state.empty() ? "?" : state) +
+                                ", media=" + (media_state.empty() ? "?" : media_state);
+        if (!error_code.empty() && error_code != "0") {
+            slot_desc += ", error=" + error_code;
+        }
+        if (!error_message.empty()) {
+            slot_desc += " (" + error_message + ")";
+        }
+        slot_descriptions.push_back(slot_desc);
+    }
+    std::string combined;
+    for (size_t i = 0; i < slot_descriptions.size(); ++i) {
+        if (i > 0) {
+            combined += "; ";
+        }
+        combined += slot_descriptions[i];
+    }
+    return "WING-LIVE " + combined;
+}
+
+bool PollRecorderStarted(const WingConfig& cfg, WingOSC* osc_handler, std::string& detail_out) {
+    if (!osc_handler) {
+        detail_out = "recorder status unavailable";
+        return false;
+    }
+    for (int attempt = 0; attempt < 6; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (RecorderTargetKey(cfg) == "USBREC") {
+            std::string active_state;
+            std::string action_state;
+            if (osc_handler->GetUSBRecorderStatus(active_state, action_state)) {
+                detail_out = DescribeUSBRecorderStatus(osc_handler);
+                if (IsRecorderActiveState(active_state)) {
+                    return true;
+                }
+            }
+        } else {
+            for (int slot = 1; slot <= 2; ++slot) {
+                std::string state;
+                std::string media_state;
+                std::string error_message;
+                std::string error_code;
+                if (!osc_handler->GetWLiveRecorderStatus(slot, state, media_state, error_message, error_code)) {
+                    continue;
+                }
+                detail_out = DescribeWLiveRecorderStatus(osc_handler);
+                if (IsRecorderActiveState(state)) {
+                    return true;
+                }
+            }
+        }
+    }
+    if (detail_out.empty()) {
+        detail_out = RecorderTargetKey(cfg) == "USBREC"
+            ? DescribeUSBRecorderStatus(osc_handler)
+            : DescribeWLiveRecorderStatus(osc_handler);
+    }
+    return false;
+}
+
+bool PollRecorderStopped(const WingConfig& cfg, WingOSC* osc_handler, std::string& detail_out) {
+    if (!osc_handler) {
+        detail_out = "recorder status unavailable";
+        return false;
+    }
+    for (int attempt = 0; attempt < 6; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (RecorderTargetKey(cfg) == "USBREC") {
+            std::string active_state;
+            std::string action_state;
+            if (osc_handler->GetUSBRecorderStatus(active_state, action_state)) {
+                detail_out = DescribeUSBRecorderStatus(osc_handler);
+                if (!IsRecorderActiveState(active_state) && active_state == "STOP") {
+                    return true;
+                }
+            }
+        } else {
+            bool all_stopped = true;
+            bool any_query = false;
+            for (int slot = 1; slot <= 2; ++slot) {
+                std::string state;
+                std::string media_state;
+                std::string error_message;
+                std::string error_code;
+                if (!osc_handler->GetWLiveRecorderStatus(slot, state, media_state, error_message, error_code)) {
+                    all_stopped = false;
+                    continue;
+                }
+                any_query = true;
+                if (IsRecorderActiveState(state)) {
+                    all_stopped = false;
+                }
+            }
+            detail_out = DescribeWLiveRecorderStatus(osc_handler);
+            if (any_query && all_stopped) {
+                return true;
+            }
+        }
+    }
+    if (detail_out.empty()) {
+        detail_out = RecorderTargetKey(cfg) == "USBREC"
+            ? DescribeUSBRecorderStatus(osc_handler)
+            : DescribeWLiveRecorderStatus(osc_handler);
+    }
+    return false;
+}
+
 bool TouchFile(const std::string& path) {
     time_t now = time(nullptr);
 #ifdef _WIN32
@@ -1638,6 +1777,15 @@ void ReaperExtension::StartExternalRecorderFollow() {
     }
     Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: ") + RecorderTargetLabel(config_) +
         " start requested for plugin auto-trigger recording (best effort OSC; verify recorder state on WING).\n");
+
+    std::string status_detail;
+    if (PollRecorderStarted(config_, osc_handler_.get(), status_detail)) {
+        Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: Confirmed ") +
+            RecorderTargetLabel(config_) + " started. " + status_detail + "\n");
+    } else {
+        Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: ") + RecorderTargetLabel(config_) +
+            " did not confirm a recording state after start request. " + status_detail + "\n");
+    }
 }
 
 void ReaperExtension::StopExternalRecorderFollow() {
@@ -1654,6 +1802,15 @@ void ReaperExtension::StopExternalRecorderFollow() {
     }
     Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: ") + RecorderTargetLabel(config_) +
         " stop requested for plugin auto-trigger recording (best effort OSC; verify recorder state on WING).\n");
+
+    std::string status_detail;
+    if (PollRecorderStopped(config_, osc_handler_.get(), status_detail)) {
+        Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: Confirmed ") +
+            RecorderTargetLabel(config_) + " stopped. " + status_detail + "\n");
+    } else {
+        Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: ") + RecorderTargetLabel(config_) +
+            " did not confirm a stopped state after stop request. " + status_detail + "\n");
+    }
 }
 
 void ReaperExtension::SyncExternalRecorderWithReaperState(bool is_recording_now) {

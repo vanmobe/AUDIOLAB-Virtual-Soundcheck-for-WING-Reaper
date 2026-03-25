@@ -160,6 +160,12 @@ public:
     void StopSDRecorder();
     void StartUSBRecorder();
     void StopUSBRecorder();
+    bool GetUSBRecorderStatus(std::string& active_state, std::string& action_state) const;
+    bool GetWLiveRecorderStatus(int slot,
+                                std::string& state,
+                                std::string& media_state,
+                                std::string& error_message,
+                                std::string& error_code) const;
     void SetUserControlLed(int layer, int button, bool on);
     void SetUserControlColor(int layer, int button, int color_index);
     void SetUserControlButtonLed(int layer, int button, bool on, bool lower_row = false);

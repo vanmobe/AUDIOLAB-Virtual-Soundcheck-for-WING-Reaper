@@ -318,6 +318,107 @@ bool QueryInputNameDirect(const std::string& wing_ip,
     return false;
 }
 
+bool QueryOscStringDirect(const std::string& wing_ip,
+                          uint16_t wing_port,
+                          const std::string& address,
+                          std::string& value_out) {
+#if defined(_WIN32)
+    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock == INVALID_SOCKET) {
+        return false;
+    }
+#else
+    int sock = ::socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        return false;
+    }
+#endif
+
+    auto closeSocket = [&]() {
+#if defined(_WIN32)
+        if (sock != INVALID_SOCKET) {
+            closesocket(sock);
+            sock = INVALID_SOCKET;
+        }
+#else
+        if (sock >= 0) {
+            ::close(sock);
+            sock = -1;
+        }
+#endif
+    };
+
+#if defined(_WIN32)
+    DWORD timeout = 700;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
+               reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+#else
+    timeval tv{};
+    tv.tv_sec = 0;
+    tv.tv_usec = 700000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#endif
+
+    sockaddr_in dest{};
+    dest.sin_family = AF_INET;
+    dest.sin_port = htons(wing_port);
+    if (inet_pton(AF_INET, wing_ip.c_str(), &dest.sin_addr) != 1) {
+        closeSocket();
+        return false;
+    }
+
+    char buffer[256];
+    osc::OutboundPacketStream p(buffer, sizeof(buffer));
+    p << osc::BeginMessage(address.c_str()) << osc::EndMessage;
+
+    auto bytes_sent = sendto(sock, p.Data(), static_cast<int>(p.Size()), 0,
+                             reinterpret_cast<sockaddr*>(&dest), sizeof(dest));
+#if defined(_WIN32)
+    if (bytes_sent == SOCKET_ERROR) {
+#else
+    if (bytes_sent < 0) {
+#endif
+        closeSocket();
+        return false;
+    }
+
+    char recv_buffer[1024];
+    sockaddr_in from{};
+#if defined(_WIN32)
+    int from_len = sizeof(from);
+    int received = recvfrom(sock, recv_buffer, sizeof(recv_buffer), 0,
+                            reinterpret_cast<sockaddr*>(&from), &from_len);
+    if (received == SOCKET_ERROR) {
+#else
+    socklen_t from_len = sizeof(from);
+    ssize_t received = recvfrom(sock, recv_buffer, sizeof(recv_buffer), 0,
+                                reinterpret_cast<sockaddr*>(&from), &from_len);
+    if (received < 0) {
+#endif
+        closeSocket();
+        return false;
+    }
+
+    try {
+        osc::ReceivedPacket packet(recv_buffer, static_cast<int>(received));
+        if (!packet.IsMessage()) {
+            closeSocket();
+            return false;
+        }
+        osc::ReceivedMessage msg(packet);
+        auto arg = msg.ArgumentsBegin();
+        if (arg != msg.ArgumentsEnd() && arg->IsString()) {
+            value_out = arg->AsString();
+            closeSocket();
+            return true;
+        }
+    } catch (...) {
+    }
+
+    closeSocket();
+    return false;
+}
+
 bool IsDirectOutputSourceGroup(const std::string& grp) {
     static const std::set<std::string> groups = {
         "LCL", "AUX", "A", "B", "C", "SC", "USB", "CRD", "CARD", "MOD", "REC", "AES", "USR"
@@ -1268,70 +1369,95 @@ std::vector<double> WingOSC::GetLastMeterValues() const {
 
 void WingOSC::StartSDRecorder() {
     const std::vector<std::string> paths = {
-        "/sdrec/state", "/sdrec/start", "/recorder/sd/state", "/recorder/sd/start"
+        "/cards/wlive/1/$ctl/control",
+        "/cards/wlive/2/$ctl/control"
     };
     for (const auto& path : paths) {
         char buffer[256];
         osc::OutboundPacketStream p(buffer, 256);
-        p << MakeOscBeginToken(path.c_str()) << (int32_t)1 << MakeOscEndToken();
+        p << MakeOscBeginToken(path.c_str()) << "REC" << MakeOscEndToken();
         if (SendRawPacket(p.Data(), p.Size())) {
-            Log("SD start OSC sent: " + path);
+            Log("WING-LIVE start OSC sent: " + path + " = REC");
         }
     }
 }
 
 void WingOSC::StopSDRecorder() {
     const std::vector<std::string> paths = {
-        "/sdrec/state", "/sdrec/stop", "/recorder/sd/state", "/recorder/sd/stop"
+        "/cards/wlive/1/$ctl/control",
+        "/cards/wlive/2/$ctl/control"
     };
     for (const auto& path : paths) {
         char buffer[256];
         osc::OutboundPacketStream p(buffer, 256);
-        p << MakeOscBeginToken(path.c_str()) << (int32_t)0 << MakeOscEndToken();
+        p << MakeOscBeginToken(path.c_str()) << "STOP" << MakeOscEndToken();
         if (SendRawPacket(p.Data(), p.Size())) {
-            Log("SD stop OSC sent: " + path);
+            Log("WING-LIVE stop OSC sent: " + path + " = STOP");
         }
     }
 }
 
 void WingOSC::StartUSBRecorder() {
-    const std::vector<std::string> paths = {
-        "/rec/$action", "/rec/state"
-    };
-    for (const auto& path : paths) {
-        char buffer[256];
-        osc::OutboundPacketStream p(buffer, 256);
-        p << MakeOscBeginToken(path.c_str());
-        if (path == "/rec/$action") {
-            p << "REC";
-        } else {
-            p << (int32_t)1;
-        }
-        p << MakeOscEndToken();
-        if (SendRawPacket(p.Data(), p.Size())) {
-            Log("USB recorder start OSC sent: " + path);
-        }
+    char buffer[256];
+    osc::OutboundPacketStream p(buffer, 256);
+    p << MakeOscBeginToken("/rec/$action") << "REC" << MakeOscEndToken();
+    if (SendRawPacket(p.Data(), p.Size())) {
+        Log("USB recorder start OSC sent: /rec/$action = REC");
     }
 }
 
 void WingOSC::StopUSBRecorder() {
-    const std::vector<std::string> paths = {
-        "/rec/$action", "/rec/state"
-    };
-    for (const auto& path : paths) {
-        char buffer[256];
-        osc::OutboundPacketStream p(buffer, 256);
-        p << MakeOscBeginToken(path.c_str());
-        if (path == "/rec/$action") {
-            p << "STOP";
-        } else {
-            p << (int32_t)0;
-        }
-        p << MakeOscEndToken();
-        if (SendRawPacket(p.Data(), p.Size())) {
-            Log("USB recorder stop OSC sent: " + path);
-        }
+    char buffer[256];
+    osc::OutboundPacketStream p(buffer, 256);
+    p << MakeOscBeginToken("/rec/$action") << "STOP" << MakeOscEndToken();
+    if (SendRawPacket(p.Data(), p.Size())) {
+        Log("USB recorder stop OSC sent: /rec/$action = STOP");
     }
+}
+
+bool WingOSC::GetUSBRecorderStatus(std::string& active_state, std::string& action_state) const {
+    bool ok = false;
+    std::string state_value;
+    std::string action_value;
+    if (QueryOscStringDirect(wing_ip_, wing_port_, "/rec/$actstate", state_value)) {
+        active_state = state_value;
+        ok = true;
+    }
+    if (QueryOscStringDirect(wing_ip_, wing_port_, "/rec/$action", action_value)) {
+        action_state = action_value;
+        ok = true;
+    }
+    return ok;
+}
+
+bool WingOSC::GetWLiveRecorderStatus(int slot,
+                                     std::string& state,
+                                     std::string& media_state,
+                                     std::string& error_message,
+                                     std::string& error_code) const {
+    if (slot < 1 || slot > 2) {
+        return false;
+    }
+    const std::string prefix = "/cards/wlive/" + std::to_string(slot) + "/$stat/";
+    bool ok = false;
+    std::string value;
+    if (QueryOscStringDirect(wing_ip_, wing_port_, prefix + "state", value)) {
+        state = value;
+        ok = true;
+    }
+    if (QueryOscStringDirect(wing_ip_, wing_port_, prefix + "sdstate", value)) {
+        media_state = value;
+        ok = true;
+    }
+    if (QueryOscStringDirect(wing_ip_, wing_port_, prefix + "errormessage", value)) {
+        error_message = value;
+        ok = true;
+    }
+    if (QueryOscStringDirect(wing_ip_, wing_port_, prefix + "errorcode", value)) {
+        error_code = value;
+        ok = true;
+    }
+    return ok;
 }
 
 void WingOSC::SetUserControlLed(int layer, int button, bool on) {
