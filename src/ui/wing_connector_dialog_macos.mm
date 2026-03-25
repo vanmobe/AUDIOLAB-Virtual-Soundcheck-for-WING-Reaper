@@ -1203,7 +1203,8 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 }
 
 - (void)onAutoRecordSettingsChanged:(id)sender {
-    auto& config = ReaperExtension::Instance().GetConfig();
+    auto& extension = ReaperExtension::Instance();
+    auto& config = extension.GetConfig();
     config.auto_record_enabled = ([autoRecordEnableControl selectedSegment] == 1);
     config.auto_record_warning_only = ([autoRecordModeControl selectedSegment] == 0);
     config.auto_record_threshold_db = [[thresholdField stringValue] doubleValue];
@@ -1219,8 +1220,18 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     config.sd_lr_group = "MAIN";
     config.sd_lr_left_input = sdLeft;
     config.sd_lr_right_input = sdLeft + 1;
-    ReaperExtension::Instance().ApplyAutoRecordSettings();
-    ReaperExtension::Instance().SyncMidiActionsToWing();
+    extension.ApplyAutoRecordSettings();
+    extension.SyncMidiActionsToWing();
+
+    const bool sdRouteChanged = (sender == sdRouteOnConnectCheckbox || sender == sdSourceDropdown);
+    if (sdRouteChanged && extension.IsConnected()) {
+        if (config.sd_lr_route_enabled) {
+            extension.ApplySDRoutingNoDialog();
+            [self appendToLog:@"Requested CARD 1/2 routing from Main LR (verify on WING).\n"];
+        } else {
+            [self appendToLog:@"SD route-on-connect disabled. Existing WING CARD routing was not restored automatically.\n"];
+        }
+    }
 
     [self appendToLog:[NSString stringWithFormat:@"Auto trigger: %s, mode=%s, source=REAPER, threshold=%.1f dBFS, hold=%dms, track=%d, ccLayer=%d\n",
                        config.auto_record_enabled ? "ON" : "OFF",

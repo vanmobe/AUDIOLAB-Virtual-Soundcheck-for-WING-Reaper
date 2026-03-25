@@ -407,7 +407,8 @@ bool ReaperExtension::ConnectToWing() {
     }
 
     if (config_.sd_lr_route_enabled) {
-        RouteMainLRToCardForSDRecording();
+        ApplySDRoutingNoDialog();
+        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Requested CARD 1/2 routing from Main LR on connect (verify on WING).\n");
     }
 
     // If MIDI actions are enabled in the extension, re-apply current mapping to the Wing.

@@ -52,6 +52,7 @@ public:
     bool CheckOutputModeAvailability(const std::string& output_mode, std::string& details) const;
     bool ValidateLiveRecordingSetup(std::string& details);
     void RouteMainLRToCardForSDRecording();
+    void ApplySDRoutingNoDialog();
     double ReadCurrentTriggerLevel();
     void ApplyAutoRecordSettings();
     void SyncMidiActionsToWing();
@@ -156,7 +157,6 @@ private:
     void ClearMidiShortcutButtonCommands();
     void TriggerManualTransportFlash(int color_index);
     void StopManualTransportFlash();
-    void ApplySDRoutingNoDialog();
     void SyncSDRecorderWithReaperState(bool is_recording_now);
     void StartSDRecorderFollow();
     void StopSDRecorderFollow();
