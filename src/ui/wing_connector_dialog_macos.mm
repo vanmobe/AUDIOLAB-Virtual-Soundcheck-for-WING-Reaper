@@ -1282,7 +1282,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
         return;
     }
     NSSize clipSize = [[mainScrollView contentView] bounds].size;
-    CGFloat targetHeight = showLog ? expandedContentHeight : collapsedContentHeight;
+    const CGFloat targetHeight = expandedContentHeight;
     [formContentView setFrame:NSMakeRect(0, 0, std::max(clipSize.width, (CGFloat)700.0), targetHeight)];
     NSClipView* clipView = [mainScrollView contentView];
     CGFloat topOriginY = std::max(0.0, targetHeight - NSHeight([clipView bounds]));
