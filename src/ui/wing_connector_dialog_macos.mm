@@ -130,9 +130,20 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 
 // ===== MAIN WING CONNECTOR WINDOW =====
 
+@interface WingConnectorFlippedView : NSView
+@end
+
+@implementation WingConnectorFlippedView
+- (BOOL)isFlipped {
+    return NO;
+}
+@end
+
 @interface WingConnectorWindowController : NSWindowController <NSWindowDelegate>
 {
     // UI Elements
+    NSScrollView* mainScrollView;
+    WingConnectorFlippedView* formContentView;
     NSPopUpButton* wingDropdown;
     NSTextField* manualIPField;
     NSButton* scanButton;
@@ -169,6 +180,8 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     BOOL isWorking;  // Prevents re-entrant button clicks while an operation is in progress
     BOOL liveSetupValidated;  // True when Wing + REAPER routing validate as a complete live setup
     BOOL validationInProgress;  // Prevent overlapping auto-connect/validation runs
+    CGFloat collapsedContentHeight;
+    CGFloat expandedContentHeight;
 }
 
 - (instancetype)init;
@@ -182,6 +195,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 - (void)setWorkingState:(BOOL)working;
 - (void)updateDebugLogVisibility;
 - (void)onDebugLogToggled:(id)sender;
+- (void)windowDidResize:(NSNotification*)notification;
 
 - (void)startDiscoveryScan;
 - (void)populateDropdownWithItems:(NSArray*)items ips:(NSArray*)ips;
@@ -219,7 +233,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
                                                        backing:NSBackingStoreBuffered
                                                          defer:NO];
     [window setTitle:@"Behringer Wing"];
-    [window setMinSize:NSMakeSize(700, 760)];
+    [window setMinSize:NSMakeSize(700, 560)];
     [window center];
     
     self = [super initWithWindow:window];
@@ -235,6 +249,8 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     liveSetupValidated = NO;
     validationInProgress = NO;
     meterPreviewTimer = nil;
+    collapsedContentHeight = 760.0;
+    expandedContentHeight = 980.0;
     
     // MUST call setupUI FIRST to initialize activityLogView!
     [self setupUI];
@@ -267,6 +283,8 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [discoveredIPs release];
     // Release UI elements that we retain in instance variables
     [wingDropdown release];
+    [mainScrollView release];
+    [formContentView release];
     [manualIPField release];
     [scanButton release];
     [statusLabel release];
@@ -301,8 +319,20 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 }
 
 - (void)setupUI {
-    NSView* contentView = [[self window] contentView];
-    int yPos = (int)NSHeight([contentView bounds]) - 80;
+    NSView* windowContentView = [[self window] contentView];
+    mainScrollView = [[NSScrollView alloc] initWithFrame:[windowContentView bounds]];
+    [mainScrollView setHasVerticalScroller:YES];
+    [mainScrollView setHasHorizontalScroller:NO];
+    [mainScrollView setBorderType:NSNoBorder];
+    [mainScrollView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+    [windowContentView addSubview:mainScrollView];
+
+    formContentView = [[WingConnectorFlippedView alloc] initWithFrame:NSMakeRect(0, 0, NSWidth([windowContentView bounds]), expandedContentHeight)];
+    [formContentView setAutoresizingMask:NSViewWidthSizable];
+    [mainScrollView setDocumentView:formContentView];
+
+    NSView* contentView = formContentView;
+    int yPos = (int)expandedContentHeight - 80;
     
     // ===== HEADER WITH LOGO =====
     NSBox* headerBox = [[NSBox alloc] initWithFrame:NSMakeRect(0, yPos - 10, 700, 70)];
@@ -1248,19 +1278,16 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [logHeaderLabel setHidden:!showLog];
     [logScrollView setHidden:!showLog];
 
-    NSWindow* window = [self window];
-    if (!window) {
+    if (!mainScrollView || !formContentView) {
         return;
     }
-    NSRect frame = [window frame];
-    const CGFloat collapsedHeight = 760.0;
-    const CGFloat expandedHeight = 980.0;
-    const CGFloat targetHeight = showLog ? expandedHeight : collapsedHeight;
-    if (fabs(NSHeight(frame) - targetHeight) > 1.0) {
-        frame.origin.y += NSHeight(frame) - targetHeight;
-        frame.size.height = targetHeight;
-        [window setFrame:frame display:YES animate:YES];
-    }
+    NSSize clipSize = [[mainScrollView contentView] bounds].size;
+    CGFloat targetHeight = showLog ? expandedContentHeight : collapsedContentHeight;
+    [formContentView setFrame:NSMakeRect(0, 0, std::max(clipSize.width, (CGFloat)700.0), targetHeight)];
+    NSClipView* clipView = [mainScrollView contentView];
+    CGFloat topOriginY = std::max(0.0, targetHeight - NSHeight([clipView bounds]));
+    [clipView scrollToPoint:NSMakePoint(0, topOriginY)];
+    [mainScrollView reflectScrolledClipView:clipView];
 }
 
 - (void)onDebugLogToggled:(id)sender {
@@ -1269,6 +1296,11 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     config.show_debug_log = !config.show_debug_log;
     [self updateDebugLogVisibility];
     [self persistConfigAndLog:nil];
+}
+
+- (void)windowDidResize:(NSNotification*)notification {
+    (void)notification;
+    [self updateDebugLogVisibility];
 }
 
 - (void)onAutoRecordSettingsChanged:(id)sender {
