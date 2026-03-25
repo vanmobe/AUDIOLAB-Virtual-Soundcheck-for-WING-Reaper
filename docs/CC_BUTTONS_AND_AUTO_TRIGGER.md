@@ -58,12 +58,20 @@ Auto-trigger is configured in the plugin `Auto Trigger` section and monitors REA
 - Manual transport interaction:
   - manual play/record suppresses warning behavior to avoid conflicting states
 
-## 3. SD Auto-Record (Optional)
+## 3. SD Recording (Optional)
 
-If `sd_auto_record_with_reaper` is enabled, an auto-started REAPER recording also:
+SD routing / recorder integration is optional and split into two pieces:
 
-- routes configured main output to SD recorder input
-- sends SD recorder start/stop via WING OSC fallback paths
+- `sd_lr_route_enabled`
+  - requests Main LR routing to CARD 1/2 when the plugin connects to WING
+- `sd_auto_record_with_reaper`
+  - follows REAPER record start/stop and sends SD recorder start/stop via WING OSC fallback paths
+  - applies the configured Main LR CARD routing before requesting SD start
+
+Notes:
+
+- The macOS dialog exposes the routing toggle plus a `MAIN` source pair selector.
+- SD recorder control is best-effort OSC only; confirm routing and recorder state on WING before relying on SD capture.
 
 ## 4. Troubleshooting
 

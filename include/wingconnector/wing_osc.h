@@ -124,6 +124,10 @@ public:
     void SetCardOutputName(int card_num, const std::string& name);
     void SetCardInputName(int card_num, const std::string& name);    // Name CARD input (REAPER sends back to)
     void ClearCardOutput(int card_num);  // Clear CARD output routing (set to OFF)
+    void SetWLiveRecordTrackCount(int slot, int tracks);
+    void SetRecorderOutputSource(int recorder_num, const std::string& grp, int in);
+    void SetRecorderOutputName(int recorder_num, const std::string& name);
+    void ClearRecorderOutput(int recorder_num);
     
     // USB/CARD input mode configuration (stereo/mono)
     void SetUSBInputMode(int usb_num, const std::string& mode);  // Set USB input mode: "ST" = stereo, "M" = mono
@@ -155,6 +159,14 @@ public:
     std::vector<double> GetLastMeterValues() const;
     void StartSDRecorder();
     void StopSDRecorder();
+    void StartUSBRecorder();
+    void StopUSBRecorder();
+    bool GetUSBRecorderStatus(std::string& active_state, std::string& action_state) const;
+    bool GetWLiveRecorderStatus(int slot,
+                                std::string& state,
+                                std::string& media_state,
+                                std::string& error_message,
+                                std::string& error_code) const;
     void SetUserControlLed(int layer, int button, bool on);
     void SetUserControlColor(int layer, int button, int color_index);
     void SetUserControlButtonLed(int layer, int button, bool on, bool lower_row = false);

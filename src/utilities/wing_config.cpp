@@ -55,10 +55,12 @@ bool WingConfig::LoadFromFile(const std::string& filepath) {
         auto_record_poll_ms = config.value("auto_record_poll_ms", 50);
         auto_record_monitor_track = config.value("auto_record_monitor_track", 0);
         sd_lr_route_enabled = config.value("sd_lr_route_enabled", false);
+        recorder_target = config.value("recorder_target", "WLIVE");
         sd_lr_group = config.value("sd_lr_group", "MAIN");
         sd_lr_left_input = config.value("sd_lr_left_input", 1);
         sd_lr_right_input = config.value("sd_lr_right_input", 2);
         sd_auto_record_with_reaper = config.value("sd_auto_record_with_reaper", false);
+        show_debug_log = config.value("show_debug_log", false);
         osc_warning_path = config.value("osc_warning_path", "/wing/record/warning");
         osc_start_path = config.value("osc_start_path", "/wing/record/start");
         osc_stop_path = config.value("osc_stop_path", "/wing/record/stop");
@@ -119,10 +121,12 @@ bool WingConfig::SaveToFile(const std::string& filepath) {
         config["auto_record_poll_ms"] = auto_record_poll_ms;
         config["auto_record_monitor_track"] = auto_record_monitor_track;
         config["sd_lr_route_enabled"] = sd_lr_route_enabled;
+        config["recorder_target"] = recorder_target;
         config["sd_lr_group"] = sd_lr_group;
         config["sd_lr_left_input"] = sd_lr_left_input;
         config["sd_lr_right_input"] = sd_lr_right_input;
         config["sd_auto_record_with_reaper"] = sd_auto_record_with_reaper;
+        config["show_debug_log"] = show_debug_log;
         config["osc_warning_path"] = osc_warning_path;
         config["osc_start_path"] = osc_start_path;
         config["osc_stop_path"] = osc_stop_path;

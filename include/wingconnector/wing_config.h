@@ -34,12 +34,14 @@ struct WingConfig {
     int auto_record_poll_ms = 50;
     int auto_record_monitor_track = 0;  // 0 = auto (all armed+monitored), otherwise 1-based track index
 
-    // Wing CARD routing helper for SD LR recording
+    // Recorder routing helper for stereo mix capture
     bool sd_lr_route_enabled = false;
+    std::string recorder_target = "WLIVE";  // "WLIVE" = SD card (WING-LIVE), "USBREC" = front USB recorder
     std::string sd_lr_group = "MAIN";
     int sd_lr_left_input = 1;
     int sd_lr_right_input = 2;
     bool sd_auto_record_with_reaper = false;
+    bool show_debug_log = false;
 
     // OSC paths sent to WING (wing_ip:2223)
     std::string osc_warning_path = "/wing/record/warning";

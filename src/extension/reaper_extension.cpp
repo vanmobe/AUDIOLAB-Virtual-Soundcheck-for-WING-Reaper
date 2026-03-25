@@ -74,6 +74,153 @@ void SendOscToWing(const WingConfig& cfg, const std::string& address, int value 
     SendOscMessage(cfg.wing_ip, 2223, address, value);
 }
 
+std::string RecorderTargetKey(const WingConfig& cfg) {
+    return cfg.recorder_target == "USBREC" ? "USBREC" : "WLIVE";
+}
+
+const char* RecorderTargetLabel(const WingConfig& cfg) {
+    return RecorderTargetKey(cfg) == "USBREC" ? "USB recorder" : "SD card (WING-LIVE)";
+}
+
+bool IsRecorderActiveState(const std::string& state) {
+    return state == "REC" || state == "RECORD" || state == "RECORDING" || state == "PLAYREC";
+}
+
+std::string DescribeUSBRecorderStatus(WingOSC* osc_handler) {
+    if (!osc_handler) {
+        return "USB recorder status unavailable";
+    }
+    std::string active_state;
+    std::string action_state;
+    if (!osc_handler->GetUSBRecorderStatus(active_state, action_state)) {
+        return "USB recorder status query failed";
+    }
+    return "USB recorder state=" + (active_state.empty() ? "?" : active_state) +
+           ", action=" + (action_state.empty() ? "?" : action_state);
+}
+
+std::string DescribeWLiveRecorderStatus(WingOSC* osc_handler) {
+    if (!osc_handler) {
+        return "WING-LIVE recorder status unavailable";
+    }
+    std::vector<std::string> slot_descriptions;
+    for (int slot = 1; slot <= 2; ++slot) {
+        std::string state;
+        std::string media_state;
+        std::string error_message;
+        std::string error_code;
+        if (!osc_handler->GetWLiveRecorderStatus(slot, state, media_state, error_message, error_code)) {
+            slot_descriptions.push_back("slot" + std::to_string(slot) + "=query failed");
+            continue;
+        }
+        std::string slot_desc = "slot" + std::to_string(slot) +
+                                " state=" + (state.empty() ? "?" : state) +
+                                ", media=" + (media_state.empty() ? "?" : media_state);
+        if (!error_code.empty() && error_code != "0") {
+            slot_desc += ", error=" + error_code;
+        }
+        if (!error_message.empty()) {
+            slot_desc += " (" + error_message + ")";
+        }
+        slot_descriptions.push_back(slot_desc);
+    }
+    std::string combined;
+    for (size_t i = 0; i < slot_descriptions.size(); ++i) {
+        if (i > 0) {
+            combined += "; ";
+        }
+        combined += slot_descriptions[i];
+    }
+    return "WING-LIVE " + combined;
+}
+
+bool PollRecorderStarted(const WingConfig& cfg, WingOSC* osc_handler, std::string& detail_out) {
+    if (!osc_handler) {
+        detail_out = "recorder status unavailable";
+        return false;
+    }
+    for (int attempt = 0; attempt < 30; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (RecorderTargetKey(cfg) == "USBREC") {
+            std::string active_state;
+            std::string action_state;
+            if (osc_handler->GetUSBRecorderStatus(active_state, action_state)) {
+                detail_out = DescribeUSBRecorderStatus(osc_handler);
+                if (IsRecorderActiveState(active_state)) {
+                    return true;
+                }
+            }
+        } else {
+            for (int slot = 1; slot <= 2; ++slot) {
+                std::string state;
+                std::string media_state;
+                std::string error_message;
+                std::string error_code;
+                if (!osc_handler->GetWLiveRecorderStatus(slot, state, media_state, error_message, error_code)) {
+                    continue;
+                }
+                detail_out = DescribeWLiveRecorderStatus(osc_handler);
+                if (IsRecorderActiveState(state)) {
+                    return true;
+                }
+            }
+        }
+    }
+    if (detail_out.empty()) {
+        detail_out = RecorderTargetKey(cfg) == "USBREC"
+            ? DescribeUSBRecorderStatus(osc_handler)
+            : DescribeWLiveRecorderStatus(osc_handler);
+    }
+    return false;
+}
+
+bool PollRecorderStopped(const WingConfig& cfg, WingOSC* osc_handler, std::string& detail_out) {
+    if (!osc_handler) {
+        detail_out = "recorder status unavailable";
+        return false;
+    }
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (RecorderTargetKey(cfg) == "USBREC") {
+            std::string active_state;
+            std::string action_state;
+            if (osc_handler->GetUSBRecorderStatus(active_state, action_state)) {
+                detail_out = DescribeUSBRecorderStatus(osc_handler);
+                if (!IsRecorderActiveState(active_state) && active_state == "STOP") {
+                    return true;
+                }
+            }
+        } else {
+            bool all_stopped = true;
+            bool any_query = false;
+            for (int slot = 1; slot <= 2; ++slot) {
+                std::string state;
+                std::string media_state;
+                std::string error_message;
+                std::string error_code;
+                if (!osc_handler->GetWLiveRecorderStatus(slot, state, media_state, error_message, error_code)) {
+                    all_stopped = false;
+                    continue;
+                }
+                any_query = true;
+                if (IsRecorderActiveState(state)) {
+                    all_stopped = false;
+                }
+            }
+            detail_out = DescribeWLiveRecorderStatus(osc_handler);
+            if (any_query && all_stopped) {
+                return true;
+            }
+        }
+    }
+    if (detail_out.empty()) {
+        detail_out = RecorderTargetKey(cfg) == "USBREC"
+            ? DescribeUSBRecorderStatus(osc_handler)
+            : DescribeWLiveRecorderStatus(osc_handler);
+    }
+    return false;
+}
+
 bool TouchFile(const std::string& path) {
     time_t now = time(nullptr);
 #ifdef _WIN32
@@ -308,7 +455,10 @@ void ReaperExtension::MainThreadTimerTick() {
     if (ext.pending_record_start_.exchange(false)) {
         // Record action is a toggle in REAPER; only issue it when not already recording.
         if (!is_recording_now) {
+            ext.Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Auto-trigger requesting REAPER transport record.\n");
             Main_OnCommand(kCmdTransportRecord, 0);  // Transport: Record (main thread)
+        } else {
+            ext.Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Auto-trigger requested record, but REAPER was already recording.\n");
         }
     }
     if (ext.pending_record_stop_.exchange(false)) {
@@ -330,6 +480,14 @@ void ReaperExtension::MainThreadTimerTick() {
             Main_OnCommand(midi_cmd, 0);
         }
     }
+
+    const int play_state_after_actions = GetPlayState();
+    const bool is_recording_after_actions = (play_state_after_actions & kReaperPlayStateRecordingBit) != 0;
+    if (is_recording_after_actions != is_recording_now) {
+        ext.Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: REAPER transport changed to ") +
+                (is_recording_after_actions ? "RECORDING.\n" : "STOPPED.\n"));
+    }
+    ext.SyncExternalRecorderWithReaperState(is_recording_after_actions);
 }
 
 // Connects and verifies OSC reachability only; track creation is user-driven.
@@ -403,7 +561,9 @@ bool ReaperExtension::ConnectToWing() {
     }
 
     if (config_.sd_lr_route_enabled) {
-        RouteMainLRToCardForSDRecording();
+        ApplyRecorderRoutingNoDialog();
+        Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: Requested Main LR routing to ") +
+            RecorderTargetLabel(config_) + " 1/2 on connect (verify on WING).\n");
     }
 
     // If MIDI actions are enabled in the extension, re-apply current mapping to the Wing.
@@ -957,6 +1117,8 @@ void ReaperExtension::DisconnectFromWing() {
     if (!connected_) {
         return;
     }
+    StopExternalRecorderFollow();
+    last_known_reaper_recording_state_ = false;
     StopAutoRecordMonitor();
     
     Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Disconnecting...\n");
@@ -1103,6 +1265,10 @@ void ReaperExtension::StopAutoRecordMonitor() {
 
 void ReaperExtension::ApplyAutoRecordSettings() {
     StopAutoRecordMonitor();
+    if (!config_.auto_record_enabled || !config_.sd_auto_record_with_reaper) {
+        StopExternalRecorderFollow();
+        last_known_reaper_recording_state_ = false;
+    }
     if (connected_ && config_.auto_record_enabled) {
         StartAutoRecordMonitor();
     }
@@ -1248,10 +1414,7 @@ void ReaperExtension::MonitorAutoRecordLoop() {
                         pending_record_start_ = true;
                         auto_record_started_by_plugin_ = true;
                         record_started_at = std::chrono::steady_clock::now();
-                        if (config_.sd_auto_record_with_reaper && osc_handler_) {
-                            ApplySDRoutingNoDialog();
-                            osc_handler_->StartSDRecorder();
-                        }
+                        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Auto-trigger threshold met; queued REAPER record start.\n");
                         SendOscToWing(config_, config_.osc_start_path, 1);
                     }
                     above_since = {};
@@ -1308,9 +1471,6 @@ void ReaperExtension::MonitorAutoRecordLoop() {
                            (last_signal_at.time_since_epoch().count() == 0 || now - last_signal_at >= hold_needed) &&
                            now - record_started_at >= min_record_time) {
                     pending_record_stop_ = true;
-                    if (config_.sd_auto_record_with_reaper && osc_handler_) {
-                        osc_handler_->StopSDRecorder();
-                    }
                     SendOscToWing(config_, config_.osc_stop_path, 0);
                     auto_record_started_by_plugin_ = false;
                     ClearLayerState();
@@ -1416,15 +1576,15 @@ void ReaperExtension::ApplyMidiShortcutButtonCommands() {
         return;
     }
     const int layer = std::min(16, std::max(1, config_.warning_flash_cc_layer));
-    // Top row (bu): play/record as toggle, soundcheck/stop as push
-    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 1, 1, MIDI_ACTIONS[0].cc_number, 0, false, true);
-    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 2, 1, MIDI_ACTIONS[1].cc_number, 0, false, true);
+    // Map all assigned CC buttons as push buttons, not toggles.
+    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 1, 1, MIDI_ACTIONS[0].cc_number, 0, false, false);
+    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 2, 1, MIDI_ACTIONS[1].cc_number, 0, false, false);
     osc_handler_->SetUserControlButtonMidiCCToggle(layer, 3, 1, MIDI_ACTIONS[2].cc_number, 0, false, false);
     osc_handler_->SetUserControlButtonMidiCCToggle(layer, 4, 1, MIDI_ACTIONS[3].cc_number, 0, false, false);
     // Bottom row (bd): set/prev/next marker on buttons 1..3
-    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 1, 1, MIDI_ACTIONS[4].cc_number, 0, true, true);
-    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 2, 1, MIDI_ACTIONS[5].cc_number, 0, true, true);
-    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 3, 1, MIDI_ACTIONS[6].cc_number, 0, true, true);
+    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 1, 1, MIDI_ACTIONS[4].cc_number, 0, true, false);
+    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 2, 1, MIDI_ACTIONS[5].cc_number, 0, true, false);
+    osc_handler_->SetUserControlButtonMidiCCToggle(layer, 3, 1, MIDI_ACTIONS[6].cc_number, 0, true, false);
     // Force all mapped button values off so enabling mappings does not trigger stale toggle states.
     for (int b = 1; b <= 4; ++b) {
         osc_handler_->SetUserControlButtonValue(layer, b, 0, false);
@@ -1559,33 +1719,134 @@ void ReaperExtension::RouteMainLRToCardForSDRecording() {
     const int right_input = std::max(1, config_.sd_lr_right_input);
     const std::string group = config_.sd_lr_group.empty() ? "MAIN" : config_.sd_lr_group;
 
-    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Routing Main LR to CARD 1/2 for SD recording...\n");
-    osc_handler_->SetCardOutputSource(1, group, left_input);
-    osc_handler_->SetCardOutputSource(2, group, right_input);
-    osc_handler_->SetCardOutputName(1, "Main L");
-    osc_handler_->SetCardOutputName(2, "Main R");
+    const bool usb_recorder = RecorderTargetKey(config_) == "USBREC";
+    Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: Routing Main LR to ") +
+        RecorderTargetLabel(config_) + " 1/2...\n");
+    if (usb_recorder) {
+        osc_handler_->SetRecorderOutputSource(1, group, left_input);
+        osc_handler_->SetRecorderOutputSource(2, group, right_input);
+        osc_handler_->SetRecorderOutputName(1, "Main L");
+        osc_handler_->SetRecorderOutputName(2, "Main R");
+    } else {
+        osc_handler_->SetWLiveRecordTrackCount(1, 4);
+        osc_handler_->SetCardOutputSource(1, group, left_input);
+        osc_handler_->SetCardOutputSource(2, group, right_input);
+        osc_handler_->SetCardOutputName(1, "Main L");
+        osc_handler_->SetCardOutputName(2, "Main R");
+    }
 
-    const std::string msg = "Configured CARD outputs: 1=" + group + ":" + std::to_string(left_input) +
+    const std::string msg = std::string("Configured ") + RecorderTargetLabel(config_) +
+                            " outputs: 1=" + group + ":" + std::to_string(left_input) +
                             ", 2=" + group + ":" + std::to_string(right_input) + "\n";
     Log(msg);
+    const std::string verify_msg = std::string("Requested ") + RecorderTargetLabel(config_) +
+                                   " 1/2 routing from Main LR.\nVerify the routing on WING before starting recorder capture.";
     ShowMessageBox(
-        "Configured CARD 1/2 from Main LR source.\nUse Wing SD recorder to start capture.",
+        verify_msg.c_str(),
         "AUDIOLAB.wing.reaper.virtualsoundcheck",
         0
     );
 }
 
-void ReaperExtension::ApplySDRoutingNoDialog() {
+void ReaperExtension::ApplyRecorderRoutingNoDialog() {
     if (!osc_handler_) {
         return;
     }
     const int left_input = std::max(1, config_.sd_lr_left_input);
     const int right_input = std::max(1, config_.sd_lr_right_input);
     const std::string group = config_.sd_lr_group.empty() ? "MAIN" : config_.sd_lr_group;
-    osc_handler_->SetCardOutputSource(1, group, left_input);
-    osc_handler_->SetCardOutputSource(2, group, right_input);
-    osc_handler_->SetCardOutputName(1, "Main L");
-    osc_handler_->SetCardOutputName(2, "Main R");
+    if (RecorderTargetKey(config_) == "USBREC") {
+        osc_handler_->SetRecorderOutputSource(1, group, left_input);
+        osc_handler_->SetRecorderOutputSource(2, group, right_input);
+        osc_handler_->SetRecorderOutputName(1, "Main L");
+        osc_handler_->SetRecorderOutputName(2, "Main R");
+    } else {
+        osc_handler_->SetWLiveRecordTrackCount(1, 4);
+        osc_handler_->SetCardOutputSource(1, group, left_input);
+        osc_handler_->SetCardOutputSource(2, group, right_input);
+        osc_handler_->SetCardOutputName(1, "Main L");
+        osc_handler_->SetCardOutputName(2, "Main R");
+    }
+}
+
+void ReaperExtension::StartExternalRecorderFollow() {
+    if (!config_.auto_record_enabled || !config_.sd_auto_record_with_reaper || !connected_ || !osc_handler_) {
+        return;
+    }
+    if (external_recorder_started_by_plugin_.exchange(true)) {
+        return;
+    }
+
+    ApplyRecorderRoutingNoDialog();
+    Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: ") + RecorderTargetLabel(config_) +
+        " routing applied (best effort; verify on WING).\n");
+    if (RecorderTargetKey(config_) == "USBREC") {
+        osc_handler_->StartUSBRecorder();
+    } else {
+        osc_handler_->StartSDRecorder();
+    }
+    Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: ") + RecorderTargetLabel(config_) +
+        " start requested for plugin auto-trigger recording (best effort OSC; verify recorder state on WING).\n");
+
+    std::string status_detail;
+    if (PollRecorderStarted(config_, osc_handler_.get(), status_detail)) {
+        Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: Confirmed ") +
+            RecorderTargetLabel(config_) + " started. " + status_detail + "\n");
+    } else {
+        Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: ") + RecorderTargetLabel(config_) +
+            " did not confirm a recording state after start request. " + status_detail + "\n");
+    }
+}
+
+void ReaperExtension::StopExternalRecorderFollow() {
+    if (!external_recorder_started_by_plugin_.exchange(false)) {
+        return;
+    }
+    if (!osc_handler_) {
+        return;
+    }
+    if (RecorderTargetKey(config_) == "USBREC") {
+        osc_handler_->StopUSBRecorder();
+    } else {
+        osc_handler_->StopSDRecorder();
+    }
+    Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: ") + RecorderTargetLabel(config_) +
+        " stop requested for plugin auto-trigger recording (best effort OSC; verify recorder state on WING).\n");
+
+    std::string status_detail;
+    if (PollRecorderStopped(config_, osc_handler_.get(), status_detail)) {
+        Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: Confirmed ") +
+            RecorderTargetLabel(config_) + " stopped. " + status_detail + "\n");
+    } else {
+        Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: ") + RecorderTargetLabel(config_) +
+            " did not confirm a stopped state after stop request. " + status_detail + "\n");
+    }
+}
+
+void ReaperExtension::SyncExternalRecorderWithReaperState(bool is_recording_now) {
+    const bool was_recording = last_known_reaper_recording_state_.exchange(is_recording_now);
+
+    if (!config_.auto_record_enabled || !config_.sd_auto_record_with_reaper || !connected_ || !osc_handler_) {
+        if (external_recorder_started_by_plugin_) {
+            StopExternalRecorderFollow();
+        }
+        return;
+    }
+
+    if (is_recording_now && !was_recording) {
+        if (auto_record_started_by_plugin_) {
+            Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: REAPER entered record from auto-trigger; starting ") +
+                RecorderTargetLabel(config_) + ".\n");
+            StartExternalRecorderFollow();
+        } else {
+            Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: REAPER entered record, but no plugin-owned auto-trigger session was active; not starting ") +
+                RecorderTargetLabel(config_) + ".\n");
+        }
+    } else if (!is_recording_now && was_recording && external_recorder_started_by_plugin_) {
+        Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: REAPER left record; stopping ") +
+            RecorderTargetLabel(config_) + ".\n");
+        StopExternalRecorderFollow();
+    }
 }
 
 double ReaperExtension::ReadCurrentTriggerLevel() {

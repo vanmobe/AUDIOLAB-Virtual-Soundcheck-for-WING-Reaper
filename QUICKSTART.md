@@ -85,18 +85,18 @@ UI support:
 
 ## 7. Optional: Route Main LR to SD (CARD 1/2)
 
-Use REAPER action list:
+Use the checkbox in the plugin window:
 
-- `AUDIOLAB.wing.reaper.virtualsoundcheck: Route Main LR to CARD 1/2 (SD)`
+- `Route Main LR to CARD 1/2 when connected`
 
-This sets CARD output routing for SD LR recording based on:
+This requests CARD output routing for SD LR recording based on:
 
 - `sd_lr_group`
 - `sd_lr_left_input`
 - `sd_lr_right_input`
 
-If `sd_auto_record_with_reaper` is enabled, SD recorder start/stop OSC commands are also sent when auto-record starts/stops.
-The plugin now sends a fallback list of SD recorder OSC paths for better firmware compatibility.
+If `sd_auto_record_with_reaper` is enabled, the plugin follows REAPER record start/stop and sends SD recorder OSC commands when REAPER enters/leaves recording.
+The plugin sends a fallback list of SD recorder OSC paths for better firmware compatibility, but this is still best-effort OSC control and should be confirmed on WING before relying on SD capture.
 
 ## 8. Optional: OSC Notifications
 

@@ -130,9 +130,21 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 
 // ===== MAIN WING CONNECTOR WINDOW =====
 
+@interface WingConnectorFlippedView : NSView
+@end
+
+@implementation WingConnectorFlippedView
+- (BOOL)isFlipped {
+    return NO;
+}
+@end
+
 @interface WingConnectorWindowController : NSWindowController <NSWindowDelegate>
 {
     // UI Elements
+    NSScrollView* mainScrollView;
+    WingConnectorFlippedView* formContentView;
+    NSWindow* debugLogWindow;
     NSPopUpButton* wingDropdown;
     NSTextField* manualIPField;
     NSButton* scanButton;
@@ -144,6 +156,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     NSTextField* setupSoundcheckDescriptionLabel;
     NSTextView* activityLogView;
     NSScrollView* logScrollView;
+    NSButton* debugLogToggleButton;
     NSSegmentedControl* outputModeControl;
     NSSegmentedControl* midiActionsControl;
     NSSegmentedControl* autoRecordEnableControl;
@@ -151,7 +164,9 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     NSTextField* thresholdField;
     NSTextField* holdField;
     NSPopUpButton* monitorTrackDropdown;
+    NSSegmentedControl* recorderTargetControl;
     NSPopUpButton* sdSourceDropdown;
+    NSButton* sdRouteOnConnectCheckbox;
     NSButton* sdAutoRecordCheckbox;
     NSButton* oscOutEnableCheckbox;
     NSTextField* oscHostField;
@@ -164,6 +179,8 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     BOOL isWorking;  // Prevents re-entrant button clicks while an operation is in progress
     BOOL liveSetupValidated;  // True when Wing + REAPER routing validate as a complete live setup
     BOOL validationInProgress;  // Prevent overlapping auto-connect/validation runs
+    CGFloat collapsedContentHeight;
+    CGFloat expandedContentHeight;
 }
 
 - (instancetype)init;
@@ -173,8 +190,14 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 - (void)updateSetupSoundcheckButtonLabel;
 - (void)updateAutoTriggerControlsEnabled;
 - (void)refreshLiveSetupValidation;
+- (void)finalizeFormLayout;
+- (void)adjustWindowHeightToFitContent;
+- (void)updateFormLayoutForCurrentWindowSize;
 - (void)appendToLog:(NSString*)message;
 - (void)setWorkingState:(BOOL)working;
+- (void)onDebugLogToggled:(id)sender;
+- (void)windowDidResize:(NSNotification*)notification;
+- (void)createDebugLogWindow;
 
 - (void)startDiscoveryScan;
 - (void)populateDropdownWithItems:(NSArray*)items ips:(NSArray*)ips;
@@ -204,7 +227,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 
 - (instancetype)init {
     // Create the window with modern styling
-    NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 700, 980)
+    NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 700, 760)
                                                      styleMask:(NSWindowStyleMaskTitled |
                                                                NSWindowStyleMaskClosable |
                                                                NSWindowStyleMaskMiniaturizable |
@@ -212,7 +235,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
                                                        backing:NSBackingStoreBuffered
                                                          defer:NO];
     [window setTitle:@"Behringer Wing"];
-    [window setMinSize:NSMakeSize(700, 780)];
+    [window setMinSize:NSMakeSize(700, 560)];
     [window center];
     
     self = [super initWithWindow:window];
@@ -228,6 +251,8 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     liveSetupValidated = NO;
     validationInProgress = NO;
     meterPreviewTimer = nil;
+    collapsedContentHeight = 760.0;
+    expandedContentHeight = 760.0;
     
     // MUST call setupUI FIRST to initialize activityLogView!
     [self setupUI];
@@ -259,6 +284,9 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [discoveredIPs release];
     // Release UI elements that we retain in instance variables
     [wingDropdown release];
+    [mainScrollView release];
+    [formContentView release];
+    [debugLogWindow release];
     [manualIPField release];
     [scanButton release];
     [statusLabel release];
@@ -268,6 +296,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [setupSoundcheckDescriptionLabel release];
     [activityLogView release];
     [logScrollView release];
+    [debugLogToggleButton release];
     [outputModeControl release];
     [midiActionsControl release];
     [autoRecordEnableControl release];
@@ -275,7 +304,9 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [thresholdField release];
     [holdField release];
     [monitorTrackDropdown release];
+    [recorderTargetControl release];
     [sdSourceDropdown release];
+    [sdRouteOnConnectCheckbox release];
     [sdAutoRecordCheckbox release];
     [oscOutEnableCheckbox release];
     [oscHostField release];
@@ -288,8 +319,20 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 }
 
 - (void)setupUI {
-    NSView* contentView = [[self window] contentView];
-    int yPos = (int)NSHeight([contentView bounds]) - 80;
+    NSView* windowContentView = [[self window] contentView];
+    mainScrollView = [[NSScrollView alloc] initWithFrame:[windowContentView bounds]];
+    [mainScrollView setHasVerticalScroller:YES];
+    [mainScrollView setHasHorizontalScroller:NO];
+    [mainScrollView setBorderType:NSNoBorder];
+    [mainScrollView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+    [windowContentView addSubview:mainScrollView];
+
+    formContentView = [[WingConnectorFlippedView alloc] initWithFrame:NSMakeRect(0, 0, NSWidth([windowContentView bounds]), expandedContentHeight)];
+    [formContentView setAutoresizingMask:NSViewWidthSizable];
+    [mainScrollView setDocumentView:formContentView];
+
+    NSView* contentView = formContentView;
+    int yPos = (int)expandedContentHeight - 80;
     
     // ===== HEADER WITH LOGO =====
     NSBox* headerBox = [[NSBox alloc] initWithFrame:NSMakeRect(0, yPos - 10, 700, 70)];
@@ -638,9 +681,38 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 
     yPos -= 4;
 
-    sdAutoRecordCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(20, yPos + 4, 330, 20)];
+    NSTextField* recorderTargetLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(20, yPos + 8, 110, 20)];
+    [recorderTargetLabel setStringValue:@"Recorder target:"];
+    [recorderTargetLabel setFont:[NSFont systemFontOfSize:11]];
+    [recorderTargetLabel setBezeled:NO];
+    [recorderTargetLabel setEditable:NO];
+    [recorderTargetLabel setSelectable:NO];
+    [recorderTargetLabel setBackgroundColor:[NSColor clearColor]];
+    [contentView addSubview:recorderTargetLabel];
+    [recorderTargetLabel release];
+
+    recorderTargetControl = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(140, yPos + 4, 300, 24)];
+    [recorderTargetControl setSegmentCount:2];
+    [recorderTargetControl setLabel:@"SD (WING-LIVE)" forSegment:0];
+    [recorderTargetControl setLabel:@"USB Recorder" forSegment:1];
+    [recorderTargetControl setSelectedSegment:(cfg.recorder_target == "USBREC") ? 1 : 0];
+    [recorderTargetControl setTarget:self];
+    [recorderTargetControl setAction:@selector(onAutoRecordSettingsChanged:)];
+    [contentView addSubview:recorderTargetControl];
+    yPos -= 32;
+
+    sdRouteOnConnectCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(20, yPos + 4, 380, 20)];
+    [sdRouteOnConnectCheckbox setButtonType:NSButtonTypeSwitch];
+    [sdRouteOnConnectCheckbox setTitle:@"Route Main LR to selected recorder 1/2 when connected"];
+    [sdRouteOnConnectCheckbox setState:cfg.sd_lr_route_enabled ? NSControlStateValueOn : NSControlStateValueOff];
+    [sdRouteOnConnectCheckbox setTarget:self];
+    [sdRouteOnConnectCheckbox setAction:@selector(onAutoRecordSettingsChanged:)];
+    [contentView addSubview:sdRouteOnConnectCheckbox];
+    yPos -= 26;
+
+    sdAutoRecordCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(20, yPos + 4, 470, 20)];
     [sdAutoRecordCheckbox setButtonType:NSButtonTypeSwitch];
-    [sdAutoRecordCheckbox setTitle:@"Start/stop WING SD recorder with auto record"];
+    [sdAutoRecordCheckbox setTitle:@"Start/stop selected recorder only for auto-trigger recordings"];
     [sdAutoRecordCheckbox setState:cfg.sd_auto_record_with_reaper ? NSControlStateValueOn : NSControlStateValueOff];
     [sdAutoRecordCheckbox setTarget:self];
     [sdAutoRecordCheckbox setAction:@selector(onAutoRecordSettingsChanged:)];
@@ -648,7 +720,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     yPos -= 30;
 
     NSTextField* sdSourceLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(40, yPos + 8, 100, 20)];
-    [sdSourceLabel setStringValue:@"SD source:"];
+    [sdSourceLabel setStringValue:@"Source (MAIN pair):"];
     [sdSourceLabel setFont:[NSFont systemFontOfSize:11]];
     [sdSourceLabel setBezeled:NO];
     [sdSourceLabel setEditable:NO];
@@ -683,25 +755,17 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 
     yPos -= 10;
     
-    // ===== ACTIVITY LOG =====
-    NSBox* separator2 = [[NSBox alloc] initWithFrame:NSMakeRect(20, yPos, 660, 1)];
-    [separator2 setBoxType:NSBoxSeparator];
-    [contentView addSubview:separator2];
+    // ===== DEBUG LOG =====
+    debugLogToggleButton = [[NSButton alloc] initWithFrame:NSMakeRect(20, yPos - 2, 180, 24)];
+    [debugLogToggleButton setButtonType:NSButtonTypeMomentaryPushIn];
+    [debugLogToggleButton setBezelStyle:NSBezelStyleRounded];
+    [debugLogToggleButton setTitle:@"Open Debug Log"];
+    [debugLogToggleButton setTarget:self];
+    [debugLogToggleButton setAction:@selector(onDebugLogToggled:)];
+    [contentView addSubview:debugLogToggleButton];
     yPos -= 30;
-    
-    NSTextField* logHeader = [[NSTextField alloc] initWithFrame:NSMakeRect(20, yPos, 200, 20)];
-    [logHeader setStringValue:@"Activity Log"];
-    [logHeader setFont:[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold]];
-    [logHeader setBezeled:NO];
-    [logHeader setEditable:NO];
-    [logHeader setSelectable:NO];
-    [logHeader setBackgroundColor:[NSColor clearColor]];
-    [logHeader setTextColor:[NSColor labelColor]];
-    [contentView addSubview:logHeader];
-    yPos -= 30;
-    
-    // Activity log scroll view and text view
-    const int logHeight = std::max(220, yPos - 20);
+
+    const int logHeight = 320;
     logScrollView = [[NSScrollView alloc] initWithFrame:NSMakeRect(20, 20, 660, logHeight)];
     [logScrollView setHasVerticalScroller:YES];
     [logScrollView setHasHorizontalScroller:NO];
@@ -716,7 +780,8 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [activityLogView setBackgroundColor:[NSColor textBackgroundColor]];
     
     [logScrollView setDocumentView:activityLogView];
-    [contentView addSubview:logScrollView];
+    [self createDebugLogWindow];
+    [self finalizeFormLayout];
 }
 
 - (void)updateConnectionStatus {
@@ -807,16 +872,19 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 }
 
 - (void)updateAutoTriggerControlsEnabled {
-    const BOOL enabled = (liveSetupValidated && !isWorking) ? YES : NO;
-    [midiActionsControl setEnabled:enabled];
-    [monitorTrackDropdown setEnabled:enabled];
-    [autoRecordEnableControl setEnabled:enabled];
-    [autoRecordModeControl setEnabled:enabled];
-    [thresholdField setEnabled:enabled];
-    [holdField setEnabled:enabled];
-    [ccLayerDropdown setEnabled:enabled];
-    [sdAutoRecordCheckbox setEnabled:enabled];
-    [sdSourceDropdown setEnabled:enabled];
+    const BOOL liveSetupControlsEnabled = (liveSetupValidated && !isWorking) ? YES : NO;
+    const BOOL sdControlsEnabled = isWorking ? NO : YES;
+    [midiActionsControl setEnabled:liveSetupControlsEnabled];
+    [monitorTrackDropdown setEnabled:liveSetupControlsEnabled];
+    [autoRecordEnableControl setEnabled:liveSetupControlsEnabled];
+    [autoRecordModeControl setEnabled:liveSetupControlsEnabled];
+    [thresholdField setEnabled:liveSetupControlsEnabled];
+    [holdField setEnabled:liveSetupControlsEnabled];
+    [ccLayerDropdown setEnabled:liveSetupControlsEnabled];
+    [recorderTargetControl setEnabled:sdControlsEnabled];
+    [sdRouteOnConnectCheckbox setEnabled:sdControlsEnabled];
+    [sdAutoRecordCheckbox setEnabled:sdControlsEnabled];
+    [sdSourceDropdown setEnabled:sdControlsEnabled];
 }
 
 - (void)refreshLiveSetupValidation {
@@ -1189,8 +1257,130 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     }
 }
 
+- (void)onDebugLogToggled:(id)sender {
+    (void)sender;
+    if (!debugLogWindow) {
+        [self createDebugLogWindow];
+    }
+    [debugLogWindow makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+}
+
+- (void)windowDidResize:(NSNotification*)notification {
+    (void)notification;
+    [self updateFormLayoutForCurrentWindowSize];
+}
+
+- (void)finalizeFormLayout {
+    if (!formContentView) {
+        return;
+    }
+
+    CGFloat minY = CGFLOAT_MAX;
+    CGFloat maxY = 0.0;
+    for (NSView* subview in [formContentView subviews]) {
+        if ([subview isHidden]) {
+            continue;
+        }
+        const NSRect frame = [subview frame];
+        minY = std::min(minY, NSMinY(frame));
+        maxY = std::max(maxY, NSMaxY(frame));
+    }
+
+    if (minY == CGFLOAT_MAX) {
+        expandedContentHeight = collapsedContentHeight;
+        [self updateFormLayoutForCurrentWindowSize];
+        return;
+    }
+
+    const CGFloat desiredBottomPadding = 24.0;
+    if (minY < desiredBottomPadding) {
+        const CGFloat shift = desiredBottomPadding - minY;
+        for (NSView* subview in [formContentView subviews]) {
+            NSRect frame = [subview frame];
+            frame.origin.y += shift;
+            [subview setFrame:frame];
+        }
+        maxY += shift;
+    }
+
+    const CGFloat desiredTopPadding = 20.0;
+    expandedContentHeight = std::max(collapsedContentHeight, maxY + desiredTopPadding);
+    [self adjustWindowHeightToFitContent];
+    [self updateFormLayoutForCurrentWindowSize];
+}
+
+- (void)adjustWindowHeightToFitContent {
+    NSWindow* window = [self window];
+    if (!window) {
+        return;
+    }
+
+    NSRect currentFrame = [window frame];
+    NSRect currentContentRect = [window contentRectForFrameRect:currentFrame];
+    const CGFloat desiredContentHeight = expandedContentHeight;
+    if (currentContentRect.size.height >= desiredContentHeight) {
+        return;
+    }
+
+    NSScreen* screen = [window screen];
+    if (!screen) {
+        screen = [NSScreen mainScreen];
+    }
+    if (!screen) {
+        return;
+    }
+
+    const NSRect visibleFrame = [screen visibleFrame];
+    NSRect maxContentRect = [window contentRectForFrameRect:visibleFrame];
+    const CGFloat maxContentHeight = maxContentRect.size.height;
+    const CGFloat targetContentHeight = std::min(desiredContentHeight, maxContentHeight);
+    if (targetContentHeight <= currentContentRect.size.height) {
+        return;
+    }
+
+    const CGFloat delta = targetContentHeight - currentContentRect.size.height;
+    currentFrame.origin.y -= delta;
+    currentFrame.size.height += delta;
+    [window setFrame:currentFrame display:NO];
+}
+
+- (void)updateFormLayoutForCurrentWindowSize {
+    if (!mainScrollView || !formContentView) {
+        return;
+    }
+    NSSize clipSize = [[mainScrollView contentView] bounds].size;
+    const CGFloat targetHeight = std::max(expandedContentHeight, clipSize.height);
+    [formContentView setFrame:NSMakeRect(0, 0, std::max(clipSize.width, (CGFloat)700.0), targetHeight)];
+    NSClipView* clipView = [mainScrollView contentView];
+    CGFloat topOriginY = std::max(0.0, targetHeight - NSHeight([clipView bounds]));
+    [clipView scrollToPoint:NSMakePoint(0, topOriginY)];
+    [mainScrollView reflectScrolledClipView:clipView];
+}
+
+- (void)createDebugLogWindow {
+    if (debugLogWindow) {
+        return;
+    }
+    debugLogWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 700, 360)
+                                                 styleMask:(NSWindowStyleMaskTitled |
+                                                           NSWindowStyleMaskClosable |
+                                                           NSWindowStyleMaskMiniaturizable |
+                                                           NSWindowStyleMaskResizable)
+                                                   backing:NSBackingStoreBuffered
+                                                     defer:NO];
+    [debugLogWindow setTitle:@"Behringer Wing Debug Log"];
+    [debugLogWindow setMinSize:NSMakeSize(520, 220)];
+
+    NSView* logContentView = [debugLogWindow contentView];
+    [logScrollView setFrame:[logContentView bounds]];
+    [logScrollView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+    [logContentView addSubview:logScrollView];
+}
+
 - (void)onAutoRecordSettingsChanged:(id)sender {
-    auto& config = ReaperExtension::Instance().GetConfig();
+    auto& extension = ReaperExtension::Instance();
+    auto& config = extension.GetConfig();
     config.auto_record_enabled = ([autoRecordEnableControl selectedSegment] == 1);
     config.auto_record_warning_only = ([autoRecordModeControl selectedSegment] == 0);
     config.auto_record_threshold_db = [[thresholdField stringValue] doubleValue];
@@ -1199,18 +1389,38 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     config.auto_record_monitor_track = selectedTrackItem ? (int)[selectedTrackItem tag] : 0;
     NSMenuItem* selectedLayerItem = [ccLayerDropdown selectedItem];
     config.warning_flash_cc_layer = selectedLayerItem ? (int)[selectedLayerItem tag] : 1;
+    config.sd_lr_route_enabled = ([sdRouteOnConnectCheckbox state] == NSControlStateValueOn);
     config.sd_auto_record_with_reaper = ([sdAutoRecordCheckbox state] == NSControlStateValueOn);
+    config.recorder_target = ([recorderTargetControl selectedSegment] == 1) ? "USBREC" : "WLIVE";
     NSMenuItem* sdItem = [sdSourceDropdown selectedItem];
     int sdLeft = sdItem ? (int)[sdItem tag] : 1;
     config.sd_lr_group = "MAIN";
     config.sd_lr_left_input = sdLeft;
     config.sd_lr_right_input = sdLeft + 1;
-    ReaperExtension::Instance().ApplyAutoRecordSettings();
-    ReaperExtension::Instance().SyncMidiActionsToWing();
+    extension.ApplyAutoRecordSettings();
+    extension.SyncMidiActionsToWing();
 
-    [self appendToLog:[NSString stringWithFormat:@"Auto trigger: %s, mode=%s, source=REAPER, threshold=%.1f dBFS, hold=%dms, track=%d, ccLayer=%d\n",
+    const bool sdRouteChanged = (sender == sdRouteOnConnectCheckbox ||
+                                sender == sdSourceDropdown ||
+                                sender == recorderTargetControl);
+    NSString* recorderLabel = ([recorderTargetControl selectedSegment] == 1)
+        ? @"USB recorder"
+        : @"SD card (WING-LIVE)";
+    if (sdRouteChanged && extension.IsConnected()) {
+        if (config.sd_lr_route_enabled) {
+            extension.ApplyRecorderRoutingNoDialog();
+            [self appendToLog:[NSString stringWithFormat:@"Requested Main LR routing to %@ 1/2 (verify on WING).\n",
+                               recorderLabel]];
+        } else {
+            [self appendToLog:[NSString stringWithFormat:@"%@ route-on-connect disabled. Existing WING routing was not restored automatically.\n",
+                               recorderLabel]];
+        }
+    }
+
+    [self appendToLog:[NSString stringWithFormat:@"Auto trigger: %s, mode=%s, source=REAPER, recorder=%@, threshold=%.1f dBFS, hold=%dms, track=%d, ccLayer=%d\n",
                        config.auto_record_enabled ? "ON" : "OFF",
                        config.auto_record_warning_only ? "WARNING" : "RECORD",
+                       recorderLabel,
                        config.auto_record_threshold_db,
                        config.auto_record_hold_ms,
                        config.auto_record_monitor_track,

@@ -120,19 +120,14 @@ static void RegisterCommands() {
     
     Logger::Debug("Registering custom action");
     
-    // Define the AUDIOLAB.wing.reaper.virtualsoundcheck action
     custom_action_register_t action;
     memset(&action, 0, sizeof(action));
+    action.uniqueSectionId = 0;
+    action.idStr = "_AUDIOLAB_VIRTUALSOUNDCHECK_MAIN_DIALOG";
+    action.name = "Behringer Wing: Configure Virtual Soundcheck/Recording";
+    g_cmd_main_dialog = g_rec->Register("custom_action", &action);
     
-    action.uniqueSectionId = 0;           // Main action section
-    action.idStr = "_AUDIOLAB_VIRTUALSOUNDCHECK_MAIN_DIALOG";   // Unique ID for this action
-    action.name = "Behringer Wing: Configure Virtual Soundcheck/Recording";  // Menu label
-    
-    // Register and store the action ID for later reference
-    int ret = g_rec->Register("custom_action", &action);
-    g_cmd_main_dialog = ret;
-    
-    Logger::Debug("Custom action registered with ID: %d", ret);
+    Logger::Debug("Main dialog action registered with ID: %d", g_cmd_main_dialog);
     
     // Register keyboard shortcut Ctrl+Shift+W for quick access
     if (g_cmd_main_dialog > 0) {
