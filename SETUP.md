@@ -90,3 +90,10 @@ Release tags matching `v*` trigger installer build + publish.
 - Missing `oscpack` checkout in `lib/oscpack/`
 - Compiler toolchain not installed or not on PATH
 - Platform-specific packaging tools missing (`pkgbuild`, Inno Setup, `dpkg-deb`)
+
+## Related Documentation
+
+- [README.md](README.md) for the project overview
+- [docs/README.md](docs/README.md) for the documentation map
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for code structure and runtime flow
+- [docs/WING_OSC_PROTOCOL.md](docs/WING_OSC_PROTOCOL.md) for protocol details

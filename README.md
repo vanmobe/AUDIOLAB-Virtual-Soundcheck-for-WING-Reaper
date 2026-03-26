@@ -51,11 +51,11 @@ See [QUICKSTART.md](QUICKSTART.md) for the 5-minute flow.
 
 ## User Documentation
 
+- [docs/README.md](docs/README.md) - documentation map and reading order
 - [INSTALL.md](INSTALL.md) - installer-first setup by platform
-- [QUICKSTART.md](QUICKSTART.md) - operator flow
-- [docs/USER_GUIDE.md](docs/USER_GUIDE.md) - practical usage walkthrough
-- [docs/CC_BUTTONS_AND_AUTO_TRIGGER.md](docs/CC_BUTTONS_AND_AUTO_TRIGGER.md) - CC mapping and auto-trigger behavior
-- [snapshots/README.md](snapshots/README.md) - legacy/manual MIDI mapping fallback
+- [QUICKSTART.md](QUICKSTART.md) - shortest path to first connection
+- [docs/USER_GUIDE.md](docs/USER_GUIDE.md) - day-to-day operation in REAPER
+- [docs/CC_BUTTONS_AND_AUTO_TRIGGER.md](docs/CC_BUTTONS_AND_AUTO_TRIGGER.md) - CC mapping, auto-trigger, and SD recording notes
 
 ## Developer Documentation
 

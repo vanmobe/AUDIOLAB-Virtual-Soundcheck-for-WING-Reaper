@@ -83,6 +83,12 @@ For mapping details (and legacy manual fallback), see:
 - [docs/CC_BUTTONS_AND_AUTO_TRIGGER.md](docs/CC_BUTTONS_AND_AUTO_TRIGGER.md)
 - [snapshots/README.md](snapshots/README.md)
 
+## Where To Go Next
+
+- [QUICKSTART.md](QUICKSTART.md) for the first connection flow
+- [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for normal session operation
+- [docs/README.md](docs/README.md) for the full documentation map
+
 ## Uninstall
 
 Remove plugin and config from your REAPER `UserPlugins` path:

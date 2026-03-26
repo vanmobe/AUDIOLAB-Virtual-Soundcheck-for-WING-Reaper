@@ -118,6 +118,7 @@ Detailed reference:
 
 ## Related Docs
 
+- [README.md](README.md)
 - [INSTALL.md](../INSTALL.md)
 - [QUICKSTART.md](../QUICKSTART.md)
 - [SETUP.md](../SETUP.md)

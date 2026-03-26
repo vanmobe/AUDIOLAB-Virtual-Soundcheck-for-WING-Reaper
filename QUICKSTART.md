@@ -122,6 +122,7 @@ Destination is configured by `osc_out_host` + `osc_out_port`.
 
 ## Next Docs
 
+- [docs/README.md](docs/README.md)
 - [docs/USER_GUIDE.md](docs/USER_GUIDE.md)
 - [docs/CC_BUTTONS_AND_AUTO_TRIGGER.md](docs/CC_BUTTONS_AND_AUTO_TRIGGER.md)
 - [SETUP.md](SETUP.md)
