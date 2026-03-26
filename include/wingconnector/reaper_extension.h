@@ -17,18 +17,7 @@ class midi_Input;
 
 namespace WingConnector {
 
-// Forward declaration for channel selection info
-struct ChannelSelectionInfo {
-    int channel_number;
-    std::string name;
-    std::string source_group;
-    int source_input;
-    std::string partner_name;
-    std::string partner_source_group;
-    int partner_source_input;
-    bool stereo_linked;
-    bool selected;
-};
+using ChannelSelectionInfo = SourceSelectionInfo;
 
 class ReaperExtension {
 public:
@@ -46,9 +35,9 @@ public:
     std::vector<WingInfo> DiscoverWings(int timeout_ms = 1500);
     
     // Channel operations (called by dialog)
-    std::vector<ChannelSelectionInfo> GetAvailableChannels();
-    void CreateTracksFromSelection(const std::vector<ChannelSelectionInfo>& channels);
-    void SetupSoundcheckFromSelection(const std::vector<ChannelSelectionInfo>& channels, bool setup_soundcheck = true);
+    std::vector<SourceSelectionInfo> GetAvailableSources();
+    void CreateTracksFromSelection(const std::vector<SourceSelectionInfo>& channels);
+    void SetupSoundcheckFromSelection(const std::vector<SourceSelectionInfo>& channels, bool setup_soundcheck = true, bool replace_existing = true);
     bool CheckOutputModeAvailability(const std::string& output_mode, std::string& details) const;
     bool ValidateLiveRecordingSetup(std::string& details);
     void RouteMainLRToCardForSDRecording();

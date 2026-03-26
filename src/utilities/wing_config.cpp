@@ -67,6 +67,7 @@ bool WingConfig::LoadFromFile(const std::string& filepath) {
         warning_flash_cc_enabled = config.value("warning_flash_cc_enabled", true);
         warning_flash_cc_layer = config.value("warning_flash_cc_layer", 1);
         warning_flash_cc_color = config.value("warning_flash_cc_color", 9);
+        last_selected_source_ids = config.value("last_selected_source_ids", std::vector<std::string>{});
         
         // Extract color if present
         if (config.contains("default_track_color") && config["default_track_color"].is_object()) {
@@ -133,6 +134,7 @@ bool WingConfig::SaveToFile(const std::string& filepath) {
         config["warning_flash_cc_enabled"] = warning_flash_cc_enabled;
         config["warning_flash_cc_layer"] = warning_flash_cc_layer;
         config["warning_flash_cc_color"] = warning_flash_cc_color;
+        config["last_selected_source_ids"] = last_selected_source_ids;
         config["default_track_color"] = {
             {"r", (int)default_color.r},
             {"g", (int)default_color.g},

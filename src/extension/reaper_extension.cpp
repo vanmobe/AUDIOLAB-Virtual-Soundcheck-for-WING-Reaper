@@ -45,9 +45,48 @@ namespace WingConnector {
 
 namespace {
 constexpr int kChannelQueryAttempts = 2;
-constexpr int kQueryResponseWaitMs = 600;  // Wait time for OSC responses after sending all queries
+constexpr int kQueryResponseWaitMs = 250;  // Wait time for OSC responses after sending all queries
 constexpr int kReaperPlayStatePlayingBit = 1;
 constexpr int kReaperPlayStateRecordingBit = 4;
+constexpr const char* kTrackSourceIdExtKey = "P_EXT:WINGCONNECTOR_SOURCE_ID";
+
+const char* SourceKindTag(SourceKind kind) {
+    switch (kind) {
+        case SourceKind::Channel: return "CH";
+        case SourceKind::Bus: return "BUS";
+        case SourceKind::Matrix: return "MTX";
+    }
+    return "SRC";
+}
+
+std::string SourceIdentity(const SourceSelectionInfo& source) {
+    return std::string(SourceKindTag(source.kind)) + std::to_string(source.source_number);
+}
+
+std::string SourceIdentity(SourceKind kind, int source_number) {
+    return std::string(SourceKindTag(kind)) + std::to_string(source_number);
+}
+
+std::string SourcePersistentId(SourceKind kind, int source_number) {
+    return std::string(SourceKindTag(kind)) + ":" + std::to_string(source_number);
+}
+
+std::string SourcePersistentId(const SourceSelectionInfo& source) {
+    return SourcePersistentId(source.kind, source.source_number);
+}
+
+std::string NormalizeManagedTrackName(std::string track_name, const std::string& track_prefix) {
+    const std::string prefixed = track_prefix.empty() ? std::string() : (track_prefix + " ");
+    if (!prefixed.empty() && track_name.rfind(prefixed, 0) == 0) {
+        track_name.erase(0, prefixed.size());
+    }
+    const std::string stereo_suffix = " (Stereo)";
+    if (track_name.size() > stereo_suffix.size() &&
+        track_name.compare(track_name.size() - stereo_suffix.size(), stereo_suffix.size(), stereo_suffix) == 0) {
+        track_name.erase(track_name.size() - stereo_suffix.size());
+    }
+    return track_name;
+}
 
 long long SteadyNowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -572,16 +611,42 @@ bool ReaperExtension::ConnectToWing() {
     return true;
 }
 
-// Get available channels with sources assigned
-std::vector<ChannelSelectionInfo> ReaperExtension::GetAvailableChannels() {
-    std::vector<ChannelSelectionInfo> result;
+// Get available recording sources with routing assigned.
+std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
+    std::vector<SourceSelectionInfo> result;
     
     if (!connected_ || !osc_handler_) {
-        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Not connected. Cannot query channels.\n");
+        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Not connected. Cannot query sources.\n");
         return result;
     }
     
-    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Querying channels...\n");
+    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Querying channel sources...\n");
+
+    std::set<std::string> existing_source_ids;
+    std::set<std::string> existing_source_names;
+    if (track_manager_) {
+        const auto existing_tracks = track_manager_->FindExistingWingTracks();
+        for (MediaTrack* track : existing_tracks) {
+            if (!track) {
+                continue;
+            }
+
+            char source_id_buf[256];
+            if (GetSetMediaTrackInfo_String(track, kTrackSourceIdExtKey, source_id_buf, false) &&
+                source_id_buf[0] != '\0') {
+                existing_source_ids.insert(source_id_buf);
+            }
+
+            char name_buf[512];
+            if (GetSetMediaTrackInfo_String(track, "P_NAME", name_buf, false) && name_buf[0] != '\0') {
+                existing_source_names.insert(NormalizeManagedTrackName(name_buf, config_.track_prefix));
+            }
+        }
+    }
+    for (const auto& source_id : config_.last_selected_source_ids) {
+        existing_source_ids.insert(source_id);
+    }
+    const bool has_existing_selection = !existing_source_ids.empty() || !existing_source_names.empty();
     
     // Query all channels with retries
     const auto query_delay = std::chrono::milliseconds(kQueryResponseWaitMs);
@@ -610,7 +675,6 @@ std::vector<ChannelSelectionInfo> ReaperExtension::GetAvailableChannels() {
 
     // Query USR routing so popup can display resolved sources (e.g. USR:25 -> A:8)
     osc_handler_->QueryUserSignalInputs(48);
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     auto use_direct_display_source = [](const std::string& grp) {
         return grp == "A" || grp == "LCL" || grp == "USR";
@@ -618,6 +682,7 @@ std::vector<ChannelSelectionInfo> ReaperExtension::GetAvailableChannels() {
 
     // Query source labels used by the selection popup (for name fallback).
     std::set<std::pair<std::string, int>> source_endpoints;
+    std::map<int, std::pair<std::string, int>> channel_display_sources;
     for (const auto& pair : channel_data) {
         const ChannelInfo& ch = pair.second;
         if (ch.primary_source_group.empty() || ch.primary_source_input <= 0) {
@@ -628,11 +693,40 @@ std::vector<ChannelSelectionInfo> ReaperExtension::GetAvailableChannels() {
                 ? std::make_pair(ch.primary_source_group, ch.primary_source_input)
                 : osc_handler_->ResolveRoutingChain(ch.primary_source_group, ch.primary_source_input);
         source_endpoints.insert(display_source);
+        channel_display_sources[ch.channel_number] = display_source;
         if (ch.stereo_linked) {
             source_endpoints.insert({display_source.first, display_source.second + 1});
         }
     }
     osc_handler_->QueryInputSourceNames(source_endpoints);
+
+    std::set<std::pair<std::string, int>> missing_channel_name_sources;
+    for (const auto& pair : channel_data) {
+        const ChannelInfo& ch = pair.second;
+        const bool has_generic_channel_name =
+            ch.name.empty() || ch.name.rfind("CH", 0) == 0 || ch.name.rfind("Channel ", 0) == 0;
+        if (!has_generic_channel_name) {
+            continue;
+        }
+        auto it = channel_display_sources.find(ch.channel_number);
+        if (it == channel_display_sources.end()) {
+            continue;
+        }
+        const auto& [grp, in] = it->second;
+        if (!osc_handler_->GetInputSourceName(grp, in).empty()) {
+            continue;
+        }
+        missing_channel_name_sources.insert({grp, in});
+    }
+    std::map<std::string, std::string> direct_channel_names;
+    if (!missing_channel_name_sources.empty()) {
+        std::vector<std::string> missing_name_addresses;
+        missing_name_addresses.reserve(missing_channel_name_sources.size());
+        for (const auto& [grp, in] : missing_channel_name_sources) {
+            missing_name_addresses.push_back("/io/in/" + grp + "/" + std::to_string(in) + "/name");
+        }
+        direct_channel_names = osc_handler_->QueryStringAddressesDirect(missing_name_addresses, 100, 15);
+    }
     
     Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Processing channel data...\n");
     // stereo_linked is set from /io/in/{grp}/{num}/mode by the second pass in QueryAllChannels.
@@ -649,8 +743,9 @@ std::vector<ChannelSelectionInfo> ReaperExtension::GetAvailableChannels() {
             continue;
         }
 
-        ChannelSelectionInfo info;
-        info.channel_number = ch.channel_number;
+        SourceSelectionInfo info;
+        info.kind = SourceKind::Channel;
+        info.source_number = ch.channel_number;
         info.name = ch.name;
         info.source_group = ch.primary_source_group;
         info.source_input = ch.primary_source_input;
@@ -677,7 +772,11 @@ std::vector<ChannelSelectionInfo> ReaperExtension::GetAvailableChannels() {
         if (has_generic_channel_name) {
             std::string src_name = osc_handler_->GetInputSourceName(info.source_group, info.source_input);
             if (src_name.empty()) {
-                src_name = osc_handler_->QueryInputSourceNameDirect(info.source_group, info.source_input);
+                const std::string key = "/io/in/" + info.source_group + "/" + std::to_string(info.source_input) + "/name";
+                auto direct_it = direct_channel_names.find(key);
+                if (direct_it != direct_channel_names.end()) {
+                    src_name = direct_it->second;
+                }
             }
             if (!src_name.empty()) {
                 info.name = src_name;
@@ -685,21 +784,118 @@ std::vector<ChannelSelectionInfo> ReaperExtension::GetAvailableChannels() {
         }
 
         info.stereo_linked = is_stereo;
-        info.selected = !info.name.empty() && info.name.rfind("CH", 0) != 0 && info.name.rfind("Channel ", 0) != 0;
+        info.selected = has_existing_selection
+            ? (existing_source_ids.count(SourcePersistentId(info)) > 0 ||
+               existing_source_names.count(info.name) > 0)
+            : false;
+        info.soundcheck_capable = true;
 
         result.push_back(info);
     }
+
+    auto append_record_only_sources = [&](SourceKind kind,
+                                          const std::string& route_group,
+                                          int count,
+                                          const std::string& fallback_prefix,
+                                          const std::map<int, std::string>& modes,
+                                          const std::map<int, std::string>& names) {
+        for (int i = 1; i <= count; ++i) {
+            auto mode_it = modes.find(i);
+            std::string mode = (mode_it != modes.end()) ? mode_it->second : "";
+            if (mode.empty()) {
+                continue;
+            }
+            const bool is_stereo = (mode == "ST" || mode == "MS");
+            if (is_stereo && (i % 2 == 0)) {
+                continue;
+            }
+
+            SourceSelectionInfo info;
+            info.kind = kind;
+            info.source_number = i;
+            info.source_group = route_group;
+            info.source_input = i;
+            info.stereo_linked = is_stereo;
+            info.soundcheck_capable = false;
+            info.selected = has_existing_selection
+                ? (existing_source_ids.count(SourcePersistentId(info)) > 0 ||
+                   existing_source_names.count(info.name) > 0)
+                : false;
+
+            auto name_it = names.find(i);
+            std::string name = (name_it != names.end()) ? name_it->second : "";
+            if (name.empty()) {
+                name = info.stereo_linked
+                    ? (fallback_prefix + " " + std::to_string(i) + "-" + std::to_string(i + 1))
+                    : (fallback_prefix + " " + std::to_string(i));
+            }
+            info.name = name;
+
+            if (info.stereo_linked) {
+                info.partner_source_group = route_group;
+                info.partner_source_input = i + 1;
+            }
+
+            result.push_back(info);
+        }
+    };
+
+    auto load_record_only_metadata = [&](const std::string& query_group,
+                                         const std::string& console_prefix,
+                                         int count) {
+        std::vector<std::string> addresses;
+        addresses.reserve(static_cast<size_t>(count) * 3);
+        for (int i = 1; i <= count; ++i) {
+            char formatted[8];
+            snprintf(formatted, sizeof(formatted), "%02d", i);
+            addresses.push_back("/io/in/" + query_group + "/" + std::to_string(i) + "/mode");
+            addresses.push_back("/" + console_prefix + "/" + std::string(formatted) + "/name");
+            addresses.push_back("/" + console_prefix + "/" + std::to_string(i) + "/name");
+        }
+
+        std::map<int, std::string> modes;
+        std::map<int, std::string> names;
+        const auto replies = osc_handler_->QueryStringAddressesDirect(addresses, 140, 20);
+        for (int i = 1; i <= count; ++i) {
+            char formatted[8];
+            snprintf(formatted, sizeof(formatted), "%02d", i);
+            const std::string mode_path = "/io/in/" + query_group + "/" + std::to_string(i) + "/mode";
+            auto mode_it = replies.find(mode_path);
+            if (mode_it != replies.end()) {
+                modes[i] = mode_it->second;
+            }
+
+            const std::string name_path_a = "/" + console_prefix + "/" + std::string(formatted) + "/name";
+            const std::string name_path_b = "/" + console_prefix + "/" + std::to_string(i) + "/name";
+            auto name_it = replies.find(name_path_a);
+            if (name_it != replies.end() && !name_it->second.empty()) {
+                names[i] = name_it->second;
+                continue;
+            }
+            name_it = replies.find(name_path_b);
+            if (name_it != replies.end() && !name_it->second.empty()) {
+                names[i] = name_it->second;
+            }
+        }
+        return std::make_pair(std::move(modes), std::move(names));
+    };
+
+    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Querying bus and matrix sources...\n");
+    auto [bus_modes, bus_names] = load_record_only_metadata("$BUS", "bus", 32);
+    auto [mtx_modes, mtx_names] = load_record_only_metadata("$MTX", "mtx", 16);
+
+    append_record_only_sources(SourceKind::Bus, "BUS", 32, "Bus", bus_modes, bus_names);
+    append_record_only_sources(SourceKind::Matrix, "MTX", 16, "Matrix", mtx_modes, mtx_names);
     
     char msg[128];
-    snprintf(msg, sizeof(msg), "AUDIOLAB.wing.reaper.virtualsoundcheck: Found %d channels with sources\n", 
+    snprintf(msg, sizeof(msg), "AUDIOLAB.wing.reaper.virtualsoundcheck: Found %d selectable sources\n", 
              (int)result.size());
     Log(msg);
     
     return result;
 }
 
-// Create tracks from selected channels
-void ReaperExtension::CreateTracksFromSelection(const std::vector<ChannelSelectionInfo>& channels) {
+void ReaperExtension::CreateTracksFromSelection(const std::vector<SourceSelectionInfo>& channels) {
     if (!connected_ || !osc_handler_) {
         Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Not connected\n");
         return;
@@ -707,8 +903,7 @@ void ReaperExtension::CreateTracksFromSelection(const std::vector<ChannelSelecti
     
     Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Creating tracks from selection...\n");
     
-    // Filter to only selected channels
-    std::vector<ChannelSelectionInfo> selected;
+    std::vector<SourceSelectionInfo> selected;
     for (const auto& ch : channels) {
         if (ch.selected) {
             selected.push_back(ch);
@@ -716,35 +911,55 @@ void ReaperExtension::CreateTracksFromSelection(const std::vector<ChannelSelecti
     }
     
     if (selected.empty()) {
-        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: No channels selected\n");
+        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: No sources selected\n");
         return;
     }
-    
-    // Get full channel data from OSC handler
+
+    auto allocations = osc_handler_->CalculateUSBAllocation(selected);
+    int track_index = 0;
+    int created_tracks = 0;
     const auto& channel_data = osc_handler_->GetChannelData();
-    
-    // Build filtered channel data map
-    std::map<int, ChannelInfo> filtered_data;
-    for (const auto& sel : selected) {
-        auto it = channel_data.find(sel.channel_number);
-        if (it != channel_data.end()) {
-            ChannelInfo ch_info = it->second;
-            if (ch_info.name.empty()) {
-                if (!sel.name.empty()) {
-                    ch_info.name = sel.name;
-                } else {
-                    ch_info.name = "CH" + std::to_string(sel.channel_number);
-                }
-            }
-            filtered_data[sel.channel_number] = ch_info;
+
+    Undo_BeginBlock();
+    for (const auto& alloc : allocations) {
+        auto it = std::find_if(selected.begin(), selected.end(), [&](const SourceSelectionInfo& source) {
+            return source.kind == alloc.source_kind && source.source_number == alloc.source_number;
+        });
+        if (it == selected.end()) {
+            continue;
         }
+
+        int color_id = 0;
+        if (it->kind == SourceKind::Channel) {
+            auto ch_it = channel_data.find(it->source_number);
+            if (ch_it != channel_data.end()) {
+                color_id = ch_it->second.color;
+            }
+        }
+
+        MediaTrack* track = alloc.is_stereo
+            ? track_manager_->CreateStereoTrack(track_index, it->name, color_id)
+            : track_manager_->CreateTrack(track_index, it->name, color_id);
+        if (!track) {
+            continue;
+        }
+
+        track_manager_->SetTrackInput(track, alloc.usb_start - 1, alloc.is_stereo ? 2 : 1);
+        const std::string source_id = SourcePersistentId(*it);
+        GetSetMediaTrackInfo_String(track, kTrackSourceIdExtKey, const_cast<char*>(source_id.c_str()), true);
+        if (it->soundcheck_capable) {
+            track_manager_->SetTrackHardwareOutput(track, alloc.usb_start - 1, alloc.is_stereo ? 2 : 1);
+        } else {
+            track_manager_->ClearTrackHardwareOutputs(track);
+        }
+        SetMediaTrackInfo_Value(track, "B_MAINSEND", 0);
+        track_index++;
+        created_tracks++;
     }
-    
-    // Create tracks
-    int track_count = track_manager_->CreateTracksFromChannelData(filtered_data);
-    
+    Undo_EndBlock("AUDIOLAB.wing.reaper.virtualsoundcheck: Create tracks from selected sources", UNDO_STATE_TRACKCFG);
+
     char msg[128];
-    snprintf(msg, sizeof(msg), "AUDIOLAB.wing.reaper.virtualsoundcheck: Created %d tracks\n", track_count);
+    snprintf(msg, sizeof(msg), "AUDIOLAB.wing.reaper.virtualsoundcheck: Created %d tracks\n", created_tracks);
     Log(msg);
 }
 
@@ -890,8 +1105,7 @@ bool ReaperExtension::ValidateLiveRecordingSetup(std::string& details) {
     return true;
 }
 
-// Setup virtual soundcheck from selected channels
-void ReaperExtension::SetupSoundcheckFromSelection(const std::vector<ChannelSelectionInfo>& channels, bool setup_soundcheck) {
+void ReaperExtension::SetupSoundcheckFromSelection(const std::vector<SourceSelectionInfo>& channels, bool setup_soundcheck, bool replace_existing) {
     // During live-setup operations, ignore incoming MIDI hook traffic from Wing.
     struct ScopedMidiSuppress {
         std::atomic<bool>& flag;
@@ -906,113 +1120,131 @@ void ReaperExtension::SetupSoundcheckFromSelection(const std::vector<ChannelSele
     
     Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Setting up Virtual Soundcheck...\n");
     
-    // Filter to only selected channels
-    std::vector<ChannelInfo> selected_channels;
+    std::vector<SourceSelectionInfo> selected_sources;
     const auto& channel_data = osc_handler_->GetChannelData();
     
     for (const auto& sel : channels) {
-        if (sel.selected) {
-            auto it = channel_data.find(sel.channel_number);
-            if (it != channel_data.end()) {
-                ChannelInfo ch_info = it->second;
-                if (ch_info.name.empty()) {
-                    if (!sel.name.empty()) {
-                        ch_info.name = sel.name;
-                    } else {
-                        ch_info.name = "CH" + std::to_string(sel.channel_number);
-                    }
-                }
-                selected_channels.push_back(ch_info);
+        if (!sel.selected) {
+            continue;
+        }
+
+        SourceSelectionInfo selected = sel;
+        if (selected.kind == SourceKind::Channel) {
+            auto it = channel_data.find(selected.source_number);
+            if (it == channel_data.end()) {
+                continue;
+            }
+            if (selected.name.empty()) {
+                selected.name = it->second.name.empty()
+                    ? ("CH" + std::to_string(selected.source_number))
+                    : it->second.name;
             }
         }
+        selected_sources.push_back(selected);
     }
     
-    if (selected_channels.empty()) {
-        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: No channels selected\n");
+    if (selected_sources.empty()) {
+        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: No sources selected\n");
         return;
     }
     
-    // Refresh stereo link status from Wing console BEFORE calculating allocation
-    Log("Refreshing channel stereo link status from Wing...\n");
-    for (const auto& ch : selected_channels) {
-        osc_handler_->QueryChannel(ch.channel_number);
+    Log("Refreshing selected channel source metadata from Wing...\n");
+    for (const auto& source : selected_sources) {
+        if (source.kind == SourceKind::Channel) {
+            osc_handler_->QueryChannel(source.source_number);
+        }
     }
-    // Allow time for responses to arrive
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    
-    // Get updated channel data with fresh stereo_linked status
-    selected_channels.clear();
+
     const auto& updated_channel_data = osc_handler_->GetChannelData();
-    for (const auto& sel : channels) {
-        if (sel.selected) {
-            auto it = updated_channel_data.find(sel.channel_number);
-            if (it != updated_channel_data.end()) {
-                ChannelInfo ch_info = it->second;
-                if (ch_info.name.empty()) {
-                    if (!sel.name.empty()) {
-                        ch_info.name = sel.name;
-                    } else {
-                        ch_info.name = "CH" + std::to_string(sel.channel_number);
-                    }
-                }
-                selected_channels.push_back(ch_info);
+    for (auto& selected : selected_sources) {
+        if (selected.kind != SourceKind::Channel) {
+            continue;
+        }
+        auto it = updated_channel_data.find(selected.source_number);
+        if (it != updated_channel_data.end()) {
+            selected.stereo_linked = it->second.stereo_linked;
+            if (selected.name.empty()) {
+                selected.name = it->second.name.empty()
+                    ? ("CH" + std::to_string(selected.source_number))
+                    : it->second.name;
             }
         }
     }
     
-    // Calculate USB allocation
-    auto allocations = osc_handler_->CalculateUSBAllocation(selected_channels);
+    auto allocations = osc_handler_->CalculateUSBAllocation(selected_sources);
+    const bool has_soundcheck_capable = std::any_of(selected_sources.begin(), selected_sources.end(), [](const SourceSelectionInfo& source) {
+        return source.soundcheck_capable;
+    });
+    const bool enable_soundcheck_setup = setup_soundcheck && has_soundcheck_capable;
     
     // Get output mode for display
     std::string output_mode = config_.soundcheck_output_mode;
     std::string output_type = (output_mode == "CARD") ? "CARD" : "USB";
     const int wing_bank_limit = (output_mode == "CARD") ? 32 : 48;
 
-    int required_io_channels = 0;
+    int required_input_channels = 0;
+    int required_output_channels = 0;
     for (const auto& alloc : allocations) {
         if (!alloc.allocation_note.empty() && alloc.allocation_note.find("ERROR") != std::string::npos) {
             continue;
         }
-        if (alloc.usb_end > required_io_channels) {
-            required_io_channels = alloc.usb_end;
+        if (alloc.usb_end > required_input_channels) {
+            required_input_channels = alloc.usb_end;
+        }
+        if (!enable_soundcheck_setup) {
+            continue;
+        }
+        auto it = std::find_if(selected_sources.begin(), selected_sources.end(), [&](const SourceSelectionInfo& source) {
+            return source.kind == alloc.source_kind && source.source_number == alloc.source_number;
+        });
+        if (it != selected_sources.end() && it->soundcheck_capable && alloc.usb_end > required_output_channels) {
+            required_output_channels = alloc.usb_end;
         }
     }
 
-    if (required_io_channels > wing_bank_limit) {
+    if (required_input_channels > wing_bank_limit) {
         std::ostringstream err;
-        err << "AUDIOLAB.wing.reaper.virtualsoundcheck: Selected channels exceed the Wing "
-            << output_type << " bank. Required by current selection: " << required_io_channels
+        err << "AUDIOLAB.wing.reaper.virtualsoundcheck: Selected sources exceed the Wing "
+            << output_type << " bank. Required by current selection: " << required_input_channels
             << ", available on Wing: " << wing_bank_limit << ".\n";
         Log(err.str());
 
         std::ostringstream msg;
-        msg << "Selected " << output_type << " routing needs " << required_io_channels
+        msg << "Selected " << output_type << " routing needs " << required_input_channels
             << " channels, but the Wing exposes only " << wing_bank_limit
             << " " << output_type << " slots.\n\n"
             << "The last stereo pair would be incomplete or missing.\n\n"
-            << "Choose fewer channels or switch output mode.";
+            << "Choose fewer sources or switch output mode.";
         ShowMessageBox(msg.str().c_str(), "AUDIOLAB.wing.reaper.virtualsoundcheck - Output Bank Exceeded", 0);
         return;
     }
 
     const int available_inputs = GetNumAudioInputs();
     const int available_outputs = GetNumAudioOutputs();
-    if (available_inputs < required_io_channels || available_outputs < required_io_channels) {
+    if (available_inputs < required_input_channels || available_outputs < required_output_channels) {
         std::ostringstream err;
         err << "AUDIOLAB.wing.reaper.virtualsoundcheck: REAPER audio device does not expose enough channels for "
-            << output_type << " soundcheck. Required by current selection: "
-            << required_io_channels << " in / " << required_io_channels << " out, available: "
+            << output_type << " routing. Required by current selection: "
+            << required_input_channels << " in / " << required_output_channels << " out, available: "
             << available_inputs << " in / " << available_outputs << " out.\n";
         Log(err.str());
 
         std::ostringstream msg;
         msg << "Selected " << output_type << " routing requires at least "
-            << required_io_channels << " REAPER inputs and outputs.\n\n"
+            << required_input_channels << " REAPER inputs";
+        if (required_output_channels > 0) {
+            msg << " and " << required_output_channels << " REAPER outputs";
+        }
+        msg << ".\n\n"
             << "Available now: " << available_inputs << " inputs / "
             << available_outputs << " outputs.\n\n"
-            << "Please switch REAPER audio device/range or choose fewer channels.";
+            << "Please switch REAPER audio device/range or choose fewer sources.";
         ShowMessageBox(msg.str().c_str(), "AUDIOLAB.wing.reaper.virtualsoundcheck - Audio I/O Not Available", 0);
         return;
+    }
+    if (setup_soundcheck && !has_soundcheck_capable) {
+        Log("Selected sources do not support ALT soundcheck. Proceeding in recording-only mode.\n");
     }
     
     // Show what will be configured
@@ -1020,9 +1252,9 @@ void ReaperExtension::SetupSoundcheckFromSelection(const std::vector<ChannelSele
     Log("CONFIGURING WING CONSOLE FOR VIRTUAL SOUNDCHECK\n");
     Log("Output Mode: " + output_type + "\n");
     Log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-    Log("\nChannels to configure:\n");
+    Log("\nSources to configure:\n");
     for (const auto& alloc : allocations) {
-        std::string line = "  CH" + std::to_string(alloc.channel_number);
+        std::string line = "  " + SourceIdentity(alloc.source_kind, alloc.source_number);
         if (alloc.is_stereo) {
             line += " (stereo) → " + output_type + " " + std::to_string(alloc.usb_start) + "-" + std::to_string(alloc.usb_end);
         } else {
@@ -1034,64 +1266,96 @@ void ReaperExtension::SetupSoundcheckFromSelection(const std::vector<ChannelSele
     Log("\n");
     
     // Apply output allocation
-    if (setup_soundcheck) {
+    if (setup_soundcheck && has_soundcheck_capable) {
         Log("Step 1/2: Configuring Wing " + output_type + " outputs and ALT sources...\n");
     } else {
         Log("Step 1/2: Configuring Wing " + output_type + " outputs (recording only, no soundcheck)...\n");
     }
     // Query USR routing data before configuring (to resolve routing chains)
     osc_handler_->QueryUserSignalInputs(48);
-    osc_handler_->ApplyUSBAllocationAsAlt(allocations, selected_channels, output_mode, setup_soundcheck);
+    osc_handler_->ApplyUSBAllocationAsAlt(allocations, selected_sources, output_mode, enable_soundcheck_setup);
     
     Log("\nStep 2/2: Creating REAPER tracks...\n");
-    
-    // Create tracks
-    std::map<int, ChannelInfo> channel_map;
-    for (const auto& ch : selected_channels) {
-        channel_map[ch.channel_number] = ch;
-    }
-    
-    Undo_BeginBlock();
-    
+
     int track_index = 0;
+    if (replace_existing) {
+        ReaProject* proj = EnumProjects(-1, nullptr, 0);
+        const int removed_existing_tracks = proj ? CountTracks(proj) : 0;
+        track_manager_->ClearAllTracks();
+        if (removed_existing_tracks > 0) {
+            Log("Removed " + std::to_string(removed_existing_tracks) +
+                " existing REAPER tracks before rebuilding the setup.\n");
+        }
+    } else {
+        ReaProject* proj = EnumProjects(-1, nullptr, 0);
+        track_index = proj ? CountTracks(proj) : 0;
+        Log("Keeping the existing REAPER tracks and appending the new selection.\n");
+    }
+
+    Undo_BeginBlock();
     int created_tracks = 0;
     for (const auto& alloc : allocations) {
         if (!alloc.allocation_note.empty() && alloc.allocation_note.find("ERROR") != std::string::npos) {
             continue;
         }
         
-        auto it = channel_map.find(alloc.channel_number);
-        if (it == channel_map.end()) {
+        auto it = std::find_if(selected_sources.begin(), selected_sources.end(), [&](const SourceSelectionInfo& source) {
+            return source.kind == alloc.source_kind && source.source_number == alloc.source_number;
+        });
+        if (it == selected_sources.end()) {
             continue;
         }
-        const ChannelInfo& ch_info = it->second;
-        const std::string track_name = ch_info.name.empty() ?
-            ("CH" + std::to_string(alloc.channel_number)) : ch_info.name;
+        int color_id = 0;
+        if (it->kind == SourceKind::Channel) {
+            auto ch_it = updated_channel_data.find(it->source_number);
+            if (ch_it != updated_channel_data.end()) {
+                color_id = ch_it->second.color;
+            }
+        }
+        const std::string track_name = it->name.empty() ? SourceIdentity(*it) : it->name;
         
         MediaTrack* track = nullptr;
         if (alloc.is_stereo) {
-            track = track_manager_->CreateStereoTrack(track_index, track_name, ch_info.color);
+            track = track_manager_->CreateStereoTrack(track_index, track_name, color_id);
             if (track) {
                 track_manager_->SetTrackInput(track, alloc.usb_start - 1, 2);
-                track_manager_->SetTrackHardwareOutput(track, alloc.usb_start - 1, 2);
+                const std::string source_id = SourcePersistentId(*it);
+                GetSetMediaTrackInfo_String(track, kTrackSourceIdExtKey, const_cast<char*>(source_id.c_str()), true);
+                if (it->soundcheck_capable) {
+                    track_manager_->SetTrackHardwareOutput(track, alloc.usb_start - 1, 2);
+                } else {
+                    track_manager_->ClearTrackHardwareOutputs(track);
+                }
                 SetMediaTrackInfo_Value(track, "B_MAINSEND", 0);
-                std::string msg = "  ✓ Track " + std::to_string(created_tracks + 1) + 
+                std::string msg = "  ✓ Track " + std::to_string(created_tracks + 1) +
                                  ": " + track_name + " (stereo) IN " + output_type + " " +
-                                 std::to_string(alloc.usb_start) + "-" + std::to_string(alloc.usb_end) +
-                                 " / OUT " + output_type + " " +
-                                 std::to_string(alloc.usb_start) + "-" + std::to_string(alloc.usb_end) + "\n";
+                                 std::to_string(alloc.usb_start) + "-" + std::to_string(alloc.usb_end);
+                if (it->soundcheck_capable) {
+                    msg += " / OUT " + output_type + " " +
+                           std::to_string(alloc.usb_start) + "-" + std::to_string(alloc.usb_end);
+                }
+                msg += "\n";
                 Log(msg.c_str());
             }
         } else {
-            track = track_manager_->CreateTrack(track_index, track_name, ch_info.color);
+            track = track_manager_->CreateTrack(track_index, track_name, color_id);
             if (track) {
                 track_manager_->SetTrackInput(track, alloc.usb_start - 1, 1);
-                track_manager_->SetTrackHardwareOutput(track, alloc.usb_start - 1, 1);
+                const std::string source_id = SourcePersistentId(*it);
+                GetSetMediaTrackInfo_String(track, kTrackSourceIdExtKey, const_cast<char*>(source_id.c_str()), true);
+                if (it->soundcheck_capable) {
+                    track_manager_->SetTrackHardwareOutput(track, alloc.usb_start - 1, 1);
+                } else {
+                    track_manager_->ClearTrackHardwareOutputs(track);
+                }
                 SetMediaTrackInfo_Value(track, "B_MAINSEND", 0);
-                std::string msg = "  ✓ Track " + std::to_string(created_tracks + 1) + 
+                std::string msg = "  ✓ Track " + std::to_string(created_tracks + 1) +
                                  ": " + track_name + " (mono) IN " + output_type + " " +
-                                 std::to_string(alloc.usb_start) + " / OUT " + output_type + " " +
-                                 std::to_string(alloc.usb_start) + "\n";
+                                 std::to_string(alloc.usb_start);
+                if (it->soundcheck_capable) {
+                    msg += " / OUT " + output_type + " " + std::to_string(alloc.usb_start);
+                }
+                msg += "\n";
                 Log(msg.c_str());
             }
         }
@@ -1102,6 +1366,16 @@ void ReaperExtension::SetupSoundcheckFromSelection(const std::vector<ChannelSele
         }
     }
     
+    std::set<std::string> persisted_source_ids;
+    if (!replace_existing) {
+        persisted_source_ids.insert(config_.last_selected_source_ids.begin(), config_.last_selected_source_ids.end());
+    }
+    for (const auto& source : selected_sources) {
+        persisted_source_ids.insert(SourcePersistentId(source));
+    }
+    config_.last_selected_source_ids.assign(persisted_source_ids.begin(), persisted_source_ids.end());
+    config_.SaveToFile(WingConfig::GetConfigPath());
+
     Undo_EndBlock("AUDIOLAB.wing.reaper.virtualsoundcheck: Configure Virtual Soundcheck", UNDO_STATE_TRACKCFG);
     
     Log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
@@ -1109,8 +1383,12 @@ void ReaperExtension::SetupSoundcheckFromSelection(const std::vector<ChannelSele
     Log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
     std::string final_msg = "Created " + std::to_string(created_tracks) + " REAPER tracks\n";
     Log(final_msg.c_str());
-    Log("\nUse 'Toggle Soundcheck Mode' to enable/disable ALT sources.\n");
-    Log("When enabled, channels receive audio from REAPER via USB.\n\n");
+    if (has_soundcheck_capable) {
+        Log("\nUse 'Toggle Soundcheck Mode' to enable/disable ALT sources.\n");
+        Log("When enabled, channels receive audio from REAPER via USB.\n\n");
+    } else {
+        Log("\nSelected buses/matrices were configured for recording only.\n\n");
+    }
 }
 
 void ReaperExtension::DisconnectFromWing() {
@@ -1443,7 +1721,7 @@ void ReaperExtension::MonitorAutoRecordLoop() {
             }
 
             SetRecordingLayerState();
-            if (osc_handler_) {
+            if (osc_handler_ && midi_actions_enabled_) {
                 const int layer = std::min(16, std::max(1, config_.warning_flash_cc_layer));
                 if (last_record_led_step_at.time_since_epoch().count() == 0 ||
                     (now - last_record_led_step_at) >= std::chrono::milliseconds(440)) {
@@ -1485,7 +1763,7 @@ void ReaperExtension::MonitorAutoRecordLoop() {
 }
 
 void ReaperExtension::SetWarningLayerState() {
-    if (!osc_handler_) {
+    if (!osc_handler_ || !midi_actions_enabled_) {
         return;
     }
     if (layer_state_mode_.load() == 1) {
@@ -1505,7 +1783,7 @@ void ReaperExtension::SetWarningLayerState() {
 }
 
 void ReaperExtension::SetRecordingLayerState() {
-    if (!osc_handler_) {
+    if (!osc_handler_ || !midi_actions_enabled_) {
         return;
     }
     if (layer_state_mode_.load() == 2) {
@@ -1626,7 +1904,7 @@ void ReaperExtension::ClearMidiShortcutButtonCommands() {
 }
 
 void ReaperExtension::StartWarningFlash() {
-    if (warning_flash_running_ || !osc_handler_) {
+    if (warning_flash_running_ || !osc_handler_ || !midi_actions_enabled_) {
         return;
     }
     warning_flash_running_ = true;
@@ -1652,7 +1930,7 @@ void ReaperExtension::StopWarningFlash(bool force) {
 }
 
 void ReaperExtension::WarningFlashLoop() {
-    if (!osc_handler_) {
+    if (!osc_handler_ || !midi_actions_enabled_) {
         warning_flash_running_ = false;
         return;
     }
@@ -1864,310 +2142,42 @@ void ReaperExtension::ConfigureVirtualSoundcheck() {
     }
     
     Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Configuring Virtual Soundcheck...\n");
-    
-    // Get all channel data
-    const auto& channels = osc_handler_->GetChannelData();
-    if (channels.empty()) {
+
+    auto sources = GetAvailableSources();
+    if (sources.empty()) {
         ShowMessageBox(
-            "No channel data available.\nPlease refresh tracks first.",
+            "No selectable sources available.\nPlease refresh tracks first.",
             "AUDIOLAB.wing.reaper.virtualsoundcheck - Virtual Soundcheck",
             0
         );
         return;
     }
-    
-    // Build list of channels with names and sources (these are the "useful" ones)
-    std::vector<ChannelInfo> all_channels;
-    std::vector<ChannelInfo> selectable_channels;  // Only channels with name AND source
-    std::set<int> included_channel_numbers;  // Track which channels are included
-    
-    for (const auto& pair : channels) {
-        all_channels.push_back(pair.second);
-        // Only include if has both name and source
-        if (!pair.second.name.empty() && !pair.second.primary_source_group.empty()) {
-            selectable_channels.push_back(pair.second);
-            included_channel_numbers.insert(pair.second.channel_number);
-        }
-    }
-    
-    // For stereo-linked channels, ensure BOTH partners are included
-    // even if one doesn't have its own name
-    std::vector<ChannelInfo> additional_channels;
-    for (const auto& ch : selectable_channels) {
-        if (ch.stereo_linked) {
-            int partner_num = -1;
-            
-            if (ch.channel_number % 2 == 1) {
-                // Odd channel: partner is next even channel
-                partner_num = ch.channel_number + 1;
-            } else {
-                // Even channel: partner is previous odd channel
-                partner_num = ch.channel_number - 1;
-            }
-            
-            // Check if partner exists and isn't already included
-            if (included_channel_numbers.find(partner_num) == included_channel_numbers.end()) {
-                // Find the partner in all_channels
-                for (const auto& pair : channels) {
-                    if (pair.second.channel_number == partner_num) {
-                        additional_channels.push_back(pair.second);
-                        included_channel_numbers.insert(partner_num);
-                        ShowConsoleMsg("AUDIOLAB.wing.reaper.virtualsoundcheck: Auto-including stereo partner CH");
-                        char buf[10];
-                        snprintf(buf, sizeof(buf), "%d", partner_num);
-                        ShowConsoleMsg(buf);
-                        ShowConsoleMsg(" for CH");
-                        snprintf(buf, sizeof(buf), "%d", ch.channel_number);
-                        ShowConsoleMsg(buf);
-                        ShowConsoleMsg("\n");
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    
-    // Add stereo partners to selectable list
-    selectable_channels.insert(selectable_channels.end(), additional_channels.begin(), additional_channels.end());
-    
-    if (selectable_channels.empty()) {
-        ShowMessageBox(
-            "No channels with both name and source found.\n\n"
-            "To proceed:\n"
-            "1. Assign names to Wing channels\n"
-            "2. Assign input sources to Wing channels\n"
-            "3. Refresh tracks and try again",
-            "AUDIOLAB.wing.reaper.virtualsoundcheck - No Channels Available",
-            0
-        );
-        return;
-    }
-    
-    // Build display of available channels
-    std::ostringstream channel_list;
-    channel_list << "Available channels:\n\n";
-    
-    for (const auto& ch : selectable_channels) {
-        channel_list << "  CH" << std::setw(2) << std::setfill('0') << ch.channel_number 
-                    << ": " << std::setfill(' ') << std::left << std::setw(25) << ch.name 
-                    << " (" << ch.primary_source_group 
-                    << std::to_string(ch.primary_source_input) << ")\n";
-    }
-    
-    channel_list << "\nTotal: " << selectable_channels.size() << " channels\n"
-                << "\nCustomize channel selection?";
-    
-    int result = ShowMessageBox(
-        channel_list.str().c_str(),
-        "AUDIOLAB.wing.reaper.virtualsoundcheck - Channel Selection",
-        4  // Yes/No/Cancel
-    );
-    
-    if (result == 0) {
-        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Virtual Soundcheck configuration cancelled\n");
-        return;
-    }
-    
-    std::vector<ChannelInfo> selected_channels = selectable_channels;
-    
-    // Apply include/exclude filtering from config
-    if (!config_.include_channels.empty() || !config_.exclude_channels.empty()) {
-        std::vector<ChannelInfo> filtered_channels;
-        
-        // Parse include and exclude lists
-        std::set<int> included_set = ParseChannelSelection(config_.include_channels, 48);
-        std::set<int> excluded_set = ParseChannelSelection(config_.exclude_channels, 48);
-        
-        for (const auto& ch : selected_channels) {
-            bool should_include = true;
-            
-            // If include list exists, only include channels in the list
+
+    std::set<int> included_set = ParseChannelSelection(config_.include_channels, 48);
+    std::set<int> excluded_set = ParseChannelSelection(config_.exclude_channels, 48);
+    bool any_selected = false;
+    for (auto& source : sources) {
+        bool selected = (source.kind == SourceKind::Channel);
+        if (source.kind == SourceKind::Channel) {
             if (!included_set.empty()) {
-                should_include = (included_set.find(ch.channel_number) != included_set.end());
+                selected = included_set.find(source.source_number) != included_set.end();
             }
-            
-            // Exclude any channels in the exclude list
-            if (excluded_set.find(ch.channel_number) != excluded_set.end()) {
-                should_include = false;
-            }
-            
-            if (should_include) {
-                filtered_channels.push_back(ch);
+            if (excluded_set.find(source.source_number) != excluded_set.end()) {
+                selected = false;
             }
         }
-        
-        selected_channels = filtered_channels;
-        
-        if (selected_channels.empty()) {
-            Log("AUDIOLAB.wing.reaper.virtualsoundcheck: No channels remain after filtering. Using all channels.\n");
-            selected_channels = selectable_channels;
-        }
+        source.selected = selected;
+        any_selected = any_selected || selected;
     }
-    
-    // If user wants to customize (clicked "Yes"=6)
-    if (result == 6) {
-        Log("\n=== CHANNEL SELECTION ===\n");
-        Log("Available channels:\n");
-        for (const auto& ch : selectable_channels) {
-            Log("  CH");
-            char ch_buf[10];
-            snprintf(ch_buf, sizeof(ch_buf), "%02d", ch.channel_number);
-            Log(ch_buf);
-            Log(": ");
-            Log(ch.name.c_str());
-            Log(" (");
-            Log(ch.primary_source_group.c_str());
-            char in_buf[10];
-            snprintf(in_buf, sizeof(in_buf), "%d", ch.primary_source_input);
-            Log(in_buf);
-            Log(")\n");
+
+    if (!any_selected) {
+        for (auto& source : sources) {
+            source.selected = (source.kind == SourceKind::Channel);
         }
-        
-        Log("\nTo proceed with only specific channels, use the following format:\n");
-        Log("  INCLUDE: 1,3-5,7 (or leave blank for all)\n");
-        Log("  EXCLUDE: 2,4,6   (or leave blank to exclude none)\n");
-        Log("\nPlease edit the config.json file and set:\n");
-        Log("  \"include_channels\": \"...\"\n");
-        Log("  \"exclude_channels\": \"...\"\n");
-        Log("\nThen restart the virtual soundcheck process.\n\n");
-        
-        // For now, use all channels if user chose customize
-        // (they can edit config and re-run)
-        Log("Proceeding with all available channels.\n");
-        Log("(Edit config.json to customize channel selection)\n\n");
+        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: No channels remained after filtering. Using all available channels.\n");
     }
-    
-    // Calculate USB allocation with gap backfilling for selected channels
-    auto allocations = osc_handler_->CalculateUSBAllocation(selected_channels);
-    const int wing_bank_limit = 48;
-    int required_io_channels = 0;
-    for (const auto& alloc : allocations) {
-        if (!alloc.allocation_note.empty() && alloc.allocation_note.find("ERROR") != std::string::npos) {
-            continue;
-        }
-        if (alloc.usb_end > required_io_channels) {
-            required_io_channels = alloc.usb_end;
-        }
-    }
-    if (required_io_channels > wing_bank_limit) {
-        std::ostringstream msg;
-        msg << "Selected USB routing needs " << required_io_channels
-            << " channels, but the Wing exposes only " << wing_bank_limit
-            << " USB slots.";
-        Log(msg.str() + "\n");
-        ShowMessageBox(msg.str().c_str(), "AUDIOLAB.wing.reaper.virtualsoundcheck - Output Bank Exceeded", 0);
-        return;
-    }
-    
-    // Show what will be configured
-    Log("Channels to configure:\n");
-    for (const auto& alloc : allocations) {
-        std::string line = "  CH" + std::to_string(alloc.channel_number);
-        if (alloc.is_stereo) {
-            line += " (stereo) → USB " + std::to_string(alloc.usb_start) + "-" + std::to_string(alloc.usb_end);
-        } else {
-            line += " (mono) → USB " + std::to_string(alloc.usb_start);
-        }
-        line += "\n";
-        Log(line.c_str());
-    }
-    Log("\n");
-    
-    // Proceed directly to configuration (no confirmation dialog)
-    // Create a progress message
-    Log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-    Log("CONFIGURING WING CONSOLE FOR VIRTUAL SOUNDCHECK\n");
-    Log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-    Log("\n");
-    
-    // Apply the USB allocation: configure USB outputs (Wing -> REAPER) and ALT sources (REAPER -> Wing)
-    Log("Step 1/2: Configuring Wing USB outputs and ALT sources...\n");
-    // Query USR routing data before configuring USB (to resolve routing chains)
-    osc_handler_->QueryUserSignalInputs(48);
-    osc_handler_->ApplyUSBAllocationAsAlt(allocations, selected_channels);
-    
-    Log("\n");
-    Log("Step 2/2: Creating REAPER tracks...\n");
-    
-    // Create REAPER tracks for recording/playback
-    // Build lookup map from channel number to channel info
-    std::map<int, ChannelInfo> channel_map;
-    for (const auto& ch : selected_channels) {
-        channel_map[ch.channel_number] = ch;
-    }
-    
-    // Clear existing tracks and create new ones
-    Undo_BeginBlock();
-    
-    int track_index = 0;
-    int created_tracks = 0;
-    for (const auto& alloc : allocations) {
-        if (!alloc.allocation_note.empty() && alloc.allocation_note.find("ERROR") != std::string::npos) {
-            continue;  // Skip errored allocations
-        }
-        
-        // Find channel info
-        auto it = channel_map.find(alloc.channel_number);
-        if (it == channel_map.end()) {
-            continue;
-        }
-        const ChannelInfo& ch_info = it->second;
-        
-        // Create track (mono or stereo)
-        MediaTrack* track = nullptr;
-        if (alloc.is_stereo) {
-            track = track_manager_->CreateStereoTrack(track_index, ch_info.name, ch_info.color);
-            // Set stereo USB input (USB channels are 1-based, REAPER inputs are 0-based)
-            if (track) {
-                track_manager_->SetTrackInput(track, alloc.usb_start - 1, 2);
-                std::string msg = "  ✓ Track " + std::to_string(created_tracks + 1) + 
-                                 ": " + ch_info.name + " (stereo) → USB " + 
-                                 std::to_string(alloc.usb_start) + "-" + std::to_string(alloc.usb_end) + "\n";
-                Log(msg.c_str());
-            }
-        } else {
-            track = track_manager_->CreateTrack(track_index, ch_info.name, ch_info.color);
-            // Set mono USB input
-            if (track) {
-                track_manager_->SetTrackInput(track, alloc.usb_start - 1, 1);
-                std::string msg = "  ✓ Track " + std::to_string(created_tracks + 1) + 
-                                 ": " + ch_info.name + " (mono) → USB " + 
-                                 std::to_string(alloc.usb_start) + "\n";
-                Log(msg.c_str());
-            }
-        }
-        
-        if (track) {
-            track_index++;
-            created_tracks++;
-        }
-    }
-    
-    Undo_EndBlock("AUDIOLAB.wing.reaper.virtualsoundcheck: Configure Virtual Soundcheck", UNDO_STATE_TRACKCFG);
-        
-        Log("\n");
-        Log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-        Log("✓ CONFIGURATION COMPLETE\n");
-        Log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-        std::string final_msg = "Created " + std::to_string(created_tracks) + " REAPER tracks\n";
-        Log(final_msg.c_str());
-        Log("\nNext: Use 'Toggle Soundcheck Mode' to enable/disable ALT sources.\n");
-        Log("When enabled, channels receive audio from REAPER via USB.\n");
-        Log("\n");
-        
-        // Build success message
-        std::ostringstream success_msg;
-        success_msg << "Virtual Soundcheck configured successfully!\n\n"
-                    << "Created " << created_tracks << " REAPER tracks.\n\n"
-                    << "Use 'Toggle Soundcheck Mode' to enable/disable ALT sources.\n"
-                    << "When enabled, channels receive audio from REAPER via USB.\n\n"
-                    << "Details are shown in the REAPER console.";
-        
-        ShowMessageBox(
-            success_msg.str().c_str(),
-            "AUDIOLAB.wing.reaper.virtualsoundcheck - Success",
-            0
-        );
+
+    SetupSoundcheckFromSelection(sources, true);
 }
 
 void ReaperExtension::ToggleSoundcheckMode() {
@@ -2330,8 +2340,10 @@ void ReaperExtension::EnableMidiActions(bool enable) {
         if (!midi_actions_enabled_) {
             return;  // Already disabled
         }
-        midi_actions_enabled_ = false;
+        StopWarningFlash(true);
         StopManualTransportFlash();
+        ClearLayerState();
+        midi_actions_enabled_ = false;
         StopMidiCapture();
         UnregisterMidiShortcuts();
         ClearMidiShortcutButtonCommands();
@@ -2387,7 +2399,7 @@ void ReaperExtension::SyncMidiActionsToWing() {
 }
 
 void ReaperExtension::TriggerManualTransportFlash(int color_index) {
-    if (!connected_ || !osc_handler_) {
+    if (!connected_ || !osc_handler_ || !midi_actions_enabled_) {
         return;
     }
     std::unique_ptr<std::thread> thread_to_join;
