@@ -33,23 +33,26 @@ void RunCrossPlatformDialog() {
         }
     }
 
-    auto channels = extension.GetAvailableChannels();
-    if (channels.empty()) {
+    auto sources = extension.GetAvailableSources();
+    if (sources.empty()) {
         ShowMessageBox(
-            "Connected, but no channels with sources were discovered.",
+            "Connected, but no selectable sources were discovered.",
             "AUDIOLAB.wing.reaper.virtualsoundcheck",
             0);
         return;
     }
 
-    for (auto& channel : channels) {
-        channel.selected = true;
+    bool has_non_channel = false;
+    for (auto& source : sources) {
+        source.selected = true;
+        has_non_channel = has_non_channel || !source.soundcheck_capable;
     }
 
-    extension.SetupSoundcheckFromSelection(channels, true);
+    extension.SetupSoundcheckFromSelection(sources, true);
     ShowMessageBox(
-        "Connected and configured live recording for available channels.\n"
-        "Use config.json for advanced selection and behavior.",
+        has_non_channel
+            ? "Connected and configured live recording for available sources.\nSoundcheck routing was skipped for record-only buses/matrices.\nUse config.json for advanced selection and behavior."
+            : "Connected and configured live recording for available channels.\nUse config.json for advanced selection and behavior.",
         "AUDIOLAB.wing.reaper.virtualsoundcheck",
         0);
 }

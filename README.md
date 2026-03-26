@@ -42,7 +42,8 @@ See [QUICKSTART.md](QUICKSTART.md) for the 5-minute flow.
 - Automatic track creation from WING channel data
 - Channel metadata sync (name, color, source-related info)
 - Optional real-time monitoring for updates
-- Virtual soundcheck setup (USB/CARD routing + ALT source toggling)
+- Virtual soundcheck setup for channels (USB/CARD routing + ALT source toggling)
+- Record-source selection for channels, buses, and matrices
 - Optional WING MIDI CC control (Play/Record/Stop/Markers/Virtual Soundcheck) with automatic button command assignment
 - Cross-platform dialog behavior:
   - macOS: native Cocoa dialogs

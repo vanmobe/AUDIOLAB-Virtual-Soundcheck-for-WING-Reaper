@@ -3,6 +3,7 @@
 
 #include <string>
 #include <cstdint>
+#include <vector>
 
 namespace WingConnector {
 
@@ -52,6 +53,7 @@ struct WingConfig {
     bool warning_flash_cc_enabled = true;
     int warning_flash_cc_layer = 1;   // /$ctl/user/<layer>/...
     int warning_flash_cc_color = 9;   // WING color index, 9 = red
+    std::vector<std::string> last_selected_source_ids;
     
     // Channel selection for virtual soundcheck
     // Format: comma-separated channel numbers, ranges allowed (e.g., "1,3-5,7")

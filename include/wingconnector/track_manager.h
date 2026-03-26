@@ -31,6 +31,7 @@ public:
     
     // Find existing Wing tracks
     std::vector<MediaTrack*> FindExistingWingTracks();
+    int ClearExistingWingTracks();
     
     // Clear all tracks (with user confirmation)
     void ClearAllTracks();

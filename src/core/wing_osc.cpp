@@ -111,317 +111,252 @@ namespace {
 constexpr uint16_t kWingHandshakePort = 2222;  // Wing discovery port
 constexpr const char* kWingHandshakeProbe = "WING?";  // Discovery message
 constexpr int kHandshakeTimeoutMs = 1500;  // Discovery timeout
+constexpr int kBurstPollTimeoutMs = 20;
+constexpr int kBurstTotalTimeoutMs = 150;
+constexpr int kBurstIdleTimeoutMs = 25;
+constexpr int kAsyncQuerySettlingMs = 120;
 
-bool QueryInputModeDirect(const std::string& wing_ip,
-                          uint16_t wing_port,
-                          const std::string& grp,
-                          int input,
-                          std::string& mode_out) {
+struct DirectOscReply {
+    std::string address;
+    bool has_string = false;
+    std::string string_value;
+    bool has_int = false;
+    int int_value = 0;
+};
+
 #if defined(_WIN32)
-    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+using NativeSocket = SOCKET;
+constexpr NativeSocket kInvalidSocket = INVALID_SOCKET;
+#else
+using NativeSocket = int;
+constexpr NativeSocket kInvalidSocket = -1;
+#endif
+
+bool SetSocketRecvTimeout(NativeSocket sock, int timeout_ms) {
+#if defined(_WIN32)
+    DWORD timeout = static_cast<DWORD>(timeout_ms);
+    return setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
+                      reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == 0;
+#else
+    timeval tv{};
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    return setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == 0;
+#endif
+}
+
+void CloseNativeSocket(NativeSocket& sock) {
+#if defined(_WIN32)
+    if (sock != INVALID_SOCKET) {
+        closesocket(sock);
+        sock = INVALID_SOCKET;
+    }
+#else
+    if (sock >= 0) {
+        ::close(sock);
+        sock = -1;
+    }
+#endif
+}
+
+bool CreateUdpQuerySocket(const std::string& wing_ip,
+                          uint16_t wing_port,
+                          NativeSocket& sock_out,
+                          sockaddr_in& dest_out,
+                          int recv_timeout_ms = kBurstPollTimeoutMs) {
+#if defined(_WIN32)
+    NativeSocket sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock == INVALID_SOCKET) {
         return false;
     }
 #else
-    int sock = ::socket(AF_INET, SOCK_DGRAM, 0);
+    NativeSocket sock = ::socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
         return false;
     }
 #endif
 
-    auto closeSocket = [&]() {
-#if defined(_WIN32)
-        if (sock != INVALID_SOCKET) {
-            closesocket(sock);
-            sock = INVALID_SOCKET;
-        }
-#else
-        if (sock >= 0) {
-            ::close(sock);
-            sock = -1;
-        }
-#endif
-    };
-
-#if defined(_WIN32)
-    DWORD timeout = 700;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
-               reinterpret_cast<const char*>(&timeout), sizeof(timeout));
-#else
-    timeval tv{};
-    tv.tv_sec = 0;
-    tv.tv_usec = 700000;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-#endif
+    if (!SetSocketRecvTimeout(sock, recv_timeout_ms)) {
+        CloseNativeSocket(sock);
+        return false;
+    }
 
     sockaddr_in dest{};
     dest.sin_family = AF_INET;
     dest.sin_port = htons(wing_port);
     if (inet_pton(AF_INET, wing_ip.c_str(), &dest.sin_addr) != 1) {
-        closeSocket();
+        CloseNativeSocket(sock);
         return false;
     }
 
+    sock_out = sock;
+    dest_out = dest;
+    return true;
+}
+
+bool SendOscQueryPacket(NativeSocket sock,
+                        const sockaddr_in& dest,
+                        const std::string& address) {
     char buffer[256];
     osc::OutboundPacketStream p(buffer, sizeof(buffer));
+    p << osc::BeginMessage(address.c_str()) << osc::EndMessage;
+
+    auto bytes_sent = sendto(sock, p.Data(), static_cast<int>(p.Size()), 0,
+                             reinterpret_cast<const sockaddr*>(&dest), sizeof(dest));
+#if defined(_WIN32)
+    return bytes_sent != SOCKET_ERROR;
+#else
+    return bytes_sent >= 0;
+#endif
+}
+
+bool TryReceiveDirectOscReply(NativeSocket sock, DirectOscReply& reply_out) {
+    char recv_buffer[1024];
+    sockaddr_in from{};
+#if defined(_WIN32)
+    int from_len = sizeof(from);
+    int received = recvfrom(sock, recv_buffer, sizeof(recv_buffer), 0,
+                            reinterpret_cast<sockaddr*>(&from), &from_len);
+    if (received == SOCKET_ERROR) {
+        return false;
+    }
+#else
+    socklen_t from_len = sizeof(from);
+    ssize_t received = recvfrom(sock, recv_buffer, sizeof(recv_buffer), 0,
+                                reinterpret_cast<sockaddr*>(&from), &from_len);
+    if (received < 0) {
+        return false;
+    }
+#endif
+
+    try {
+        osc::ReceivedPacket packet(recv_buffer, static_cast<int>(received));
+        if (!packet.IsMessage()) {
+            return false;
+        }
+        osc::ReceivedMessage msg(packet);
+        reply_out = DirectOscReply{};
+        reply_out.address = msg.AddressPattern();
+        auto arg = msg.ArgumentsBegin();
+        if (arg != msg.ArgumentsEnd()) {
+            if (arg->IsString()) {
+                reply_out.has_string = true;
+                reply_out.string_value = arg->AsString();
+            } else if (arg->IsInt32()) {
+                reply_out.has_int = true;
+                reply_out.int_value = arg->AsInt32();
+            }
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+std::map<std::string, DirectOscReply> QueryOscAddressesDirectRaw(const std::string& wing_ip,
+                                                                 uint16_t wing_port,
+                                                                 const std::vector<std::string>& addresses,
+                                                                 int total_timeout_ms = kBurstTotalTimeoutMs,
+                                                                 int idle_timeout_ms = kBurstIdleTimeoutMs) {
+    std::map<std::string, DirectOscReply> replies;
+    if (addresses.empty()) {
+        return replies;
+    }
+
+    NativeSocket sock = kInvalidSocket;
+    sockaddr_in dest{};
+    if (!CreateUdpQuerySocket(wing_ip, wing_port, sock, dest, kBurstPollTimeoutMs)) {
+        return replies;
+    }
+
+    for (const auto& address : addresses) {
+        if (address.empty()) {
+            continue;
+        }
+        SendOscQueryPacket(sock, dest, address);
+    }
+
+    const auto started = std::chrono::steady_clock::now();
+    auto last_reply = started;
+    while (true) {
+        DirectOscReply reply;
+        if (TryReceiveDirectOscReply(sock, reply)) {
+            replies[reply.address] = reply;
+            last_reply = std::chrono::steady_clock::now();
+            if (static_cast<int>(replies.size()) >= static_cast<int>(addresses.size())) {
+                break;
+            }
+            continue;
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        const auto total_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - started).count();
+        const auto idle_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_reply).count();
+        if (total_elapsed >= total_timeout_ms) {
+            break;
+        }
+        if (!replies.empty() && idle_elapsed >= idle_timeout_ms) {
+            break;
+        }
+    }
+
+    CloseNativeSocket(sock);
+    return replies;
+}
+
+bool QueryInputModeDirectRaw(const std::string& wing_ip,
+                             uint16_t wing_port,
+                             const std::string& grp,
+                             int input,
+                             std::string& mode_out) {
     std::string address = "/io/in/" + grp + "/" + std::to_string(input) + "/mode";
-    p << osc::BeginMessage(address.c_str()) << osc::EndMessage;
-
-    auto bytes_sent = sendto(sock, p.Data(), static_cast<int>(p.Size()), 0,
-                             reinterpret_cast<sockaddr*>(&dest), sizeof(dest));
-#if defined(_WIN32)
-    if (bytes_sent == SOCKET_ERROR) {
-#else
-    if (bytes_sent < 0) {
-#endif
-        closeSocket();
+    auto replies = QueryOscAddressesDirectRaw(wing_ip, wing_port, {address}, 120, 20);
+    auto it = replies.find(address);
+    if (it == replies.end() || !it->second.has_string) {
         return false;
     }
-
-    char recv_buffer[1024];
-    sockaddr_in from{};
-#if defined(_WIN32)
-    int from_len = sizeof(from);
-    int received = recvfrom(sock, recv_buffer, sizeof(recv_buffer), 0,
-                            reinterpret_cast<sockaddr*>(&from), &from_len);
-    if (received == SOCKET_ERROR) {
-#else
-    socklen_t from_len = sizeof(from);
-    ssize_t received = recvfrom(sock, recv_buffer, sizeof(recv_buffer), 0,
-                                reinterpret_cast<sockaddr*>(&from), &from_len);
-    if (received < 0) {
-#endif
-        closeSocket();
-        return false;
-    }
-
-    try {
-        osc::ReceivedPacket packet(recv_buffer, static_cast<int>(received));
-        if (!packet.IsMessage()) {
-            closeSocket();
-            return false;
-        }
-        osc::ReceivedMessage msg(packet);
-        auto arg = msg.ArgumentsBegin();
-        if (arg != msg.ArgumentsEnd() && arg->IsString()) {
-            mode_out = arg->AsString();
-            closeSocket();
-            return true;
-        }
-    } catch (...) {
-    }
-
-    closeSocket();
-    return false;
+    mode_out = it->second.string_value;
+    return true;
 }
 
-bool QueryInputNameDirect(const std::string& wing_ip,
-                          uint16_t wing_port,
-                          const std::string& grp,
-                          int input,
-                          std::string& name_out) {
-#if defined(_WIN32)
-    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock == INVALID_SOCKET) {
-        return false;
-    }
-#else
-    int sock = ::socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) {
-        return false;
-    }
-#endif
+bool QueryStringAddressDirectRaw(const std::string& wing_ip,
+                                 uint16_t wing_port,
+                                 const std::string& address,
+                                 std::string& value_out);
 
-    auto closeSocket = [&]() {
-#if defined(_WIN32)
-        if (sock != INVALID_SOCKET) {
-            closesocket(sock);
-            sock = INVALID_SOCKET;
-        }
-#else
-        if (sock >= 0) {
-            ::close(sock);
-            sock = -1;
-        }
-#endif
-    };
-
-#if defined(_WIN32)
-    DWORD timeout = 700;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
-               reinterpret_cast<const char*>(&timeout), sizeof(timeout));
-#else
-    timeval tv{};
-    tv.tv_sec = 0;
-    tv.tv_usec = 700000;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-#endif
-
-    sockaddr_in dest{};
-    dest.sin_family = AF_INET;
-    dest.sin_port = htons(wing_port);
-    if (inet_pton(AF_INET, wing_ip.c_str(), &dest.sin_addr) != 1) {
-        closeSocket();
-        return false;
-    }
-
-    char buffer[256];
-    osc::OutboundPacketStream p(buffer, sizeof(buffer));
+bool QueryInputNameDirectRaw(const std::string& wing_ip,
+                             uint16_t wing_port,
+                             const std::string& grp,
+                             int input,
+                             std::string& name_out) {
     std::string address = "/io/in/" + grp + "/" + std::to_string(input) + "/name";
-    p << osc::BeginMessage(address.c_str()) << osc::EndMessage;
-
-    auto bytes_sent = sendto(sock, p.Data(), static_cast<int>(p.Size()), 0,
-                             reinterpret_cast<sockaddr*>(&dest), sizeof(dest));
-#if defined(_WIN32)
-    if (bytes_sent == SOCKET_ERROR) {
-#else
-    if (bytes_sent < 0) {
-#endif
-        closeSocket();
-        return false;
-    }
-
-    char recv_buffer[1024];
-    sockaddr_in from{};
-#if defined(_WIN32)
-    int from_len = sizeof(from);
-    int received = recvfrom(sock, recv_buffer, sizeof(recv_buffer), 0,
-                            reinterpret_cast<sockaddr*>(&from), &from_len);
-    if (received == SOCKET_ERROR) {
-#else
-    socklen_t from_len = sizeof(from);
-    ssize_t received = recvfrom(sock, recv_buffer, sizeof(recv_buffer), 0,
-                                reinterpret_cast<sockaddr*>(&from), &from_len);
-    if (received < 0) {
-#endif
-        closeSocket();
-        return false;
-    }
-
-    try {
-        osc::ReceivedPacket packet(recv_buffer, static_cast<int>(received));
-        if (!packet.IsMessage()) {
-            closeSocket();
-            return false;
-        }
-        osc::ReceivedMessage msg(packet);
-        auto arg = msg.ArgumentsBegin();
-        if (arg != msg.ArgumentsEnd() && arg->IsString()) {
-            name_out = arg->AsString();
-            closeSocket();
-            return true;
-        }
-    } catch (...) {
-    }
-
-    closeSocket();
-    return false;
+    return QueryStringAddressDirectRaw(wing_ip, wing_port, address, name_out);
 }
 
-bool QueryOscStringDirect(const std::string& wing_ip,
-                          uint16_t wing_port,
-                          const std::string& address,
-                          std::string& value_out) {
-#if defined(_WIN32)
-    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock == INVALID_SOCKET) {
+bool QueryStringAddressDirectRaw(const std::string& wing_ip,
+                                 uint16_t wing_port,
+                                 const std::string& address,
+                                 std::string& value_out) {
+    auto replies = QueryOscAddressesDirectRaw(wing_ip, wing_port, {address}, 120, 20);
+    auto it = replies.find(address);
+    if (it == replies.end() || !it->second.has_string) {
         return false;
     }
-#else
-    int sock = ::socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) {
-        return false;
-    }
-#endif
-
-    auto closeSocket = [&]() {
-#if defined(_WIN32)
-        if (sock != INVALID_SOCKET) {
-            closesocket(sock);
-            sock = INVALID_SOCKET;
-        }
-#else
-        if (sock >= 0) {
-            ::close(sock);
-            sock = -1;
-        }
-#endif
-    };
-
-#if defined(_WIN32)
-    DWORD timeout = 700;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
-               reinterpret_cast<const char*>(&timeout), sizeof(timeout));
-#else
-    timeval tv{};
-    tv.tv_sec = 0;
-    tv.tv_usec = 700000;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-#endif
-
-    sockaddr_in dest{};
-    dest.sin_family = AF_INET;
-    dest.sin_port = htons(wing_port);
-    if (inet_pton(AF_INET, wing_ip.c_str(), &dest.sin_addr) != 1) {
-        closeSocket();
-        return false;
-    }
-
-    char buffer[256];
-    osc::OutboundPacketStream p(buffer, sizeof(buffer));
-    p << osc::BeginMessage(address.c_str()) << osc::EndMessage;
-
-    auto bytes_sent = sendto(sock, p.Data(), static_cast<int>(p.Size()), 0,
-                             reinterpret_cast<sockaddr*>(&dest), sizeof(dest));
-#if defined(_WIN32)
-    if (bytes_sent == SOCKET_ERROR) {
-#else
-    if (bytes_sent < 0) {
-#endif
-        closeSocket();
-        return false;
-    }
-
-    char recv_buffer[1024];
-    sockaddr_in from{};
-#if defined(_WIN32)
-    int from_len = sizeof(from);
-    int received = recvfrom(sock, recv_buffer, sizeof(recv_buffer), 0,
-                            reinterpret_cast<sockaddr*>(&from), &from_len);
-    if (received == SOCKET_ERROR) {
-#else
-    socklen_t from_len = sizeof(from);
-    ssize_t received = recvfrom(sock, recv_buffer, sizeof(recv_buffer), 0,
-                                reinterpret_cast<sockaddr*>(&from), &from_len);
-    if (received < 0) {
-#endif
-        closeSocket();
-        return false;
-    }
-
-    try {
-        osc::ReceivedPacket packet(recv_buffer, static_cast<int>(received));
-        if (!packet.IsMessage()) {
-            closeSocket();
-            return false;
-        }
-        osc::ReceivedMessage msg(packet);
-        auto arg = msg.ArgumentsBegin();
-        if (arg != msg.ArgumentsEnd() && arg->IsString()) {
-            value_out = arg->AsString();
-            closeSocket();
-            return true;
-        }
-    } catch (...) {
-    }
-
-    closeSocket();
-    return false;
+    value_out = it->second.string_value;
+    return true;
 }
 
 bool IsDirectOutputSourceGroup(const std::string& grp) {
     static const std::set<std::string> groups = {
-        "LCL", "AUX", "A", "B", "C", "SC", "USB", "CRD", "CARD", "MOD", "REC", "AES", "USR"
+        "LCL", "AUX", "A", "B", "C", "SC", "USB", "CRD", "CARD", "MOD", "REC", "AES", "USR",
+        "BUS", "MAIN", "MTX", "SEND", "MON"
+    };
+    return groups.count(grp) > 0;
+}
+
+bool IsDirectInputQueryGroup(const std::string& grp) {
+    static const std::set<std::string> groups = {
+        "A", "LCL", "USR", "$BUS", "$MAIN", "$MTX", "$SEND", "$MON"
     };
     return groups.count(grp) > 0;
 }
@@ -917,6 +852,31 @@ bool WingOSC::SendRawPacket(const char* data, std::size_t size) {
     }
 }
 
+std::map<std::string, std::string> WingOSC::QueryStringAddressesDirect(const std::vector<std::string>& addresses,
+                                                                       int total_timeout_ms,
+                                                                       int idle_timeout_ms) const {
+    std::map<std::string, std::string> values;
+    auto replies = QueryOscAddressesDirectRaw(wing_ip_, wing_port_, addresses, total_timeout_ms, idle_timeout_ms);
+    for (const auto& [address, reply] : replies) {
+        if (reply.has_string) {
+            values[address] = reply.string_value;
+        }
+    }
+    return values;
+}
+
+void WingOSC::SendQueryBurst(const std::vector<std::string>& addresses) {
+    for (const auto& address : addresses) {
+        if (address.empty()) {
+            continue;
+        }
+        char buffer[256];
+        osc::OutboundPacketStream p(buffer, sizeof(buffer));
+        p << MakeOscBeginToken(address.c_str()) << MakeOscEndToken();
+        SendRawPacket(p.Data(), p.Size());
+    }
+}
+
 void WingOSC::Log(const std::string& message) const {
     // Delegate to unified logger
     Logger::Debug("%s", message.c_str());
@@ -1034,8 +994,8 @@ void WingOSC::QueryChannelSourceStereo(int channel_num) {
     }
 
     std::string mode;
-    if (!QueryInputModeDirect(wing_ip_, wing_port_, grp, input, mode)) {
-        if (!QueryInputModeDirect(wing_ip_, wing_port_, raw_grp, raw_input, mode)) {
+    if (!QueryInputModeDirectRaw(wing_ip_, wing_port_, grp, input, mode)) {
+        if (!QueryInputModeDirectRaw(wing_ip_, wing_port_, raw_grp, raw_input, mode)) {
             Log("CH" + std::to_string(channel_num) + ": stereo mode query failed for " +
                 grp + ":" + std::to_string(input) + " and fallback " +
                 raw_grp + ":" + std::to_string(raw_input));
@@ -1418,15 +1378,16 @@ void WingOSC::StopUSBRecorder() {
 }
 
 bool WingOSC::GetUSBRecorderStatus(std::string& active_state, std::string& action_state) const {
+    const auto values = QueryStringAddressesDirect({"/rec/$actstate", "/rec/$action"});
     bool ok = false;
-    std::string state_value;
-    std::string action_value;
-    if (QueryOscStringDirect(wing_ip_, wing_port_, "/rec/$actstate", state_value)) {
-        active_state = state_value;
+    auto it = values.find("/rec/$actstate");
+    if (it != values.end()) {
+        active_state = it->second;
         ok = true;
     }
-    if (QueryOscStringDirect(wing_ip_, wing_port_, "/rec/$action", action_value)) {
-        action_state = action_value;
+    it = values.find("/rec/$action");
+    if (it != values.end()) {
+        action_state = it->second;
         ok = true;
     }
     return ok;
@@ -1441,22 +1402,31 @@ bool WingOSC::GetWLiveRecorderStatus(int slot,
         return false;
     }
     const std::string prefix = "/cards/wlive/" + std::to_string(slot) + "/$stat/";
+    const auto values = QueryStringAddressesDirect({
+        prefix + "state",
+        prefix + "sdstate",
+        prefix + "errormessage",
+        prefix + "errorcode",
+    });
     bool ok = false;
-    std::string value;
-    if (QueryOscStringDirect(wing_ip_, wing_port_, prefix + "state", value)) {
-        state = value;
+    auto it = values.find(prefix + "state");
+    if (it != values.end()) {
+        state = it->second;
         ok = true;
     }
-    if (QueryOscStringDirect(wing_ip_, wing_port_, prefix + "sdstate", value)) {
-        media_state = value;
+    it = values.find(prefix + "sdstate");
+    if (it != values.end()) {
+        media_state = it->second;
         ok = true;
     }
-    if (QueryOscStringDirect(wing_ip_, wing_port_, prefix + "errormessage", value)) {
-        error_message = value;
+    it = values.find(prefix + "errormessage");
+    if (it != values.end()) {
+        error_message = it->second;
         ok = true;
     }
-    if (QueryOscStringDirect(wing_ip_, wing_port_, prefix + "errorcode", value)) {
-        error_code = value;
+    it = values.find(prefix + "errorcode");
+    if (it != values.end()) {
+        error_code = it->second;
         ok = true;
     }
     return ok;
@@ -1839,10 +1809,10 @@ void WingOSC::SetAllChannelsAltEnabled(bool enable) {
 }
 
 // USB allocation algorithm with gap backfilling
-std::vector<USBAllocation> WingOSC::CalculateUSBAllocation(const std::vector<ChannelInfo>& channels) {
+std::vector<USBAllocation> WingOSC::CalculateUSBAllocation(const std::vector<SourceSelectionInfo>& channels) {
     std::vector<USBAllocation> allocations;
     
-    Log("Calculating USB allocation for " + std::to_string(channels.size()) + " channels...");
+    Log("Calculating USB allocation for " + std::to_string(channels.size()) + " sources...");
     
     int next_usb = 1;
     // Gap slots created when stereo forces alignment to an odd number.
@@ -1851,7 +1821,8 @@ std::vector<USBAllocation> WingOSC::CalculateUSBAllocation(const std::vector<Cha
     
     for (const auto& ch : channels) {
         USBAllocation alloc;
-        alloc.channel_number = ch.channel_number;
+        alloc.source_kind = ch.kind;
+        alloc.source_number = ch.source_number;
         alloc.is_stereo = ch.stereo_linked;
         
         if (ch.stereo_linked) {
@@ -1869,7 +1840,7 @@ std::vector<USBAllocation> WingOSC::CalculateUSBAllocation(const std::vector<Cha
             alloc.allocation_note = "Stereo on USB " + std::to_string(next_usb) + "-" + std::to_string(next_usb + 1);
             allocations.push_back(alloc);
             
-            Log("Channel " + std::to_string(ch.channel_number) + " (stereo source) → USB " + 
+            Log("Source " + std::to_string(ch.source_number) + " (stereo) → USB " + 
                 std::to_string(next_usb) + "-" + std::to_string(next_usb + 1));
             
             next_usb += 2;
@@ -1879,11 +1850,11 @@ std::vector<USBAllocation> WingOSC::CalculateUSBAllocation(const std::vector<Cha
             if (!gap_slots.empty()) {
                 slot = gap_slots.front();
                 gap_slots.erase(gap_slots.begin());
-                Log("Channel " + std::to_string(ch.channel_number) + " (mono) → USB " + 
+                Log("Source " + std::to_string(ch.source_number) + " (mono) → USB " + 
                     std::to_string(slot) + " (gap fill)");
             } else {
                 slot = next_usb++;
-                Log("Channel " + std::to_string(ch.channel_number) + " (mono) → USB " + std::to_string(slot));
+                Log("Source " + std::to_string(ch.source_number) + " (mono) → USB " + std::to_string(slot));
             }
             alloc.usb_start = alloc.usb_end = slot;
             alloc.allocation_note = "Mono on USB " + std::to_string(slot);
@@ -1903,30 +1874,14 @@ void WingOSC::QueryUserSignalInputs(int count) {
     Log("[QUERY] Requesting " + std::to_string(count) + " User Signal Input routing data...");
     Log("[QUERY] Using correct Wing OSC paths: /io/in/USR/N/user/grp and /io/in/USR/N/user/in");
     
+    std::vector<std::string> addresses;
+    addresses.reserve(static_cast<size_t>(count) * 2);
     for (int i = 1; i <= count; ++i) {
-        char buffer[256];
-        osc::OutboundPacketStream p(buffer, 256);
-        
-        // Query USR input source: /io/in/USR/[N]/user/grp (group)
-        // Correct path discovered from Wing object model traversal
-        std::string addr_grp = "/io/in/USR/" + std::to_string(i) + "/user/grp";
-        p << MakeOscBeginToken(addr_grp.c_str()) << MakeOscEndToken();
-        SendRawPacket(p.Data(), p.Size());
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        
-        // Query USR input source: /io/in/USR/[N]/user/in (input number)
-        std::string addr_in = "/io/in/USR/" + std::to_string(i) + "/user/in";
-        p.Clear();
-        p << MakeOscBeginToken(addr_in.c_str()) << MakeOscEndToken();
-        SendRawPacket(p.Data(), p.Size());
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        addresses.push_back("/io/in/USR/" + std::to_string(i) + "/user/grp");
+        addresses.push_back("/io/in/USR/" + std::to_string(i) + "/user/in");
     }
-    
-    // CRITICAL: Wait for OSC responses to be received and parsed by HandleOscMessage()
-    // Each query gets a response, so we need to wait long enough for all responses
-    // Typical Wing console response time is 50-100ms per query, so 200ms+ should be safe
-    Log("[QUERY] Waiting for OSC responses to be parsed...");
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    SendQueryBurst(addresses);
+    std::this_thread::sleep_for(std::chrono::milliseconds(kAsyncQuerySettlingMs));
     
     // Log how many USR inputs we have routing data for
     {
@@ -2035,6 +1990,8 @@ void WingOSC::QueryInputSourceNames(const std::set<std::pair<std::string, int>>&
         return;
     }
 
+    std::vector<std::string> addresses;
+    addresses.reserve(sources.size());
     for (const auto& src : sources) {
         const std::string& grp = src.first;
         int in = src.second;
@@ -2043,19 +2000,13 @@ void WingOSC::QueryInputSourceNames(const std::set<std::pair<std::string, int>>&
         }
 
         // Query source labels for directly readable input groups used by the selection popup.
-        if (grp != "A" && grp != "LCL" && grp != "USR") {
+        if (!IsDirectInputQueryGroup(grp)) {
             continue;
         }
-
-        char buffer[256];
-        osc::OutboundPacketStream p(buffer, 256);
-        std::string addr_name = "/io/in/" + grp + "/" + std::to_string(in) + "/name";
-        p << MakeOscBeginToken(addr_name.c_str()) << MakeOscEndToken();
-        SendRawPacket(p.Data(), p.Size());
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        addresses.push_back("/io/in/" + grp + "/" + std::to_string(in) + "/name");
     }
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    SendQueryBurst(addresses);
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
 }
 
 std::string WingOSC::GetInputSourceName(const std::string& grp, int in) const {
@@ -2072,33 +2023,106 @@ std::string WingOSC::QueryInputSourceNameDirect(const std::string& grp, int in) 
     if (in <= 0) {
         return "";
     }
-    if (grp != "A" && grp != "LCL" && grp != "USR") {
+    if (!IsDirectInputQueryGroup(grp)) {
         return "";
     }
 
     std::string name;
-    if (QueryInputNameDirect(wing_ip_, wing_port_, grp, in, name)) {
+    if (QueryInputNameDirectRaw(wing_ip_, wing_port_, grp, in, name)) {
         return name;
     }
     return "";
 }
 
+std::string WingOSC::QueryInputModeDirect(const std::string& grp, int in) const {
+    if (in <= 0) {
+        return "";
+    }
+    if (!IsDirectInputQueryGroup(grp)) {
+        return "";
+    }
+
+    std::string mode;
+    if (QueryInputModeDirectRaw(wing_ip_, wing_port_, grp, in, mode)) {
+        return mode;
+    }
+    return "";
+}
+
+std::string WingOSC::QueryConsoleSourceNameDirect(SourceKind kind, int number) const {
+    if (number <= 0) {
+        return "";
+    }
+
+    std::vector<std::string> candidate_paths;
+    char formatted[8];
+    snprintf(formatted, sizeof(formatted), "%02d", number);
+
+    switch (kind) {
+        case SourceKind::Bus:
+            candidate_paths = {
+                "/bus/" + std::string(formatted) + "/name",
+                "/bus/" + std::to_string(number) + "/name",
+                "/bus/" + std::string(formatted) + "/config/name",
+                "/bus/" + std::to_string(number) + "/config/name",
+            };
+            break;
+        case SourceKind::Matrix:
+            candidate_paths = {
+                "/mtx/" + std::string(formatted) + "/name",
+                "/mtx/" + std::to_string(number) + "/name",
+                "/mtx/" + std::string(formatted) + "/config/name",
+                "/mtx/" + std::to_string(number) + "/config/name",
+            };
+            break;
+        case SourceKind::Channel:
+            return "";
+    }
+
+    for (const auto& path : candidate_paths) {
+        std::string name;
+        if (QueryStringAddressDirectRaw(wing_ip_, wing_port_, path, name) && !name.empty()) {
+            return name;
+        }
+    }
+    return "";
+}
+
 void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocations, 
-                                       const std::vector<ChannelInfo>& channels,
+                                       const std::vector<SourceSelectionInfo>& channels,
                                        const std::string& output_mode,
                                        bool setup_soundcheck) {
     std::string output_type = (output_mode == "CARD") ? "CARD" : "USB";
+    auto kind_label = [](SourceKind kind) {
+        switch (kind) {
+            case SourceKind::Channel: return "CH";
+            case SourceKind::Bus: return "BUS";
+            case SourceKind::Matrix: return "MTX";
+        }
+        return "SRC";
+    };
+    auto source_key = [&](SourceKind kind, int number) {
+        return std::string(kind_label(kind)) + std::to_string(number);
+    };
+
+    bool configure_soundcheck_inputs = false;
+    for (const auto& src : channels) {
+        if (src.soundcheck_capable) {
+            configure_soundcheck_inputs = configure_soundcheck_inputs || setup_soundcheck;
+        }
+    }
+
     Log("\n╔═══════════════════════════════════════════════════════════╗");
-    if (setup_soundcheck) {
+    if (configure_soundcheck_inputs) {
         Log("║     SOUNDCHECK " + output_type + " MAPPING CONFIGURATION                 ║");
     } else {
         Log("║     RECORDING-ONLY " + output_type + " CONFIGURATION                     ║");
     }
     Log("╚═══════════════════════════════════════════════════════════╝");
     Log("\n[SETUP] ApplyUSBAllocationAsAlt called with " + std::to_string(allocations.size()) + 
-        " allocations and " + std::to_string(channels.size()) + " selected channels");
+        " allocations and " + std::to_string(channels.size()) + " selected sources");
     Log("[SETUP] Output mode: " + output_type);
-    Log("[SETUP] Setup soundcheck: " + std::string(setup_soundcheck ? "YES" : "NO"));
+    Log("[SETUP] Setup soundcheck: " + std::string(configure_soundcheck_inputs ? "YES" : "NO"));
     
     // CRITICAL: Unlock USB outputs before configuration
     Log("\n[SETUP] Step 1/4: Unlocking USB recording outputs...");
@@ -2119,20 +2143,23 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
     }
     Log("       ✓ Outputs cleared");
 
-    Log("       Clearing " + std::to_string(max_inputs) + " " + output_type + " inputs (mode reset)...");
-    for (int input_num = 1; input_num <= max_inputs; ++input_num) {
-        if (output_type == "CARD") {
-            ClearCardInput(input_num);
-        } else {
-            ClearUSBInput(input_num);
+    if (configure_soundcheck_inputs) {
+        Log("       Clearing " + std::to_string(max_inputs) + " " + output_type + " inputs (mode reset)...");
+        for (int input_num = 1; input_num <= max_inputs; ++input_num) {
+            if (output_type == "CARD") {
+                ClearCardInput(input_num);
+            } else {
+                ClearUSBInput(input_num);
+            }
         }
+        Log("       ✓ Inputs cleared");
+    } else {
+        Log("       Skipping input bank reset (record-only sources)");
     }
-    Log("       ✓ Inputs cleared");
     
-    // Build a quick lookup map from channel number to channel info (from selected channels)
-    std::map<int, ChannelInfo> channel_map;
+    std::map<std::pair<int, int>, SourceSelectionInfo> source_map;
     for (const auto& ch : channels) {
-        channel_map[ch.channel_number] = ch;
+        source_map[{static_cast<int>(ch.kind), ch.source_number}] = ch;
     }
     
     const auto full_data = GetChannelData();
@@ -2140,83 +2167,76 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
     int configured_count = 0;
     int skipped_count = 0;
     std::set<int> configured_channels_with_alt;
-    std::set<int> processed_stereo_channels;  // Track stereo pairs already processed to avoid double-processing
+    std::set<std::pair<int, int>> processed_stereo_sources;
     
     Log("\n[SETUP] Step 3/4: Configuring " + output_type + " output sources and naming...");
     Log("───────────────────────────────────────────────────────────");
     
     for (const auto& alloc : allocations) {
         if (!alloc.allocation_note.empty() && alloc.allocation_note.find("ERROR") != std::string::npos) {
-            Log("[SKIP] CH" + std::to_string(alloc.channel_number) + ": " + alloc.allocation_note);
+            Log("[SKIP] " + source_key(alloc.source_kind, alloc.source_number) + ": " + alloc.allocation_note);
             skipped_count++;
             continue;
         }
         
-        // Skip if this channel was already processed as part of a stereo pair
-        if (processed_stereo_channels.count(alloc.channel_number)) {
-            Log("[SKIP] CH" + std::to_string(alloc.channel_number) + ": already processed as stereo partner");
+        const auto lookup_key = std::make_pair(static_cast<int>(alloc.source_kind), alloc.source_number);
+        if (processed_stereo_sources.count(lookup_key)) {
+            Log("[SKIP] " + source_key(alloc.source_kind, alloc.source_number) + ": already processed as stereo partner");
             skipped_count++;
             continue;
         }
         
-        // Find the channel info
-        auto it = channel_map.find(alloc.channel_number);
-        if (it == channel_map.end()) {
-            Log("[ERROR] CH" + std::to_string(alloc.channel_number) + " not found in channel data");
+        auto it = source_map.find(lookup_key);
+        if (it == source_map.end()) {
+            Log("[ERROR] " + source_key(alloc.source_kind, alloc.source_number) + " not found in source data");
             skipped_count++;
             continue;
         }
-        const ChannelInfo& ch_info = it->second;
-        
-        // === STEREO CHANNEL CONFIGURATION ===
-        if (alloc.is_stereo) {
-            Log("\n[STEREO] CH" + std::to_string(alloc.channel_number) + ": " + ch_info.name);
-            Log("         Primary source: " + ch_info.primary_source_group + 
-                ":" + std::to_string(ch_info.primary_source_input));
-            
-            // Stereo on the Wing is SOURCE-based: a single channel has a stereo source.
-            // The right side is always source_input+1 in the same source group.
-            // No partner channel lookup needed.
-            
-            // ===== OUTPUT CONFIGURATION (Wing console sends TO REAPER) =====
-            Log("\n         [CONFIGURE " + output_type + " OUTPUTS] (Wing console → REAPER via " + output_type + ")");
-            
-            // For output routing, prefer the direct source group as configured on the channel.
-            // User Signal inputs are valid USB/CARD output sources on the Wing and must not be
-            // resolved to CH:* endpoints, which are not queryable/routable here.
-            std::string left_src_grp = ch_info.primary_source_group;
-            int left_src_in = ch_info.primary_source_input;
-            if (!IsDirectOutputSourceGroup(left_src_grp)) {
-                auto resolved = ResolveRoutingChain(ch_info.primary_source_group, ch_info.primary_source_input);
-                left_src_grp = resolved.first;
-                left_src_in = resolved.second;
-                if (left_src_grp != ch_info.primary_source_group || left_src_in != ch_info.primary_source_input) {
-                    Log("           (LEFT  resolved: " + ch_info.primary_source_group + ":" +
-                        std::to_string(ch_info.primary_source_input) + " → " + left_src_grp + ":" +
-                        std::to_string(left_src_in) + ")");
-                }
-            }
+        const SourceSelectionInfo& selected = it->second;
 
-            // Right side is the adjacent source in the same source group.
-            std::string right_src_grp = left_src_grp;
-            int right_src_in = left_src_in + 1;
-            Log("           (RIGHT derived: " + right_src_grp + ":" + std::to_string(right_src_in) + ")");
+        ChannelInfo ch_info{};
+        bool has_channel_info = false;
+        if (alloc.source_kind == SourceKind::Channel) {
+            auto ch_it = full_data.find(alloc.source_number);
+            if (ch_it == full_data.end()) {
+                Log("[ERROR] CH" + std::to_string(alloc.source_number) + " not found in channel data");
+                skipped_count++;
+                continue;
+            }
+            ch_info = ch_it->second;
+            has_channel_info = true;
+        }
+
+        const std::string display_name = !selected.name.empty()
+            ? selected.name
+            : source_key(alloc.source_kind, alloc.source_number);
+        const bool can_setup_soundcheck = configure_soundcheck_inputs && selected.soundcheck_capable && has_channel_info;
+        std::string src_grp = has_channel_info ? ch_info.primary_source_group : selected.source_group;
+        int src_in = has_channel_info ? ch_info.primary_source_input : selected.source_input;
+        if (has_channel_info && !IsDirectOutputSourceGroup(src_grp)) {
+            auto resolved = ResolveRoutingChain(ch_info.primary_source_group, ch_info.primary_source_input);
+            src_grp = resolved.first;
+            src_in = resolved.second;
+        }
+        
+        if (alloc.is_stereo) {
+            Log("\n[STEREO] " + source_key(alloc.source_kind, alloc.source_number) + ": " + display_name);
+            Log("         Primary source: " + src_grp + ":" + std::to_string(src_in));
+
+            std::string right_src_grp = src_grp;
+            int right_src_in = src_in + 1;
             
-            // Configure output 1 (LEFT channel)
             Log("           " + output_type + " OUTPUT " + std::to_string(alloc.usb_start) + 
-                " (LEFT):  " + left_src_grp + ":" + 
-                std::to_string(left_src_in) + " → REAPER");
+                " (LEFT):  " + src_grp + ":" + std::to_string(src_in) + " → REAPER");
             if (output_type == "CARD") {
-                SetCardOutputSource(alloc.usb_start, left_src_grp, left_src_in);
+                SetCardOutputSource(alloc.usb_start, src_grp, src_in);
             } else {
-                SetUSBOutputSource(alloc.usb_start, left_src_grp, left_src_in);
+                SetUSBOutputSource(alloc.usb_start, src_grp, src_in);
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
             
-            // Configure output 2 (RIGHT channel)
             Log("           " + output_type + " OUTPUT " + std::to_string(alloc.usb_end) + 
-                " (RIGHT): " + right_src_grp + ":" + 
-                std::to_string(right_src_in) + " → REAPER");
+                " (RIGHT): " + right_src_grp + ":" + std::to_string(right_src_in) + " → REAPER");
             if (output_type == "CARD") {
                 SetCardOutputSource(alloc.usb_end, right_src_grp, right_src_in);
             } else {
@@ -2228,8 +2248,8 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
             Log("\n         [NAMING " + output_type + " OUTPUTS]");
             
             // Name outputs (what Wing console sends)
-            std::string out_left_name = ch_info.name + " (L)";
-            std::string out_right_name = ch_info.name + " (R)";
+            std::string out_left_name = display_name + " (L)";
+            std::string out_right_name = display_name + " (R)";
             
             Log("           " + output_type + " OUTPUT " + std::to_string(alloc.usb_start) + 
                 " name: '" + out_left_name + "'");
@@ -2249,10 +2269,7 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
             
-            // ===== INPUT CONFIGURATION (REAPER playback to Wing) =====
-            // Only configure inputs if soundcheck mode is enabled
-            if (setup_soundcheck) {
-                // Name inputs (REAPER sends back to Wing console)
+            if (can_setup_soundcheck) {
                 if (output_type == "USB") {
                     Log("\n         [NAMING USB INPUTS] (For REAPER playback)");
                     Log("           USB INPUT " + std::to_string(alloc.usb_start) + 
@@ -2295,51 +2312,27 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 }
                 
-                // ===== ALT SOURCE CONFIGURATION (for soundcheck mode toggle) =====
-                // Stereo is source-based: only one Wing channel strip receives both sides.
-                // Set its alt source to the left USB slot; the Wing handles stereo internally.
                 Log("\n         [CONFIGURE ALT SOURCES] (For soundcheck mode toggle)");
                 
-                Log("           CH" + std::to_string(alloc.channel_number) + 
+                Log("           CH" + std::to_string(alloc.source_number) + 
                     " ALT: " + output_type + ":" + std::to_string(alloc.usb_start));
-                SetChannelAltSource(alloc.channel_number, output_type, alloc.usb_start);
-                configured_channels_with_alt.insert(alloc.channel_number);
+                SetChannelAltSource(alloc.source_number, output_type, alloc.usb_start);
+                configured_channels_with_alt.insert(alloc.source_number);
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
             } else {
                 Log("\n         [SKIP INPUT/ALT CONFIG] (Recording-only mode)");
             }
             
-            processed_stereo_channels.insert(alloc.channel_number);
-            configured_count++;
+            processed_stereo_sources.insert(lookup_key);
             
-        } 
-        // === MONO CHANNEL CONFIGURATION ===
-        else {
-            Log("\n[MONO] CH" + std::to_string(alloc.channel_number) + ": " + ch_info.name);
-            Log("       Primary source: " + ch_info.primary_source_group + 
-                ":" + std::to_string(ch_info.primary_source_input));
+        } else {
+            Log("\n[MONO] " + source_key(alloc.source_kind, alloc.source_number) + ": " + display_name);
+            Log("       Primary source: " + src_grp + ":" + std::to_string(src_in));
             
-            // ===== OUTPUT CONFIGURATION (Wing console sends TO REAPER) =====
             Log("\n       [CONFIGURE " + output_type + " OUTPUT] (Wing console → REAPER via " + output_type + ")");
             
-            // Prefer the direct configured source when routing outputs. In particular, USR
-            // sources are routable on Wing USB/CARD outputs and should stay as USR:*.
-            std::string src_grp = ch_info.primary_source_group;
-            int src_in = ch_info.primary_source_input;
-            if (!IsDirectOutputSourceGroup(src_grp)) {
-                auto resolved = ResolveRoutingChain(ch_info.primary_source_group, ch_info.primary_source_input);
-                src_grp = resolved.first;
-                src_in = resolved.second;
-                if (src_grp != ch_info.primary_source_group || src_in != ch_info.primary_source_input) {
-                    Log("         (resolved: " + ch_info.primary_source_group + ":" +
-                        std::to_string(ch_info.primary_source_input) + " → " + src_grp + ":" +
-                        std::to_string(src_in) + ")");
-                }
-            }
-            
             Log("         " + output_type + " OUTPUT " + std::to_string(alloc.usb_start) + 
-                ": " + src_grp + ":" + 
-                std::to_string(src_in) + " → REAPER");
+                ": " + src_grp + ":" + std::to_string(src_in) + " → REAPER");
             if (output_type == "CARD") {
                 SetCardOutputSource(alloc.usb_start, src_grp, src_in);
             } else {
@@ -2347,28 +2340,23 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
             
-            // ===== OUTPUT NAMES =====
             Log("\n       [NAMING " + output_type + " OUTPUT]");
             
-            // Name output (what Wing console sends)
             Log("         " + output_type + " OUTPUT " + std::to_string(alloc.usb_start) + 
-                " name: '" + ch_info.name + "'");
+                " name: '" + display_name + "'");
             if (output_type == "CARD") {
-                SetCardOutputName(alloc.usb_start, ch_info.name);
+                SetCardOutputName(alloc.usb_start, display_name);
             } else {
-                SetUSBOutputName(alloc.usb_start, ch_info.name);
+                SetUSBOutputName(alloc.usb_start, display_name);
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
             
-            // ===== INPUT CONFIGURATION (REAPER playback to Wing) =====
-            // Only configure inputs if soundcheck mode is enabled
-            if (setup_soundcheck) {
-                // Name inputs (what REAPER sends back to Wing console)
+            if (can_setup_soundcheck) {
                 if (output_type == "USB") {
                     Log("\n       [NAMING USB INPUT] (For REAPER playback)");
                     Log("         USB INPUT " + std::to_string(alloc.usb_start) + 
-                        " name: '" + ch_info.name + "'");
-                    SetUSBInputName(alloc.usb_start, ch_info.name);
+                        " name: '" + display_name + "'");
+                    SetUSBInputName(alloc.usb_start, display_name);
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
                     
                     Log("\n       [SET USB INPUT MODE] (Mono)");
@@ -2378,8 +2366,8 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
                 } else if (output_type == "CARD") {
                     Log("\n       [NAMING CARD INPUT] (For REAPER playback)");
                     Log("         CARD INPUT " + std::to_string(alloc.usb_start) + 
-                        " name: '" + ch_info.name + "'");
-                    SetCardInputName(alloc.usb_start, ch_info.name);
+                        " name: '" + display_name + "'");
+                    SetCardInputName(alloc.usb_start, display_name);
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
                     
                     Log("\n       [SET CARD INPUT MODE] (Mono)");
@@ -2388,13 +2376,12 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 }
                 
-                // ===== ALT SOURCE CONFIGURATION (for soundcheck mode toggle) =====
                 Log("\n       [CONFIGURE ALT SOURCE] (For soundcheck mode toggle)");
                 
-                Log("         CH" + std::to_string(alloc.channel_number) + 
+                Log("         CH" + std::to_string(alloc.source_number) + 
                     " ALT: " + output_type + ":" + std::to_string(alloc.usb_start));
-                SetChannelAltSource(alloc.channel_number, output_type, alloc.usb_start);
-                configured_channels_with_alt.insert(alloc.channel_number);
+                SetChannelAltSource(alloc.source_number, output_type, alloc.usb_start);
+                configured_channels_with_alt.insert(alloc.source_number);
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
             } else {
                 Log("\n       [SKIP INPUT/ALT CONFIG] (Recording-only mode)");
@@ -2404,8 +2391,7 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
         configured_count++;
     }
     
-    // Only clear ALT sources if we're in soundcheck mode
-    if (setup_soundcheck) {
+    if (configure_soundcheck_inputs) {
         Log("\n[SETUP] Step 4/5: Clearing ALT sources for unselected channels...");
         int cleared_unselected = 0;
         for (const auto& [channel_num, channel_info] : full_data) {
@@ -2435,7 +2421,7 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
     }
     
     Log("\n╔═══════════════════════════════════════════════════════════╗");
-    if (setup_soundcheck) {
+    if (configure_soundcheck_inputs) {
         Log("║     SOUNDCHECK READY - READY FOR REAPER TRACK SETUP       ║");
     } else {
         Log("║     RECORDING READY - READY FOR REAPER TRACK SETUP        ║");
@@ -2449,23 +2435,17 @@ void WingOSC::QueryChannel(int channel_num) {
         return;
     }
 
-    // Query name, color, icon and stereo-link state for this channel
-    GetChannelName(channel_num);
-    std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    
-    GetChannelColor(channel_num);
-    std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    
-    GetChannelIcon(channel_num);
-    std::this_thread::sleep_for(std::chrono::milliseconds(2));
-
-    // Query routing information (for virtual soundcheck)
-    // (Stereo detection is now done via /io/in/{grp}/{num}/mode in a second pass)
-    GetChannelSourceRouting(channel_num);
-    std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    
-    GetChannelAltRouting(channel_num);
-    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    const std::string ch = FormatChannelNum(channel_num);
+    SendQueryBurst({
+        "/ch/" + ch + "/name",
+        "/ch/" + ch + "/col",
+        "/ch/" + ch + "/icon",
+        "/ch/" + ch + "/in/conn/grp",
+        "/ch/" + ch + "/in/conn/in",
+        "/ch/" + ch + "/in/conn/altgrp",
+        "/ch/" + ch + "/in/conn/altin",
+        "/ch/" + ch + "/in/set/altsrc",
+    });
 }
 
 void WingOSC::QueryAllChannels(int count) {
@@ -2476,24 +2456,53 @@ void WingOSC::QueryAllChannels(int count) {
 
     Log("Querying " + std::to_string(count) + " channels from Wing...");
     
+    std::vector<std::string> first_pass_addresses;
+    first_pass_addresses.reserve(static_cast<size_t>(count) * 8);
     for (int i = 1; i <= count; ++i) {
-        QueryChannel(i);
+        const std::string ch = FormatChannelNum(i);
+        first_pass_addresses.push_back("/ch/" + ch + "/name");
+        first_pass_addresses.push_back("/ch/" + ch + "/col");
+        first_pass_addresses.push_back("/ch/" + ch + "/icon");
+        first_pass_addresses.push_back("/ch/" + ch + "/in/conn/grp");
+        first_pass_addresses.push_back("/ch/" + ch + "/in/conn/in");
+        first_pass_addresses.push_back("/ch/" + ch + "/in/conn/altgrp");
+        first_pass_addresses.push_back("/ch/" + ch + "/in/conn/altin");
+        first_pass_addresses.push_back("/ch/" + ch + "/in/set/altsrc");
     }
+    SendQueryBurst(first_pass_addresses);
     
     // Query USR routing before stereo detection so routed sources can be
     // resolve to the final /io/in/{grp}/{num}/mode endpoint.
-    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    std::this_thread::sleep_for(std::chrono::milliseconds(kAsyncQuerySettlingMs));
     QueryUserSignalInputs(48);
 
     // Second pass: query source stereo mode via /io/in/{grp}/{num}/mode.
-    // Routing responses can arrive after the first pass, so retry a few times.
     Log("Second pass: querying source stereo modes via /io/in/{grp}/{num}/mode...");
-    for (int attempt = 0; attempt < 3; ++attempt) {
-        for (int i = 1; i <= count; ++i) {
-            QueryChannelSourceStereo(i);
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        std::set<std::pair<std::string, int>> mode_sources;
+        {
+            std::lock_guard<std::mutex> lock(data_mutex_);
+            for (const auto& [channel_num, ch_info] : channel_data_) {
+                (void)channel_num;
+                if (ch_info.primary_source_group.empty() || ch_info.primary_source_group == "OFF" ||
+                    ch_info.primary_source_input <= 0) {
+                    continue;
+                }
+                mode_sources.insert(ResolveRoutingChainLocked(ch_info.primary_source_group,
+                                                              ch_info.primary_source_input));
+            }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        std::vector<std::string> mode_addresses;
+        mode_addresses.reserve(mode_sources.size());
+        for (const auto& [grp, in] : mode_sources) {
+            if (!IsDirectInputQueryGroup(grp) || in <= 0) {
+                continue;
+            }
+            mode_addresses.push_back("/io/in/" + grp + "/" + std::to_string(in) + "/mode");
+        }
+        SendQueryBurst(mode_addresses);
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
     }
 }
 

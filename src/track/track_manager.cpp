@@ -24,6 +24,10 @@
 
 namespace WingConnector {
 
+namespace {
+constexpr const char* kTrackSourceIdExtKey = "P_EXT:WINGCONNECTOR_SOURCE_ID";
+}
+
 /**
  * TrackManager Constructor
  * 
@@ -343,6 +347,10 @@ void TrackManager::UpdateTrack(MediaTrack* track, const ChannelInfo& channel) {
 
 std::vector<MediaTrack*> TrackManager::FindExistingWingTracks() {
     std::vector<MediaTrack*> wing_tracks;
+
+    if (config_.track_prefix.empty()) {
+        return wing_tracks;
+    }
     
     ReaProject* proj = GetCurrentProject();
     if (!proj) return wing_tracks;
@@ -354,6 +362,13 @@ std::vector<MediaTrack*> TrackManager::FindExistingWingTracks() {
         if (!track) continue;
         
         char name_buf[512];
+        char source_id_buf[256];
+        if (GetSetMediaTrackInfo_String(track, kTrackSourceIdExtKey, source_id_buf, false) &&
+            source_id_buf[0] != '\0') {
+            wing_tracks.push_back(track);
+            continue;
+        }
+
         if (GetSetMediaTrackInfo_String(track, "P_NAME", name_buf, false)) {
             std::string track_name = name_buf;
             
@@ -365,6 +380,27 @@ std::vector<MediaTrack*> TrackManager::FindExistingWingTracks() {
     }
     
     return wing_tracks;
+}
+
+int TrackManager::ClearExistingWingTracks() {
+    auto existing_tracks = FindExistingWingTracks();
+    if (existing_tracks.empty()) {
+        created_tracks_.clear();
+        return 0;
+    }
+
+    Undo_BeginBlock();
+
+    for (auto it = existing_tracks.rbegin(); it != existing_tracks.rend(); ++it) {
+        if (*it) {
+            DeleteTrack(*it);
+        }
+    }
+
+    Undo_EndBlock("Clear Wing Tracks", UNDO_STATE_TRACKCFG);
+    UpdateArrange();
+    created_tracks_.clear();
+    return (int)existing_tracks.size();
 }
 
 void TrackManager::ClearAllTracks() {

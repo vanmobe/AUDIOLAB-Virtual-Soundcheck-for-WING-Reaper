@@ -40,7 +40,8 @@ extern "C" {
     bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>& channels,
                                    const char* title,
                                    const char* description,
-                                   bool& setup_soundcheck);
+                                   bool& setup_soundcheck,
+                                   bool& overwrite_existing);
 }
 
 #endif // __APPLE__

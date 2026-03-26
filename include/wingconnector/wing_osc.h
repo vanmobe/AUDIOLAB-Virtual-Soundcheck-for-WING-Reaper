@@ -19,6 +19,26 @@ namespace WingConnector {
 
 class WingOscListener;
 
+enum class SourceKind {
+    Channel,
+    Bus,
+    Matrix,
+};
+
+struct SourceSelectionInfo {
+    SourceKind kind = SourceKind::Channel;
+    int source_number = 0;
+    std::string name;
+    std::string source_group;
+    int source_input = 0;
+    std::string partner_name;
+    std::string partner_source_group;
+    int partner_source_input = 0;
+    bool stereo_linked = false;
+    bool selected = false;
+    bool soundcheck_capable = false;
+};
+
 // Channel data structure
 struct ChannelInfo {
     int channel_number;
@@ -46,7 +66,8 @@ struct ChannelInfo {
 
 // USB allocation result
 struct USBAllocation {
-    int channel_number;
+    SourceKind source_kind = SourceKind::Channel;
+    int source_number = 0;
     bool is_stereo;
     int usb_start;  // For stereo: odd number (1,3,5...), for mono: any
     int usb_end;    // For stereo: usb_start+1, for mono: same as start
@@ -136,9 +157,9 @@ public:
     void ClearCardInput(int card_num);  // Clear CARD input (reset to mono mode)
     
     // USB allocation utilities
-    std::vector<USBAllocation> CalculateUSBAllocation(const std::vector<ChannelInfo>& channels);
+    std::vector<USBAllocation> CalculateUSBAllocation(const std::vector<SourceSelectionInfo>& channels);
     void ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocations, 
-                                  const std::vector<ChannelInfo>& channels,
+                                  const std::vector<SourceSelectionInfo>& channels,
                                   const std::string& output_mode = "USB",
                                   bool setup_soundcheck = true);
     
@@ -150,6 +171,11 @@ public:
     void QueryInputSourceNames(const std::set<std::pair<std::string, int>>& sources);
     std::string GetInputSourceName(const std::string& grp, int in) const;
     std::string QueryInputSourceNameDirect(const std::string& grp, int in) const;
+    std::string QueryInputModeDirect(const std::string& grp, int in) const;
+    std::string QueryConsoleSourceNameDirect(SourceKind kind, int number) const;
+    std::map<std::string, std::string> QueryStringAddressesDirect(const std::vector<std::string>& addresses,
+                                                                  int total_timeout_ms = 150,
+                                                                  int idle_timeout_ms = 25) const;
     
     // Additional Wing commands
     void GetConsoleInfo();
@@ -233,6 +259,7 @@ private:
     void ParseChannelConfig(int channel_num, const std::string& value);
     bool PerformHandshake();
     bool SendRawPacket(const char* data, std::size_t size);
+    void SendQueryBurst(const std::vector<std::string>& addresses);
     void Log(const std::string& message) const;
     std::pair<std::string, int> ResolveRoutingChainLocked(const std::string& grp, int in) const;
     

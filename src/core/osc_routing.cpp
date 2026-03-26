@@ -15,16 +15,16 @@ OscRouter::AddressType OscRouter::ClassifyAddress(std::string_view address) {
         return AddressType::CHANNEL;
     }
     
-    if (StartsWith(address, "/io/in/USR/")) {
-        return AddressType::USB_INPUT;
-    }
-    
     if (StartsWith(address, "/io/in/A/")) {
         return AddressType::ANALOG_INPUT;
     }
     
     if (StartsWith(address, "/io/in/D/")) {
         return AddressType::DIGITAL_INPUT;
+    }
+
+    if (StartsWith(address, "/io/in/")) {
+        return AddressType::USB_INPUT;
     }
     
     if (IsExact(address, "/info") || IsExact(address, "/xinfo")) {
