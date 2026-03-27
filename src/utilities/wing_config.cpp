@@ -16,6 +16,33 @@ using json = nlohmann::json;
 
 namespace WingConnector {
 
+namespace {
+
+std::string BridgeKindToConfigValue(SourceKind kind) {
+    switch (kind) {
+        case SourceKind::Channel: return "channel";
+        case SourceKind::Bus: return "bus";
+        case SourceKind::Main: return "main";
+        case SourceKind::Matrix: return "matrix";
+    }
+    return "channel";
+}
+
+SourceKind BridgeKindFromConfigValue(const std::string& value) {
+    if (value == "bus") {
+        return SourceKind::Bus;
+    }
+    if (value == "main") {
+        return SourceKind::Main;
+    }
+    if (value == "matrix") {
+        return SourceKind::Matrix;
+    }
+    return SourceKind::Channel;
+}
+
+}  // namespace
+
 std::string WingConfig::GetConfigPath() {
     return Platform::GetConfigFilePath();
 }
@@ -54,6 +81,7 @@ bool WingConfig::LoadFromFile(const std::string& filepath) {
         auto_record_min_record_ms = config.value("auto_record_min_record_ms", 5000);
         auto_record_poll_ms = config.value("auto_record_poll_ms", 50);
         auto_record_monitor_track = config.value("auto_record_monitor_track", 0);
+        recorder_coordination_enabled = config.value("recorder_coordination_enabled", false);
         sd_lr_route_enabled = config.value("sd_lr_route_enabled", false);
         recorder_target = config.value("recorder_target", "WLIVE");
         sd_lr_group = config.value("sd_lr_group", "MAIN");
@@ -68,6 +96,26 @@ bool WingConfig::LoadFromFile(const std::string& filepath) {
         warning_flash_cc_layer = config.value("warning_flash_cc_layer", 1);
         warning_flash_cc_color = config.value("warning_flash_cc_color", 9);
         last_selected_source_ids = config.value("last_selected_source_ids", std::vector<std::string>{});
+        bridge_enabled = config.value("bridge_enabled", false);
+        bridge_poll_ms = config.value("bridge_poll_ms", 75);
+        bridge_debounce_ms = config.value("bridge_debounce_ms", 120);
+        bridge_midi_output_device = config.value("bridge_midi_output_device", -1);
+        bridge_midi_message_type = config.value("bridge_midi_message_type", "NOTE_ON_OFF");
+        bridge_midi_channel = config.value("bridge_midi_channel", 1);
+        bridge_mappings.clear();
+        if (config.contains("bridge_mappings") && config["bridge_mappings"].is_array()) {
+            for (const auto& item : config["bridge_mappings"]) {
+                if (!item.is_object()) {
+                    continue;
+                }
+                BridgeMapping mapping;
+                mapping.kind = BridgeKindFromConfigValue(item.value("kind", "channel"));
+                mapping.source_number = std::max(1, item.value("source_number", 1));
+                mapping.midi_value = std::clamp(item.value("midi_value", 0), 0, 127);
+                mapping.enabled = item.value("enabled", true);
+                bridge_mappings.push_back(mapping);
+            }
+        }
         
         // Extract color if present
         if (config.contains("default_track_color") && config["default_track_color"].is_object()) {
@@ -121,6 +169,7 @@ bool WingConfig::SaveToFile(const std::string& filepath) {
         config["auto_record_min_record_ms"] = auto_record_min_record_ms;
         config["auto_record_poll_ms"] = auto_record_poll_ms;
         config["auto_record_monitor_track"] = auto_record_monitor_track;
+        config["recorder_coordination_enabled"] = recorder_coordination_enabled;
         config["sd_lr_route_enabled"] = sd_lr_route_enabled;
         config["recorder_target"] = recorder_target;
         config["sd_lr_group"] = sd_lr_group;
@@ -135,6 +184,21 @@ bool WingConfig::SaveToFile(const std::string& filepath) {
         config["warning_flash_cc_layer"] = warning_flash_cc_layer;
         config["warning_flash_cc_color"] = warning_flash_cc_color;
         config["last_selected_source_ids"] = last_selected_source_ids;
+        config["bridge_enabled"] = bridge_enabled;
+        config["bridge_poll_ms"] = bridge_poll_ms;
+        config["bridge_debounce_ms"] = bridge_debounce_ms;
+        config["bridge_midi_output_device"] = bridge_midi_output_device;
+        config["bridge_midi_message_type"] = bridge_midi_message_type;
+        config["bridge_midi_channel"] = bridge_midi_channel;
+        config["bridge_mappings"] = json::array();
+        for (const auto& mapping : bridge_mappings) {
+            config["bridge_mappings"].push_back({
+                {"kind", BridgeKindToConfigValue(mapping.kind)},
+                {"source_number", mapping.source_number},
+                {"midi_value", mapping.midi_value},
+                {"enabled", mapping.enabled}
+            });
+        }
         config["default_track_color"] = {
             {"r", (int)default_color.r},
             {"g", (int)default_color.g},

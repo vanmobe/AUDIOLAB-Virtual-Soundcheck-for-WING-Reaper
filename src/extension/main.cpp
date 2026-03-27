@@ -53,13 +53,14 @@ static reaper_plugin_info_t* g_rec = nullptr;
 
 // Command IDs
 static int g_cmd_main_dialog = 0;
+static int g_cmd_selected_channel_bridge = 0;
 
 // ===== COMMAND HOOK (hookcommand2) =====
 /**
  * OnAction() - REAPER Command Dispatcher
  * 
  * Called by REAPER whenever an action/command is executed.
- * We filter for our AUDIOLAB.wing.reaper.virtualsoundcheck action and launch the main dialog.
+ * We filter for our Wing Connector actions and launch the matching UI flow.
  * 
  * Args:
  *   sec     - Keyboard section info (unused)
@@ -78,14 +79,19 @@ static bool OnAction(KbdSectionInfo* sec, int cmd, int val, int valhw, int relmo
     (void)relmode;
     (void)hwnd;
 
-    Logger::Debug("OnAction() called with cmd=%d, g_cmd_main_dialog=%d", cmd, g_cmd_main_dialog);
+    Logger::Debug("OnAction() called with cmd=%d, g_cmd_main_dialog=%d, g_cmd_selected_channel_bridge=%d",
+                  cmd, g_cmd_main_dialog, g_cmd_selected_channel_bridge);
 
-    // Check if this is our AUDIOLAB.wing.reaper.virtualsoundcheck command
     if (cmd == g_cmd_main_dialog) {
         Logger::Debug("Main dialog command triggered!");
 
         ShowMainDialog();
         return true;  // Command handled
+    }
+    if (cmd == g_cmd_selected_channel_bridge) {
+        Logger::Debug("Selected channel bridge command triggered!");
+        ShowSelectedChannelBridgeDialog();
+        return true;
     }
 
     return false;  // Not our command, pass to next handler
@@ -93,11 +99,12 @@ static bool OnAction(KbdSectionInfo* sec, int cmd, int val, int valhw, int relmo
 
 // ===== REGISTRATION =====
 /**
- * RegisterCommands() - Register AUDIOLAB.wing.reaper.virtualsoundcheck UI Actions
+ * RegisterCommands() - Register Wing Connector UI actions
  * 
  * Register with REAPER:
  * 1. hookcommand2 callback to intercept user commands
- * 2. Custom action "Behringer Wing: Configure Virtual Soundcheck/Recording"
+ * 2. Custom action "Behringer Wing: Open Wing Connector"
+ * 3. Separate custom action for selected-channel bridge setup notes
  * 3. Optional keyboard shortcut Ctrl+Shift+W
  *
  * REAPER will:
@@ -123,11 +130,21 @@ static void RegisterCommands() {
     custom_action_register_t action;
     memset(&action, 0, sizeof(action));
     action.uniqueSectionId = 0;
+    // Keep the legacy action id stable so existing REAPER bindings continue to resolve.
     action.idStr = "_AUDIOLAB_VIRTUALSOUNDCHECK_MAIN_DIALOG";
     action.name = "Behringer Wing: Configure Virtual Soundcheck/Recording";
     g_cmd_main_dialog = g_rec->Register("custom_action", &action);
     
     Logger::Debug("Main dialog action registered with ID: %d", g_cmd_main_dialog);
+
+    custom_action_register_t bridge_action;
+    memset(&bridge_action, 0, sizeof(bridge_action));
+    bridge_action.uniqueSectionId = 0;
+    bridge_action.idStr = "_AUDIOLAB_WING_SELECTED_CHANNEL_BRIDGE";
+    bridge_action.name = "Behringer Wing: Selected Channel Bridge Setup";
+    g_cmd_selected_channel_bridge = g_rec->Register("custom_action", &bridge_action);
+
+    Logger::Debug("Selected channel bridge action registered with ID: %d", g_cmd_selected_channel_bridge);
     
     // Register keyboard shortcut Ctrl+Shift+W for quick access
     if (g_cmd_main_dialog > 0) {

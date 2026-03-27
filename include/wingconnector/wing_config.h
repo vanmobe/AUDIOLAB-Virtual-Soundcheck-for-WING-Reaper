@@ -1,11 +1,19 @@
 #ifndef WING_CONFIG_H
 #define WING_CONFIG_H
 
+#include "wing_osc.h"
 #include <string>
 #include <cstdint>
 #include <vector>
 
 namespace WingConnector {
+
+struct BridgeMapping {
+    SourceKind kind = SourceKind::Channel;
+    int source_number = 1;
+    int midi_value = 0;
+    bool enabled = true;
+};
 
 struct WingConfig {
     std::string wing_ip = "192.168.1.100";
@@ -36,6 +44,7 @@ struct WingConfig {
     int auto_record_monitor_track = 0;  // 0 = auto (all armed+monitored), otherwise 1-based track index
 
     // Recorder routing helper for stereo mix capture
+    bool recorder_coordination_enabled = false;
     bool sd_lr_route_enabled = false;
     std::string recorder_target = "WLIVE";  // "WLIVE" = SD card (WING-LIVE), "USBREC" = front USB recorder
     std::string sd_lr_group = "MAIN";
@@ -54,6 +63,15 @@ struct WingConfig {
     int warning_flash_cc_layer = 1;   // /$ctl/user/<layer>/...
     int warning_flash_cc_color = 9;   // WING color index, 9 = red
     std::vector<std::string> last_selected_source_ids;
+
+    // Selected-channel bridge
+    bool bridge_enabled = false;
+    int bridge_poll_ms = 75;
+    int bridge_debounce_ms = 120;
+    int bridge_midi_output_device = -1;  // -1 = no output selected
+    std::string bridge_midi_message_type = "NOTE_ON_OFF";  // NOTE_ON, NOTE_ON_OFF, PROGRAM
+    int bridge_midi_channel = 1;  // 1-16
+    std::vector<BridgeMapping> bridge_mappings;
     
     // Channel selection for virtual soundcheck
     // Format: comma-separated channel numbers, ranges allowed (e.g., "1,3-5,7")

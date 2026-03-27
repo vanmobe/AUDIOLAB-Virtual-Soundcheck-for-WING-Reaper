@@ -29,6 +29,7 @@ extern "C" {
     // Show the main AUDIOLAB.wing.reaper.virtualsoundcheck dialog
     // Returns the action the user wants to perform
     void ShowWingConnectorDialog();
+    void ShowWingConnectorDialogAtTab(const char* tab_identifier);
 }
 
 // Channel Selection Dialog

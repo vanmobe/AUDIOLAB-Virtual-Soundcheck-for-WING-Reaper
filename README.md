@@ -1,6 +1,6 @@
-# AUDIOLAB.wing.reaper.virtualsoundcheck (REAPER Extension for Behringer WING)
+# AUDIOLAB Wing Connector for REAPER
 
-AUDIOLAB.wing.reaper.virtualsoundcheck is a C++ REAPER extension that connects to a Behringer WING console over OSC/UDP and automates track setup, channel sync, and virtual soundcheck routing.
+AUDIOLAB Wing Connector for REAPER is a C++ REAPER extension that connects to a Behringer WING console over OSC/UDP and automates track setup, channel sync, virtual soundcheck routing, and broader WING-driven workflows.
 
 - Status: Production-ready
 - Platforms: macOS, Windows, Linux
@@ -29,9 +29,9 @@ Platform-specific steps are in [INSTALL.md](INSTALL.md).
 
 ## Quick Start
 
-1. Install AUDIOLAB.wing.reaper.virtualsoundcheck for your platform.
+1. Install the plugin for your platform.
 2. Restart REAPER.
-3. Open `Extensions -> Behringer Wing: Configure Virtual Soundcheck/Recording`.
+3. Open `Extensions -> Behringer Wing: Open Wing Connector`.
 4. Enter your WING IP and port (default `2223`) and fetch channels.
 5. Confirm tracks are created/updated in REAPER.
 
@@ -42,9 +42,10 @@ See [QUICKSTART.md](QUICKSTART.md) for the 5-minute flow.
 - Automatic track creation from WING channel data
 - Channel metadata sync (name, color, source-related info)
 - Optional real-time monitoring for updates
-- Virtual soundcheck setup for channels (USB/CARD routing + ALT source toggling)
+- Virtual soundcheck setup for channels (USB/CARD routing + staged apply flow + validation status)
 - Record-source selection for channels, buses, and matrices
 - Optional WING MIDI CC control (Play/Record/Stop/Markers/Virtual Soundcheck) with automatic button command assignment
+- Separate selected-channel bridge action and planning path for SuperRack-style integration work
 - Cross-platform dialog behavior:
   - macOS: native Cocoa dialogs
   - Windows/Linux: REAPER-native fallback dialogs
@@ -55,6 +56,7 @@ See [QUICKSTART.md](QUICKSTART.md) for the 5-minute flow.
 - [INSTALL.md](INSTALL.md) - installer-first setup by platform
 - [QUICKSTART.md](QUICKSTART.md) - shortest path to first connection
 - [docs/USER_GUIDE.md](docs/USER_GUIDE.md) - day-to-day operation in REAPER
+- [docs/WING_SELECTED_CHANNEL_BRIDGE.md](docs/WING_SELECTED_CHANNEL_BRIDGE.md) - bridge action split and implementation status
 - [docs/CC_BUTTONS_AND_AUTO_TRIGGER.md](docs/CC_BUTTONS_AND_AUTO_TRIGGER.md) - CC mapping, auto-trigger, and SD recording notes
 
 ## Developer Documentation

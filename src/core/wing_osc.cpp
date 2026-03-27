@@ -196,10 +196,15 @@ bool CreateUdpQuerySocket(const std::string& wing_ip,
 
 bool SendOscQueryPacket(NativeSocket sock,
                         const sockaddr_in& dest,
-                        const std::string& address) {
+                        const std::string& address,
+                        uint16_t reply_port = 0) {
     char buffer[256];
     osc::OutboundPacketStream p(buffer, sizeof(buffer));
-    p << osc::BeginMessage(address.c_str()) << osc::EndMessage;
+    std::string routed_address = address;
+    if (reply_port > 0) {
+        routed_address = "/%" + std::to_string(reply_port) + address;
+    }
+    p << osc::BeginMessage(routed_address.c_str()) << osc::EndMessage;
 
     auto bytes_sent = sendto(sock, p.Data(), static_cast<int>(p.Size()), 0,
                              reinterpret_cast<const sockaddr*>(&dest), sizeof(dest));
@@ -237,12 +242,13 @@ bool TryReceiveDirectOscReply(NativeSocket sock, DirectOscReply& reply_out) {
         osc::ReceivedMessage msg(packet);
         reply_out = DirectOscReply{};
         reply_out.address = msg.AddressPattern();
-        auto arg = msg.ArgumentsBegin();
-        if (arg != msg.ArgumentsEnd()) {
-            if (arg->IsString()) {
+        for (auto arg = msg.ArgumentsBegin(); arg != msg.ArgumentsEnd(); ++arg) {
+            if (!reply_out.has_string && arg->IsString()) {
                 reply_out.has_string = true;
                 reply_out.string_value = arg->AsString();
-            } else if (arg->IsInt32()) {
+                continue;
+            }
+            if (!reply_out.has_int && arg->IsInt32()) {
                 reply_out.has_int = true;
                 reply_out.int_value = arg->AsInt32();
             }
@@ -269,11 +275,18 @@ std::map<std::string, DirectOscReply> QueryOscAddressesDirectRaw(const std::stri
         return replies;
     }
 
+    uint16_t local_port = 0;
+    sockaddr_in local_addr{};
+    socklen_t local_addr_len = sizeof(local_addr);
+    if (getsockname(sock, reinterpret_cast<sockaddr*>(&local_addr), &local_addr_len) == 0) {
+        local_port = ntohs(local_addr.sin_port);
+    }
+
     for (const auto& address : addresses) {
         if (address.empty()) {
             continue;
         }
-        SendOscQueryPacket(sock, dest, address);
+        SendOscQueryPacket(sock, dest, address, local_port);
     }
 
     const auto started = std::chrono::steady_clock::now();
@@ -359,6 +372,13 @@ bool IsDirectInputQueryGroup(const std::string& grp) {
         "A", "LCL", "USR", "$BUS", "$MAIN", "$MTX", "$SEND", "$MON"
     };
     return groups.count(grp) > 0;
+}
+
+std::string NormalizeDeskSourceGroup(const std::string& grp) {
+    if (grp == "CARD") {
+        return "CRD";
+    }
+    return grp;
 }
 }
 
@@ -865,6 +885,33 @@ std::map<std::string, std::string> WingOSC::QueryStringAddressesDirect(const std
     return values;
 }
 
+std::map<std::string, int> WingOSC::QueryIntAddressesDirect(const std::vector<std::string>& addresses,
+                                                            int total_timeout_ms,
+                                                            int idle_timeout_ms) const {
+    std::map<std::string, int> values;
+    auto replies = QueryOscAddressesDirectRaw(wing_ip_, wing_port_, addresses, total_timeout_ms, idle_timeout_ms);
+    for (const auto& [address, reply] : replies) {
+        if (reply.has_int) {
+            values[address] = reply.int_value;
+        }
+    }
+    return values;
+}
+
+bool WingOSC::GetSelectedStripIndex(int& strip_index_one_based) const {
+    static const std::string kSelectedStripAddress = "/$ctl/$stat/selidx";
+    const auto values = QueryIntAddressesDirect({kSelectedStripAddress}, 120, 20);
+    auto it = values.find(kSelectedStripAddress);
+    if (it == values.end()) {
+        return false;
+    }
+
+    // Live desk validation and Patrick-Gilles Maillot's WING protocol notes
+    // show that reads return the 0-based strip id even though writes use 1..76.
+    strip_index_one_based = it->second + 1;
+    return true;
+}
+
 void WingOSC::SendQueryBurst(const std::vector<std::string>& addresses) {
     for (const auto& address : addresses) {
         if (address.empty()) {
@@ -1017,12 +1064,13 @@ void WingOSC::SetChannelAltSource(int channel_num, const std::string& grp, int i
     osc::OutboundPacketStream p(buffer, 256);
     
     std::string ch = FormatChannelNum(channel_num);
+    const std::string normalized_grp = NormalizeDeskSourceGroup(grp);
     
     // Set ALT group: /ch/N/in/conn/altgrp "USB"
     std::string addr_altgrp = "/ch/" + ch + "/in/conn/altgrp";
     p.Clear();
     p << MakeOscBeginToken(addr_altgrp.c_str())
-      << grp.c_str()
+      << normalized_grp.c_str()
       << MakeOscEndToken();
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("Error setting ALT group for channel " + std::to_string(channel_num));
@@ -1040,7 +1088,7 @@ void WingOSC::SetChannelAltSource(int channel_num, const std::string& grp, int i
         Log("Error setting ALT input for channel " + std::to_string(channel_num));
     }
     
-    Log("Set channel " + std::to_string(channel_num) + " ALT source to " + grp + " " + std::to_string(in));
+    Log("Set channel " + std::to_string(channel_num) + " ALT source to " + normalized_grp + " " + std::to_string(in));
 }
 
 void WingOSC::EnableChannelAltSource(int channel_num, bool enable) {
@@ -1064,9 +1112,10 @@ void WingOSC::EnableChannelAltSource(int channel_num, bool enable) {
 void WingOSC::SetUSBOutputSource(int usb_num, const std::string& grp, int in) {
     char buffer[256];
     osc::OutboundPacketStream p(buffer, 256);
+    const std::string normalized_grp = NormalizeDeskSourceGroup(grp);
     
     Log("[OSC] SetUSBOutputSource: USB OUTPUT " + std::to_string(usb_num) + 
-        " routing to " + grp + ":" + std::to_string(in));
+        " routing to " + normalized_grp + ":" + std::to_string(in));
     
     // Correct USB output routing paths discovered via OSC queries:
     // /io/out/USB/[1-48]/grp - source group (LCL, AUX, A, B, C, SC, USB, CRD, MOD, REC, AES)
@@ -1076,14 +1125,14 @@ void WingOSC::SetUSBOutputSource(int usb_num, const std::string& grp, int in) {
     std::string addr_grp = "/io/out/USB/" + std::to_string(usb_num) + "/grp";
     p.Clear();
     p << MakeOscBeginToken(addr_grp.c_str())
-      << grp.c_str()
+      << normalized_grp.c_str()
       << MakeOscEndToken();
     
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("[ERROR] Failed to set USB " + std::to_string(usb_num) + " group");
         return;
     }
-    Log("[OSC] " + addr_grp + " = " + grp);
+    Log("[OSC] " + addr_grp + " = " + normalized_grp);
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
     
     // Set USB output input number
@@ -1163,9 +1212,10 @@ void WingOSC::UnlockUSBOutputs() {
 void WingOSC::SetCardOutputSource(int card_num, const std::string& grp, int in) {
     char buffer[256];
     osc::OutboundPacketStream p(buffer, 256);
+    const std::string normalized_grp = NormalizeDeskSourceGroup(grp);
     
     Log("[OSC] SetCardOutputSource: CARD OUTPUT " + std::to_string(card_num) + 
-        " routing to " + grp + ":" + std::to_string(in));
+        " routing to " + normalized_grp + ":" + std::to_string(in));
     
     // CARD output routing paths (similar to USB):
     // /io/out/CRD/[1-32]/grp - source group (LCL, AUX, A, B, C, SC, USB, CRD, MOD, REC, AES)
@@ -1175,14 +1225,14 @@ void WingOSC::SetCardOutputSource(int card_num, const std::string& grp, int in) 
     std::string addr_grp = "/io/out/CRD/" + std::to_string(card_num) + "/grp";
     p.Clear();
     p << MakeOscBeginToken(addr_grp.c_str())
-      << grp.c_str()
+      << normalized_grp.c_str()
       << MakeOscEndToken();
     
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("[ERROR] Failed to set CARD " + std::to_string(card_num) + " group");
         return;
     }
-    Log("[OSC] " + addr_grp + " = " + grp);
+    Log("[OSC] " + addr_grp + " = " + normalized_grp);
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
     
     // Set CARD output input number
@@ -1237,21 +1287,22 @@ void WingOSC::SetWLiveRecordTrackCount(int slot, int tracks) {
 void WingOSC::SetRecorderOutputSource(int recorder_num, const std::string& grp, int in) {
     char buffer[256];
     osc::OutboundPacketStream p(buffer, 256);
+    const std::string normalized_grp = NormalizeDeskSourceGroup(grp);
 
     Log("[OSC] SetRecorderOutputSource: RECORDER OUTPUT " + std::to_string(recorder_num) +
-        " routing to " + grp + ":" + std::to_string(in));
+        " routing to " + normalized_grp + ":" + std::to_string(in));
 
     std::string addr_grp = "/io/out/REC/" + std::to_string(recorder_num) + "/grp";
     p.Clear();
     p << MakeOscBeginToken(addr_grp.c_str())
-      << grp.c_str()
+      << normalized_grp.c_str()
       << MakeOscEndToken();
 
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("[ERROR] Failed to set RECORDER " + std::to_string(recorder_num) + " group");
         return;
     }
-    Log("[OSC] " + addr_grp + " = " + grp);
+    Log("[OSC] " + addr_grp + " = " + normalized_grp);
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
     std::string addr_in = "/io/out/REC/" + std::to_string(recorder_num) + "/in";
@@ -2067,6 +2118,14 @@ std::string WingOSC::QueryConsoleSourceNameDirect(SourceKind kind, int number) c
                 "/bus/" + std::to_string(number) + "/config/name",
             };
             break;
+        case SourceKind::Main:
+            candidate_paths = {
+                "/main/" + std::string(formatted) + "/name",
+                "/main/" + std::to_string(number) + "/name",
+                "/main/" + std::string(formatted) + "/config/name",
+                "/main/" + std::to_string(number) + "/config/name",
+            };
+            break;
         case SourceKind::Matrix:
             candidate_paths = {
                 "/mtx/" + std::string(formatted) + "/name",
@@ -2097,6 +2156,7 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
         switch (kind) {
             case SourceKind::Channel: return "CH";
             case SourceKind::Bus: return "BUS";
+            case SourceKind::Main: return "MAIN";
             case SourceKind::Matrix: return "MTX";
         }
         return "SRC";

@@ -22,6 +22,7 @@ class WingOscListener;
 enum class SourceKind {
     Channel,
     Bus,
+    Main,
     Matrix,
 };
 
@@ -176,6 +177,10 @@ public:
     std::map<std::string, std::string> QueryStringAddressesDirect(const std::vector<std::string>& addresses,
                                                                   int total_timeout_ms = 150,
                                                                   int idle_timeout_ms = 25) const;
+    std::map<std::string, int> QueryIntAddressesDirect(const std::vector<std::string>& addresses,
+                                                       int total_timeout_ms = 150,
+                                                       int idle_timeout_ms = 25) const;
+    bool GetSelectedStripIndex(int& strip_index_one_based) const;
     
     // Additional Wing commands
     void GetConsoleInfo();

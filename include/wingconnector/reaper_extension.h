@@ -19,6 +19,12 @@ namespace WingConnector {
 
 using ChannelSelectionInfo = SourceSelectionInfo;
 
+enum class ValidationState {
+    NotReady,
+    Warning,
+    Ready
+};
+
 class ReaperExtension {
 public:
     static ReaperExtension& Instance();
@@ -39,13 +45,18 @@ public:
     void CreateTracksFromSelection(const std::vector<SourceSelectionInfo>& channels);
     void SetupSoundcheckFromSelection(const std::vector<SourceSelectionInfo>& channels, bool setup_soundcheck = true, bool replace_existing = true);
     bool CheckOutputModeAvailability(const std::string& output_mode, std::string& details) const;
-    bool ValidateLiveRecordingSetup(std::string& details);
+    ValidationState ValidateLiveRecordingSetup(std::string& details);
+    ValidationState ValidateMidiActionSetup(std::string& details);
     void RouteMainLRToCardForSDRecording();
     void ApplyRecorderRoutingNoDialog();
     double ReadCurrentTriggerLevel();
     void ApplyAutoRecordSettings();
     void SyncMidiActionsToWing();
     void PauseAutoRecordForSetup();
+    void ApplyBridgeSettings();
+    std::vector<std::string> GetMidiOutputDevices() const;
+    std::string GetBridgeStatusSummary() const;
+    bool SendBridgeTestMessage(int midi_value, std::string& detail_out);
     
     // MIDI action mapping
     void EnableMidiActions(bool enable);
@@ -149,6 +160,15 @@ private:
     void SyncExternalRecorderWithReaperState(bool is_recording_now);
     void StartExternalRecorderFollow();
     void StopExternalRecorderFollow();
+    void StartSelectedChannelBridge();
+    void StopSelectedChannelBridge();
+    void SelectedChannelBridgeLoop();
+    void ClearBridgeMidiState();
+    void DispatchBridgeSelection(const BridgeMapping& mapping, const std::string& selection_id, const std::string& source_name);
+    bool ResolveSelectedStrip(SourceKind& kind_out, int& source_number_out, std::string& source_name_out) const;
+    bool FindBridgeMapping(SourceKind kind, int source_number, BridgeMapping& mapping_out) const;
+    void SendBridgeMidiMessage(int status, int data1, int data2) const;
+    bool BridgeMessageNeedsRelease() const;
     
     // Callbacks
     void OnChannelDataReceived(const ChannelInfo& channel);
@@ -180,6 +200,14 @@ private:
     std::atomic<bool> transport_guard_from_stopped_state_{false};
     std::atomic<double> transport_guard_restore_pos_{0.0};
     std::atomic<int> layer_state_mode_{0}; // 0=idle, 1=warning, 2=recording
+    std::atomic<bool> bridge_running_{false};
+    std::unique_ptr<std::thread> bridge_thread_;
+    mutable std::mutex bridge_state_mutex_;
+    std::string bridge_status_summary_{"Bridge idle"};
+    std::string last_bridge_selection_id_;
+    std::string pending_bridge_selection_id_;
+    long long pending_bridge_selection_since_ms_{0};
+    int last_bridge_midi_number_{-1};
 };
 
 // Reaper action command IDs

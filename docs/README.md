@@ -17,6 +17,7 @@ Use this page as the starting point for repository documentation.
 
 ## Additional Reference
 
+- [WING_SELECTED_CHANNEL_BRIDGE.md](WING_SELECTED_CHANNEL_BRIDGE.md) - current action split, scope, and next steps for the standalone bridge
 - [WING_SELECTED_CHANNEL_SUPERRACK_BRIDGE_PLAN_VALIDATION.md](WING_SELECTED_CHANNEL_SUPERRACK_BRIDGE_PLAN_VALIDATION.md) - validation notes for the selected-channel bridge plan
 - [../snapshots/README.md](../snapshots/README.md) - snapshot and legacy/manual MIDI mapping notes
 - [../releases/README.md](../releases/README.md) - packaged release artifacts in this repo

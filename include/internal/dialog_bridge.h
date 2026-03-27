@@ -1,6 +1,6 @@
 /*
  * Dialog Bridge
- * Provides a single entrypoint for AUDIOLAB.wing.reaper.virtualsoundcheck UI across platforms.
+ * Provides cross-platform entrypoints for the Wing Connector UI.
  */
 
 #ifndef DIALOG_BRIDGE_H
@@ -8,8 +8,10 @@
 
 namespace WingConnector {
 
-// Opens the main AUDIOLAB.wing.reaper.virtualsoundcheck UI flow for the current platform.
+// Opens the main Wing Connector UI flow for the current platform.
 void ShowMainDialog();
+// Opens the selected-channel bridge setup/help flow for the current platform.
+void ShowSelectedChannelBridgeDialog();
 
 } // namespace WingConnector
 

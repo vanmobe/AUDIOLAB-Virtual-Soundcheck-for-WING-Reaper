@@ -1,12 +1,12 @@
-# AUDIOLAB.wing.reaper.virtualsoundcheck User Guide
+# Wing Connector User Guide
 
 Practical guide for daily operation in REAPER with a Behringer WING.
 
 ## 1. Validate Installation
 
-1. Restart REAPER after installing AUDIOLAB.wing.reaper.virtualsoundcheck.
-2. Confirm menu entry exists: `Extensions -> AUDIOLAB.wing.reaper.virtualsoundcheck`.
-3. Open: `Extensions -> Behringer Wing: Configure Virtual Soundcheck/Recording`.
+1. Restart REAPER after installing the plugin.
+2. Confirm the extension is available in REAPER.
+3. Open `Extensions -> Behringer Wing: Open Wing Connector`.
 
 ![Extensions actions](images/actions-menu.png)
 
@@ -14,12 +14,12 @@ If the menu is missing, verify plugin files are in your REAPER `UserPlugins` fol
 
 ## 2. Connect to WING and Fetch Channels
 
-1. In the AUDIOLAB.wing.reaper.virtualsoundcheck dialog, use `Scan` to discover WING consoles.
+1. In the Wing Connector dialog, use `Scan` to discover WING consoles.
 2. If scan fails, enter a manual WING IP in the fallback field.
 3. Start connect/fetch.
 4. Wait for channel discovery and track creation/update.
 
-![AUDIOLAB.wing.reaper.virtualsoundcheck dialog](images/wing-connector.png)
+![Wing Connector dialog](images/wing-connector.png)
 
 Expected result:
 
@@ -47,6 +47,13 @@ From the same dialog flow you can:
 - enable/disable live monitoring behavior
 - configure virtual soundcheck routing
 - toggle soundcheck mode (ALT source switching)
+- stage source or recording-mode changes first, then apply them explicitly after reviewing the summary
+- confirm the live setup validation mark before switching modes or enabling MIDI actions
+
+Selected-channel bridge work is intentionally separate:
+
+- use `Extensions -> Behringer Wing: Selected Channel Bridge Setup` for bridge-specific notes and status
+- do not expect bridge behavior to be part of the live soundcheck/recording flow
 
 ![Actions/config view](images/action-config.png)
 

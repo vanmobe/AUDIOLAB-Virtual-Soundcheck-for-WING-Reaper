@@ -54,6 +54,7 @@ const char* SourceKindTag(SourceKind kind) {
     switch (kind) {
         case SourceKind::Channel: return "CH";
         case SourceKind::Bus: return "BUS";
+        case SourceKind::Main: return "MAIN";
         case SourceKind::Matrix: return "MTX";
     }
     return "SRC";
@@ -120,6 +121,12 @@ std::string RecorderTargetKey(const WingConfig& cfg) {
 const char* RecorderTargetLabel(const WingConfig& cfg) {
     return RecorderTargetKey(cfg) == "USBREC" ? "USB recorder" : "SD card (WING-LIVE)";
 }
+
+struct TrackRouteExpectation {
+    int input_1based = 0;
+    bool stereo = false;
+    std::string track_name;
+};
 
 bool IsRecorderActiveState(const std::string& state) {
     return state == "REC" || state == "RECORD" || state == "RECORDING" || state == "PLAYREC";
@@ -417,6 +424,7 @@ bool ReaperExtension::Initialize(reaper_plugin_info_t* rec) {
     if (config_.configure_midi_actions) {
         EnableMidiActions(true);
     }
+    ApplyBridgeSettings();
 
     if (g_rec_) {
         g_rec_->Register("timer", (void*)ReaperExtension::MainThreadTimerTick);
@@ -437,6 +445,7 @@ void ReaperExtension::Shutdown() {
     StopManualTransportFlash();
     StopMidiCapture();
     StopAutoRecordMonitor();
+    StopSelectedChannelBridge();
     EnableMidiActions(false);
     DisconnectFromWing();
     track_manager_.reset();
@@ -599,14 +608,9 @@ bool ReaperExtension::ConnectToWing() {
         Log(info_msg);
     }
 
-    if (config_.sd_lr_route_enabled) {
-        ApplyRecorderRoutingNoDialog();
-        Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: Requested Main LR routing to ") +
-            RecorderTargetLabel(config_) + " 1/2 on connect (verify on WING).\n");
-    }
-
     // If MIDI actions are enabled in the extension, re-apply current mapping to the Wing.
     SyncMidiActionsToWing();
+    ApplyBridgeSettings();
     
     return true;
 }
@@ -984,10 +988,10 @@ bool ReaperExtension::CheckOutputModeAvailability(const std::string& output_mode
     return true;
 }
 
-bool ReaperExtension::ValidateLiveRecordingSetup(std::string& details) {
+ValidationState ReaperExtension::ValidateLiveRecordingSetup(std::string& details) {
     if (!connected_ || !osc_handler_) {
         details = "Not connected to Wing.";
-        return false;
+        return ValidationState::NotReady;
     }
 
     // Refresh channel/ALT state from the console before validating.
@@ -997,10 +1001,11 @@ bool ReaperExtension::ValidateLiveRecordingSetup(std::string& details) {
     const auto& channel_data = osc_handler_->GetChannelData();
     if (channel_data.empty()) {
         details = "No channel data received from Wing.";
-        return false;
+        return ValidationState::NotReady;
     }
 
     const bool card_mode = (config_.soundcheck_output_mode == "CARD");
+    const std::string input_group = card_mode ? "CRD" : "USB";
     std::set<std::string> accepted_alt_groups;
     if (card_mode) {
         accepted_alt_groups.insert("CARD");
@@ -1013,6 +1018,7 @@ bool ReaperExtension::ValidateLiveRecordingSetup(std::string& details) {
     std::set<int> expected_track_inputs_1based;
     int routable_channels = 0;
     int alt_configured_channels = 0;
+    int alt_enabled_channels = 0;
     for (const auto& [ch_num, ch] : channel_data) {
         (void)ch_num;
         if (ch.primary_source_group.empty() || ch.primary_source_group == "OFF" || ch.primary_source_input <= 0) {
@@ -1023,17 +1029,20 @@ bool ReaperExtension::ValidateLiveRecordingSetup(std::string& details) {
         if (accepted_alt_groups.count(ch.alt_source_group) > 0 && ch.alt_source_input > 0) {
             alt_configured_channels++;
             expected_track_inputs_1based.insert(ch.alt_source_input);
+            if (ch.alt_source_enabled) {
+                alt_enabled_channels++;
+            }
         }
     }
 
     if (routable_channels == 0) {
         details = "Wing has no routable input channels.";
-        return false;
+        return ValidationState::NotReady;
     }
 
     if (expected_track_inputs_1based.empty()) {
         details = "Wing ALT sources are not configured for " + std::string(card_mode ? "CARD" : "USB") + ".";
-        return false;
+        return ValidationState::NotReady;
     }
 
     // Validate REAPER tracks against expected I/O mapping:
@@ -1042,11 +1051,12 @@ bool ReaperExtension::ValidateLiveRecordingSetup(std::string& details) {
     ReaProject* proj = EnumProjects(-1, nullptr, 0);
     if (!proj) {
         details = "No active REAPER project.";
-        return false;
+        return ValidationState::NotReady;
     }
 
     int matching_tracks = 0;
     std::set<int> matched_inputs_1based;
+    std::map<int, TrackRouteExpectation> route_expectations;
     const int track_count = CountTracks(proj);
     for (int i = 0; i < track_count; ++i) {
         MediaTrack* track = GetTrack(proj, i);
@@ -1061,6 +1071,7 @@ bool ReaperExtension::ValidateLiveRecordingSetup(std::string& details) {
 
         const int rec_input_index = rec_input & 0x3FF;  // 0-based device channel index
         const int rec_input_1based = rec_input_index + 1;
+        const bool stereo_input = ((rec_input >> 10) & 0x1) != 0;
         if (expected_track_inputs_1based.count(rec_input_1based) == 0) {
             continue;
         }
@@ -1082,11 +1093,22 @@ bool ReaperExtension::ValidateLiveRecordingSetup(std::string& details) {
 
         matching_tracks++;
         matched_inputs_1based.insert(rec_input_1based);
+        char track_name_buf[512]{};
+        std::string track_name;
+        if (GetSetMediaTrackInfo_String(track, "P_NAME", track_name_buf, false) && track_name_buf[0] != '\0') {
+            track_name = NormalizeManagedTrackName(track_name_buf, config_.track_prefix);
+        } else {
+            track_name = "Input " + std::to_string(rec_input_1based);
+        }
+        route_expectations[rec_input_1based] = TrackRouteExpectation{rec_input_1based, stereo_input, track_name};
+        if (stereo_input) {
+            route_expectations[rec_input_1based + 1] = TrackRouteExpectation{rec_input_1based + 1, true, track_name};
+        }
     }
 
     if (matching_tracks == 0 || matched_inputs_1based.empty()) {
         details = "No REAPER tracks match Wing ALT input/hardware routing.";
-        return false;
+        return ValidationState::NotReady;
     }
 
     if (matched_inputs_1based.size() < expected_track_inputs_1based.size()) {
@@ -1095,14 +1117,70 @@ bool ReaperExtension::ValidateLiveRecordingSetup(std::string& details) {
             << " of " << expected_track_inputs_1based.size()
             << " expected ALT-mapped input routes.";
         details = msg.str();
-        return false;
+        return ValidationState::NotReady;
     }
 
-    std::ostringstream ok;
-    ok << "Validated: " << alt_configured_channels << " Wing channels have ALT routing and "
-       << matching_tracks << " REAPER tracks match live I/O routing.";
-    details = ok.str();
-    return true;
+    std::vector<std::string> mode_addresses;
+    std::vector<std::string> name_addresses;
+    for (const auto& [input_1based, expectation] : route_expectations) {
+        (void)expectation;
+        if (input_1based <= 0) {
+            continue;
+        }
+        mode_addresses.push_back("/io/in/" + input_group + "/" + std::to_string(input_1based) + "/mode");
+        name_addresses.push_back("/io/in/" + input_group + "/" + std::to_string(input_1based) + "/name");
+    }
+
+    const auto input_modes = osc_handler_->QueryStringAddressesDirect(mode_addresses, 180, 40);
+    const auto input_names = osc_handler_->QueryStringAddressesDirect(name_addresses, 180, 40);
+
+    std::vector<std::string> warnings;
+    int mode_ok = 0;
+    int name_ok = 0;
+    for (const auto& [input_1based, expectation] : route_expectations) {
+        const std::string mode_path = "/io/in/" + input_group + "/" + std::to_string(input_1based) + "/mode";
+        const std::string name_path = "/io/in/" + input_group + "/" + std::to_string(input_1based) + "/name";
+
+        auto mode_it = input_modes.find(mode_path);
+        if (mode_it == input_modes.end()) {
+            warnings.push_back(input_group + " input " + std::to_string(input_1based) + " mode could not be read back");
+        } else {
+            const bool mode_matches = expectation.stereo
+                ? (mode_it->second == "ST" || mode_it->second == "MS")
+                : (mode_it->second == "M");
+            if (mode_matches) {
+                mode_ok++;
+            } else {
+                warnings.push_back(input_group + " input " + std::to_string(input_1based) +
+                                   " mode is " + mode_it->second + ", expected " +
+                                   (expectation.stereo ? "ST" : "M"));
+            }
+        }
+
+        auto name_it = input_names.find(name_path);
+        if (name_it == input_names.end() || name_it->second.empty()) {
+            warnings.push_back(input_group + " input " + std::to_string(input_1based) + " name is empty");
+        } else {
+            name_ok++;
+        }
+    }
+
+    std::ostringstream summary;
+    summary << "Validated: " << alt_configured_channels << " Wing channels have ALT routing, "
+            << matching_tracks << " REAPER tracks match live I/O routing, "
+            << mode_ok << "/" << route_expectations.size() << " playback input modes confirmed, "
+            << name_ok << "/" << route_expectations.size() << " playback input names present";
+    if (alt_enabled_channels > 0) {
+        summary << ", " << alt_enabled_channels << " channels currently in soundcheck mode";
+    }
+
+    if (!warnings.empty()) {
+        details = summary.str() + ". Warning: " + warnings.front();
+        return ValidationState::Warning;
+    }
+
+    details = summary.str() + ".";
+    return ValidationState::Ready;
 }
 
 void ReaperExtension::SetupSoundcheckFromSelection(const std::vector<SourceSelectionInfo>& channels, bool setup_soundcheck, bool replace_existing) {
@@ -1395,6 +1473,7 @@ void ReaperExtension::DisconnectFromWing() {
     if (!connected_) {
         return;
     }
+    StopSelectedChannelBridge();
     StopExternalRecorderFollow();
     last_known_reaper_recording_state_ = false;
     StopAutoRecordMonitor();
@@ -1411,6 +1490,242 @@ void ReaperExtension::DisconnectFromWing() {
     status_message_ = "Disconnected";
     
     Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Disconnected\n");
+}
+
+std::vector<std::string> ReaperExtension::GetMidiOutputDevices() const {
+    std::vector<std::string> devices;
+    const int count = GetNumMIDIOutputs ? GetNumMIDIOutputs() : 0;
+    for (int i = 0; i < count; ++i) {
+        char name[512]{};
+        if (GetMIDIOutputName && GetMIDIOutputName(i, name, sizeof(name)) && name[0] != '\0') {
+            devices.emplace_back(name);
+        } else {
+            devices.emplace_back("MIDI Output " + std::to_string(i + 1));
+        }
+    }
+    return devices;
+}
+
+std::string ReaperExtension::GetBridgeStatusSummary() const {
+    std::lock_guard<std::mutex> lock(bridge_state_mutex_);
+    return bridge_status_summary_;
+}
+
+bool ReaperExtension::SendBridgeTestMessage(int midi_value, std::string& detail_out) {
+    if (config_.bridge_midi_output_device < 0) {
+        detail_out = "No MIDI output selected.";
+        return false;
+    }
+
+    const int midi_channel = std::clamp(config_.bridge_midi_channel - 1, 0, 15);
+    const int clamped_value = std::clamp(midi_value, 0, 127);
+
+    if (config_.bridge_midi_message_type == "PROGRAM") {
+        SendBridgeMidiMessage(0xC0 | midi_channel, clamped_value, 0);
+        detail_out = "Sent Program Change " + std::to_string(clamped_value) +
+                     " on MIDI channel " + std::to_string(midi_channel + 1) + ".";
+        return true;
+    }
+
+    SendBridgeMidiMessage(0x90 | midi_channel, clamped_value, 127);
+    if (config_.bridge_midi_message_type == "NOTE_ON_OFF") {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        SendBridgeMidiMessage(0x80 | midi_channel, clamped_value, 0);
+        detail_out = "Sent Note On/Off " + std::to_string(clamped_value) +
+                     " on MIDI channel " + std::to_string(midi_channel + 1) + ".";
+    } else {
+        detail_out = "Sent Note On " + std::to_string(clamped_value) +
+                     " on MIDI channel " + std::to_string(midi_channel + 1) + ".";
+    }
+    return true;
+}
+
+void ReaperExtension::ApplyBridgeSettings() {
+    if (config_.bridge_enabled && connected_ && osc_handler_ &&
+        config_.bridge_midi_output_device >= 0 && !config_.bridge_mappings.empty()) {
+        StartSelectedChannelBridge();
+    } else {
+        StopSelectedChannelBridge();
+    }
+}
+
+bool ReaperExtension::FindBridgeMapping(SourceKind kind, int source_number, BridgeMapping& mapping_out) const {
+    for (const auto& mapping : config_.bridge_mappings) {
+        if (mapping.enabled && mapping.kind == kind && mapping.source_number == source_number) {
+            mapping_out = mapping;
+            return true;
+        }
+    }
+    return false;
+}
+
+void ReaperExtension::SendBridgeMidiMessage(int status, int data1, int data2) const {
+    if (config_.bridge_midi_output_device < 0) {
+        return;
+    }
+    StuffMIDIMessage(16 + config_.bridge_midi_output_device, status & 0xFF, data1 & 0x7F, data2 & 0x7F);
+}
+
+bool ReaperExtension::BridgeMessageNeedsRelease() const {
+    return config_.bridge_midi_message_type == "NOTE_ON_OFF";
+}
+
+void ReaperExtension::ClearBridgeMidiState() {
+    std::lock_guard<std::mutex> lock(bridge_state_mutex_);
+    if (BridgeMessageNeedsRelease() && last_bridge_midi_number_ >= 0) {
+        const int status = 0x80 | std::clamp(config_.bridge_midi_channel - 1, 0, 15);
+        SendBridgeMidiMessage(status, last_bridge_midi_number_, 0);
+    }
+    last_bridge_midi_number_ = -1;
+    last_bridge_selection_id_.clear();
+    pending_bridge_selection_id_.clear();
+    pending_bridge_selection_since_ms_ = 0;
+}
+
+bool ReaperExtension::ResolveSelectedStrip(SourceKind& kind_out, int& source_number_out, std::string& source_name_out) const {
+    if (!connected_ || !osc_handler_) {
+        return false;
+    }
+    int strip_index = 0;
+    if (!osc_handler_->GetSelectedStripIndex(strip_index) || strip_index <= 0) {
+        return false;
+    }
+
+    if (strip_index <= 48) {
+        kind_out = SourceKind::Channel;
+        source_number_out = strip_index;
+        ChannelInfo info{};
+        if (osc_handler_->GetChannelInfo(source_number_out, info) && !info.name.empty()) {
+            source_name_out = info.name;
+        } else {
+            source_name_out = "CH " + std::to_string(source_number_out);
+        }
+        return true;
+    }
+    if (strip_index <= 64) {
+        kind_out = SourceKind::Bus;
+        source_number_out = strip_index - 48;
+        source_name_out = osc_handler_->QueryConsoleSourceNameDirect(kind_out, source_number_out);
+        if (source_name_out.empty()) {
+            source_name_out = "Bus " + std::to_string(source_number_out);
+        }
+        return true;
+    }
+    if (strip_index <= 68) {
+        kind_out = SourceKind::Main;
+        source_number_out = strip_index - 64;
+        source_name_out = osc_handler_->QueryConsoleSourceNameDirect(kind_out, source_number_out);
+        if (source_name_out.empty()) {
+            source_name_out = "Main " + std::to_string(source_number_out);
+        }
+        return true;
+    }
+    if (strip_index <= 76) {
+        kind_out = SourceKind::Matrix;
+        source_number_out = strip_index - 68;
+        source_name_out = osc_handler_->QueryConsoleSourceNameDirect(kind_out, source_number_out);
+        if (source_name_out.empty()) {
+            source_name_out = "Matrix " + std::to_string(source_number_out);
+        }
+        return true;
+    }
+    return false;
+}
+
+void ReaperExtension::DispatchBridgeSelection(const BridgeMapping& mapping, const std::string& selection_id, const std::string& source_name) {
+    const int midi_channel = std::clamp(config_.bridge_midi_channel - 1, 0, 15);
+    const int midi_number = std::clamp(mapping.midi_value, 0, 127);
+
+    std::lock_guard<std::mutex> lock(bridge_state_mutex_);
+    if (selection_id == last_bridge_selection_id_) {
+        return;
+    }
+
+    if (BridgeMessageNeedsRelease() && last_bridge_midi_number_ >= 0) {
+        SendBridgeMidiMessage(0x80 | midi_channel, last_bridge_midi_number_, 0);
+    }
+
+    if (config_.bridge_midi_message_type == "PROGRAM") {
+        SendBridgeMidiMessage(0xC0 | midi_channel, midi_number, 0);
+    } else {
+        SendBridgeMidiMessage(0x90 | midi_channel, midi_number, 127);
+    }
+
+    last_bridge_selection_id_ = selection_id;
+    last_bridge_midi_number_ = BridgeMessageNeedsRelease() ? midi_number : -1;
+    bridge_status_summary_ = "Bridge sent " + selection_id + " (" + source_name + ") -> MIDI " + std::to_string(midi_number);
+}
+
+void ReaperExtension::StartSelectedChannelBridge() {
+    if (bridge_running_) {
+        return;
+    }
+    bridge_running_ = true;
+    bridge_thread_ = std::make_unique<std::thread>(&ReaperExtension::SelectedChannelBridgeLoop, this);
+}
+
+void ReaperExtension::StopSelectedChannelBridge() {
+    if (!bridge_running_) {
+        return;
+    }
+    bridge_running_ = false;
+    if (bridge_thread_ && bridge_thread_->joinable()) {
+        bridge_thread_->join();
+    }
+    bridge_thread_.reset();
+    ClearBridgeMidiState();
+    std::lock_guard<std::mutex> lock(bridge_state_mutex_);
+    bridge_status_summary_ = "Bridge idle";
+}
+
+void ReaperExtension::SelectedChannelBridgeLoop() {
+    while (bridge_running_) {
+        if (!connected_ || !osc_handler_ || config_.bridge_midi_output_device < 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            continue;
+        }
+
+        SourceKind kind = SourceKind::Channel;
+        int source_number = 0;
+        std::string source_name;
+        if (!ResolveSelectedStrip(kind, source_number, source_name)) {
+            {
+                std::lock_guard<std::mutex> lock(bridge_state_mutex_);
+                bridge_status_summary_ = "Bridge waiting for selected strip";
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(std::max(25, config_.bridge_poll_ms)));
+            continue;
+        }
+
+        const std::string selection_id = SourcePersistentId(kind, source_number);
+        const long long now_ms = SteadyNowMs();
+        bool should_dispatch = false;
+        {
+            std::lock_guard<std::mutex> lock(bridge_state_mutex_);
+            if (selection_id != pending_bridge_selection_id_) {
+                pending_bridge_selection_id_ = selection_id;
+                pending_bridge_selection_since_ms_ = now_ms;
+                bridge_status_summary_ = "Bridge saw " + selection_id + " (" + source_name + ")";
+            } else if (selection_id != last_bridge_selection_id_ &&
+                       now_ms - pending_bridge_selection_since_ms_ >= config_.bridge_debounce_ms) {
+                should_dispatch = true;
+            }
+        }
+
+        if (should_dispatch) {
+            BridgeMapping mapping;
+            if (FindBridgeMapping(kind, source_number, mapping)) {
+                DispatchBridgeSelection(mapping, selection_id, source_name);
+            } else {
+                ClearBridgeMidiState();
+                std::lock_guard<std::mutex> lock(bridge_state_mutex_);
+                last_bridge_selection_id_ = selection_id;
+                bridge_status_summary_ = "No bridge mapping for " + selection_id + " (" + source_name + ")";
+            }
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(std::max(25, config_.bridge_poll_ms)));
+    }
 }
 
 std::vector<WingInfo> ReaperExtension::DiscoverWings(int timeout_ms) {
@@ -1903,6 +2218,109 @@ void ReaperExtension::ClearMidiShortcutButtonCommands() {
     }
 }
 
+ValidationState ReaperExtension::ValidateMidiActionSetup(std::string& details) {
+    if (!connected_ || !osc_handler_) {
+        details = "Not connected to Wing.";
+        return ValidationState::NotReady;
+    }
+    if (!midi_actions_enabled_) {
+        details = "MIDI actions are disabled.";
+        return ValidationState::NotReady;
+    }
+
+    struct ButtonExpectation {
+        int button;
+        bool lower_row;
+        const char* name;
+        int cc_number;
+    };
+
+    const ButtonExpectation expected_buttons[] = {
+        {1, false, "PLAY", MIDI_ACTIONS[0].cc_number},
+        {2, false, "RECORD", MIDI_ACTIONS[1].cc_number},
+        {3, false, "SOUNDCHECK", MIDI_ACTIONS[2].cc_number},
+        {4, false, "STOP", MIDI_ACTIONS[3].cc_number},
+        {1, true, "SET MARKER", MIDI_ACTIONS[4].cc_number},
+        {2, true, "PREV MARKER", MIDI_ACTIONS[5].cc_number},
+        {3, true, "NEXT MARKER", MIDI_ACTIONS[6].cc_number},
+    };
+
+    const int layer = std::min(16, std::max(1, config_.warning_flash_cc_layer));
+    std::vector<std::string> string_paths;
+    std::vector<std::string> int_paths;
+    for (const auto& button : expected_buttons) {
+        const char* slot = button.lower_row ? "bd" : "bu";
+        const std::string base = "/$ctl/user/" + std::to_string(layer) + "/" +
+                                 std::to_string(button.button) + "/" + slot;
+        string_paths.push_back(base + "/name");
+        string_paths.push_back(base + "/mode");
+        int_paths.push_back(base + "/ch");
+        int_paths.push_back(base + "/cc");
+        int_paths.push_back(base + "/val");
+    }
+
+    const auto string_values = osc_handler_->QueryStringAddressesDirect(string_paths, 220, 50);
+    const auto int_values = osc_handler_->QueryIntAddressesDirect(int_paths, 220, 50);
+
+    std::vector<std::string> problems;
+    int validated_buttons = 0;
+    for (const auto& button : expected_buttons) {
+        const char* slot = button.lower_row ? "bd" : "bu";
+        const std::string base = "/$ctl/user/" + std::to_string(layer) + "/" +
+                                 std::to_string(button.button) + "/" + slot;
+
+        const auto name_it = string_values.find(base + "/name");
+        const auto mode_it = string_values.find(base + "/mode");
+        const auto ch_it = int_values.find(base + "/ch");
+        const auto cc_it = int_values.find(base + "/cc");
+        const auto val_it = int_values.find(base + "/val");
+
+        if (name_it == string_values.end() || name_it->second != button.name) {
+            problems.push_back("button " + std::to_string(button.button) +
+                               (button.lower_row ? " lower" : " upper") +
+                               " name mismatch");
+            continue;
+        }
+        if (mode_it == string_values.end() || mode_it->second != "MIDICCP") {
+            problems.push_back("button " + std::to_string(button.button) +
+                               (button.lower_row ? " lower" : " upper") +
+                               " mode mismatch");
+            continue;
+        }
+        if (ch_it == int_values.end() || ch_it->second != 1) {
+            problems.push_back("button " + std::to_string(button.button) +
+                               (button.lower_row ? " lower" : " upper") +
+                               " MIDI channel mismatch");
+            continue;
+        }
+        if (cc_it == int_values.end() || cc_it->second != button.cc_number) {
+            problems.push_back("button " + std::to_string(button.button) +
+                               (button.lower_row ? " lower" : " upper") +
+                               " CC number mismatch");
+            continue;
+        }
+        if (val_it == int_values.end() || val_it->second != 0) {
+            problems.push_back("button " + std::to_string(button.button) +
+                               (button.lower_row ? " lower" : " upper") +
+                               " value mismatch");
+            continue;
+        }
+        validated_buttons++;
+    }
+
+    std::ostringstream summary;
+    summary << "Validated " << validated_buttons << "/" << (sizeof(expected_buttons) / sizeof(expected_buttons[0]))
+            << " MIDI shortcut button mappings on WING layer " << layer;
+
+    if (!problems.empty()) {
+        details = summary.str() + ". Warning: " + problems.front() + ".";
+        return validated_buttons > 0 ? ValidationState::Warning : ValidationState::NotReady;
+    }
+
+    details = summary.str() + ".";
+    return ValidationState::Ready;
+}
+
 void ReaperExtension::StartWarningFlash() {
     if (warning_flash_running_ || !osc_handler_ || !midi_actions_enabled_) {
         return;
@@ -2048,7 +2466,7 @@ void ReaperExtension::ApplyRecorderRoutingNoDialog() {
 }
 
 void ReaperExtension::StartExternalRecorderFollow() {
-    if (!config_.auto_record_enabled || !config_.sd_auto_record_with_reaper || !connected_ || !osc_handler_) {
+    if (!config_.recorder_coordination_enabled || !config_.auto_record_enabled || !config_.sd_auto_record_with_reaper || !connected_ || !osc_handler_) {
         return;
     }
     if (external_recorder_started_by_plugin_.exchange(true)) {
@@ -2104,7 +2522,7 @@ void ReaperExtension::StopExternalRecorderFollow() {
 void ReaperExtension::SyncExternalRecorderWithReaperState(bool is_recording_now) {
     const bool was_recording = last_known_reaper_recording_state_.exchange(is_recording_now);
 
-    if (!config_.auto_record_enabled || !config_.sd_auto_record_with_reaper || !connected_ || !osc_handler_) {
+    if (!config_.recorder_coordination_enabled || !config_.auto_record_enabled || !config_.sd_auto_record_with_reaper || !connected_ || !osc_handler_) {
         if (external_recorder_started_by_plugin_) {
             StopExternalRecorderFollow();
         }
