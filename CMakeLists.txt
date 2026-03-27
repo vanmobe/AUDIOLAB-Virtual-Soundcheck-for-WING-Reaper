@@ -202,7 +202,7 @@ install(TARGETS reaper_wingconnector
 )
 
 # Copy config file
-install(FILES config.json
+install(FILES config.json OPTIONAL
     DESTINATION .
 )
 
