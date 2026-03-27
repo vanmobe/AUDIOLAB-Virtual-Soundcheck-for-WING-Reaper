@@ -10,7 +10,7 @@ It is split into:
 ## Transport Basics
 
 - Protocol: OSC 1.0 over UDP
-- Default WING port: `2223` (configurable on console)
+- WING OSC port used by this plugin: `2223` (runtime-fixed in implementation)
 - Address form: `/node/...`
 
 ## Implemented Subset (Plugin-Relevant)

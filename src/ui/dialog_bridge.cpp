@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <functional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -173,6 +174,240 @@ bool ParseMappingSpec(const std::string& spec, std::vector<BridgeMapping>& mappi
     return true;
 }
 
+#ifndef __APPLE__
+const char* SourceKindTag(SourceKind kind) {
+    switch (kind) {
+        case SourceKind::Channel: return "CH";
+        case SourceKind::Bus: return "BUS";
+        case SourceKind::Main: return "MAIN";
+        case SourceKind::Matrix: return "MTX";
+    }
+    return "SRC";
+}
+
+std::string SourceDisplayName(const SourceSelectionInfo& source) {
+    std::ostringstream out;
+    out << SourceKindTag(source.kind) << source.source_number;
+    if (!source.name.empty()) {
+        out << " (" << source.name << ")";
+    }
+    if (!source.soundcheck_capable) {
+        out << " [record only]";
+    }
+    return out.str();
+}
+
+std::string BuildDefaultSelectionSpec(const std::vector<SourceSelectionInfo>& sources) {
+    bool any_selected = false;
+    bool selected_only_channels = true;
+    for (const auto& source : sources) {
+        if (!source.selected) {
+            continue;
+        }
+        any_selected = true;
+        selected_only_channels = selected_only_channels && source.kind == SourceKind::Channel;
+    }
+    if (any_selected && selected_only_channels) {
+        return "ALL_CH";
+    }
+    if (any_selected) {
+        return "ALL";
+    }
+    return "ALL_CH";
+}
+
+bool ParseSelectionSpec(const std::string& spec,
+                        const std::vector<SourceSelectionInfo>& available_sources,
+                        std::vector<SourceSelectionInfo>& selected_sources_out,
+                        std::string& error_out) {
+    selected_sources_out = available_sources;
+    for (auto& source : selected_sources_out) {
+        source.selected = false;
+    }
+
+    const std::string trimmed = TrimCopy(spec);
+    if (trimmed.empty()) {
+        error_out = "Enter ALL_CH, ALL, or a comma-separated list such as CH1-8,BUS1.";
+        return false;
+    }
+
+    auto select_if = [&](const std::function<bool(const SourceSelectionInfo&)>& predicate) {
+        for (auto& source : selected_sources_out) {
+            if (predicate(source)) {
+                source.selected = true;
+            }
+        }
+    };
+
+    for (const auto& raw_token : SplitDelimited(trimmed, ',')) {
+        std::string token = raw_token;
+        std::transform(token.begin(), token.end(), token.begin(), [](unsigned char c) {
+            return static_cast<char>(std::toupper(c));
+        });
+        if (token.empty()) {
+            continue;
+        }
+
+        if (token == "ALL") {
+            select_if([](const SourceSelectionInfo&) { return true; });
+            continue;
+        }
+        if (token == "ALL_CH") {
+            select_if([](const SourceSelectionInfo& source) {
+                return source.kind == SourceKind::Channel;
+            });
+            continue;
+        }
+        if (token == "ALL_SC" || token == "ALL_SOUNDCHECK") {
+            select_if([](const SourceSelectionInfo& source) {
+                return source.soundcheck_capable;
+            });
+            continue;
+        }
+        if (token == "NONE") {
+            for (auto& source : selected_sources_out) {
+                source.selected = false;
+            }
+            continue;
+        }
+
+        size_t prefix_end = 0;
+        while (prefix_end < token.size() && !std::isdigit(static_cast<unsigned char>(token[prefix_end]))) {
+            ++prefix_end;
+        }
+        std::string prefix = token.substr(0, prefix_end);
+        std::string range = token.substr(prefix_end);
+        if (range.empty()) {
+            error_out = "Selection token is missing a source number: " + raw_token;
+            return false;
+        }
+
+        SourceKind kind = SourceKind::Channel;
+        if (prefix.empty()) {
+            kind = SourceKind::Channel;
+        } else if (!ParseSourceKind(prefix, kind)) {
+            error_out = "Unknown source family in selection: " + raw_token;
+            return false;
+        }
+
+        int start = 0;
+        int end = 0;
+        const size_t dash = range.find('-');
+        try {
+            if (dash == std::string::npos) {
+                start = end = std::stoi(range);
+            } else {
+                start = std::stoi(range.substr(0, dash));
+                end = std::stoi(range.substr(dash + 1));
+            }
+        } catch (...) {
+            error_out = "Selection numbers must be integers: " + raw_token;
+            return false;
+        }
+
+        if (start > end) {
+            std::swap(start, end);
+        }
+        if (start < 1 || end > MaxSourceNumberForKind(kind)) {
+            error_out = "Selection is out of range for " + std::string(SourceKindTag(kind)) + ": " + raw_token;
+            return false;
+        }
+
+        bool matched = false;
+        for (auto& source : selected_sources_out) {
+            if (source.kind == kind && source.source_number >= start && source.source_number <= end) {
+                source.selected = true;
+                matched = true;
+            }
+        }
+        if (!matched) {
+            error_out = "Selection did not match any discovered sources: " + raw_token;
+            return false;
+        }
+    }
+
+    const bool any_selected = std::any_of(selected_sources_out.begin(), selected_sources_out.end(), [](const SourceSelectionInfo& source) {
+        return source.selected;
+    });
+    if (!any_selected) {
+        error_out = "No sources selected. Choose at least one source before applying setup.";
+        return false;
+    }
+
+    return true;
+}
+
+std::string BuildSourceCatalog(const std::vector<SourceSelectionInfo>& sources) {
+    std::ostringstream out;
+    out << "Discovered sources:\n";
+    for (const auto& source : sources) {
+        out << "- " << SourceDisplayName(source) << "\n";
+    }
+    out << "\nSelection shortcuts:\n"
+        << "- ALL_CH = all channels\n"
+        << "- ALL = every discovered source\n"
+        << "- ALL_SC = all soundcheck-capable sources\n"
+        << "- Examples: CH1-8, BUS1-2, MAIN1, MTX1, 1-8\n";
+    return out.str();
+}
+
+bool ParseOnOffFlag(const std::string& value, bool& enabled_out) {
+    std::string upper = TrimCopy(value);
+    std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    if (upper == "1" || upper == "ON" || upper == "YES" || upper == "TRUE") {
+        enabled_out = true;
+        return true;
+    }
+    if (upper == "0" || upper == "OFF" || upper == "NO" || upper == "FALSE") {
+        enabled_out = false;
+        return true;
+    }
+    return false;
+}
+
+std::string BuildSelectionSummary(const std::vector<SourceSelectionInfo>& sources, bool setup_soundcheck, bool replace_existing) {
+    int selected_count = 0;
+    int soundcheck_count = 0;
+    int record_only_count = 0;
+    std::vector<std::string> preview;
+    for (const auto& source : sources) {
+        if (!source.selected) {
+            continue;
+        }
+        ++selected_count;
+        if (source.soundcheck_capable) {
+            ++soundcheck_count;
+        } else {
+            ++record_only_count;
+        }
+        if (preview.size() < 6) {
+            preview.push_back(SourceDisplayName(source));
+        }
+    }
+
+    std::ostringstream out;
+    out << "Review setup before applying:\n\n"
+        << "Selected sources: " << selected_count << "\n"
+        << "Soundcheck-capable: " << soundcheck_count << "\n"
+        << "Record-only: " << record_only_count << "\n"
+        << "Mode: " << (setup_soundcheck ? "SOUNDCHECK + recording" : "RECORDING only") << "\n"
+        << "Track handling: " << (replace_existing ? "replace managed tracks" : "append/keep existing tracks") << "\n\n"
+        << "Preview:\n";
+    for (const auto& item : preview) {
+        out << "- " << item << "\n";
+    }
+    if (selected_count > static_cast<int>(preview.size())) {
+        out << "- ...\n";
+    }
+    if (setup_soundcheck && soundcheck_count == 0) {
+        out << "\nNo selected sources support ALT soundcheck. The setup will proceed in recording-only mode.\n";
+    }
+    return out.str();
+}
+#endif
+
 std::string SelectedChannelBridgeSummary() {
     auto& extension = ReaperExtension::Instance();
     const std::string config_path = WingConfig::GetConfigPath();
@@ -210,8 +445,8 @@ std::string SelectedChannelBridgeSummary() {
 #ifndef __APPLE__
 void RunCrossPlatformDialog() {
     auto& extension = ReaperExtension::Instance();
-    // Non-macOS fallback path: run a minimal "connect + configure all channels"
-    // flow via standard REAPER dialogs.
+    // Non-macOS fallback path: keep the flow staged even though REAPER only gives
+    // us basic dialogs here.
     if (!extension.IsConnected()) {
         const bool connected = extension.ConnectToWing();
         if (!connected) {
@@ -233,19 +468,91 @@ void RunCrossPlatformDialog() {
         return;
     }
 
-    bool has_non_channel = false;
-    for (auto& source : sources) {
-        source.selected = true;
-        has_non_channel = has_non_channel || !source.soundcheck_capable;
+    ShowMessageBox(BuildSourceCatalog(sources).c_str(),
+                   "Behringer Wing: Source Selection Help",
+                   0);
+
+    char values[4096];
+    const std::string default_selection = BuildDefaultSelectionSpec(sources);
+    std::snprintf(values, sizeof(values), "%s,%s,%d",
+                  default_selection.c_str(),
+                  "SOUNDCHECK",
+                  1);
+
+    if (!GetUserInputs("Wing Setup Review",
+                       3,
+                       "Source selection (ALL_CH/ALL/ALL_SC or ranges),Mode (SOUNDCHECK/RECORD),Replace managed tracks (1/0)",
+                       values,
+                       sizeof(values))) {
+        return;
     }
 
-    extension.SetupSoundcheckFromSelection(sources, true);
-    ShowMessageBox(
-        has_non_channel
-            ? "Connected and configured live recording for available sources.\nSoundcheck routing was skipped for record-only buses/matrices.\nUse config.json for advanced selection and behavior."
-            : "Connected and configured live recording for available channels.\nUse config.json for advanced selection and behavior.",
-        "AUDIOLAB.wing.reaper.virtualsoundcheck",
-        0);
+    const auto parts = SplitDelimited(values, ',');
+    if (parts.size() != 3) {
+        ShowMessageBox("Expected 3 values: selection, mode, replace flag.",
+                       "AUDIOLAB.wing.reaper.virtualsoundcheck",
+                       0);
+        return;
+    }
+
+    std::vector<SourceSelectionInfo> selected_sources;
+    std::string selection_error;
+    if (!ParseSelectionSpec(parts[0], sources, selected_sources, selection_error)) {
+        ShowMessageBox(selection_error.c_str(),
+                       "AUDIOLAB.wing.reaper.virtualsoundcheck",
+                       0);
+        return;
+    }
+
+    std::string mode = parts[1];
+    std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    bool setup_soundcheck = false;
+    if (mode == "SOUNDCHECK" || mode == "SC") {
+        setup_soundcheck = true;
+    } else if (mode == "RECORD" || mode == "LIVE") {
+        setup_soundcheck = false;
+    } else {
+        ShowMessageBox("Mode must be SOUNDCHECK or RECORD.",
+                       "AUDIOLAB.wing.reaper.virtualsoundcheck",
+                       0);
+        return;
+    }
+
+    bool replace_existing = true;
+    if (!ParseOnOffFlag(parts[2], replace_existing)) {
+        ShowMessageBox("Replace managed tracks must be 1/0, ON/OFF, YES/NO, or TRUE/FALSE.",
+                       "AUDIOLAB.wing.reaper.virtualsoundcheck",
+                       0);
+        return;
+    }
+
+    ShowMessageBox(BuildSelectionSummary(selected_sources, setup_soundcheck, replace_existing).c_str(),
+                   "Behringer Wing: Review Pending Setup",
+                   0);
+
+    char confirm_values[32];
+    std::snprintf(confirm_values, sizeof(confirm_values), "%d", 0);
+    if (!GetUserInputs("Apply Wing Setup",
+                       1,
+                       "Type 1 to apply this setup now, or 0 to cancel",
+                       confirm_values,
+                       sizeof(confirm_values))) {
+        return;
+    }
+    bool apply_now = false;
+    if (!ParseOnOffFlag(confirm_values, apply_now) || !apply_now) {
+        ShowMessageBox("Setup cancelled before any routing changes were applied.",
+                       "AUDIOLAB.wing.reaper.virtualsoundcheck",
+                       0);
+        return;
+    }
+
+    extension.SetupSoundcheckFromSelection(selected_sources, setup_soundcheck, replace_existing);
+    ShowMessageBox("Wing setup applied. Reopen the action to review or stage another selection.",
+                   "AUDIOLAB.wing.reaper.virtualsoundcheck",
+                   0);
 }
 #endif
 
@@ -372,7 +679,7 @@ bool ShowBridgeSetupWizard() {
 
 void ShowMainDialog() {
 #ifdef __APPLE__
-    ShowWingConnectorDialogAtTab("setup");
+    ShowWingConnectorDialogAtTab("console");
 #else
     RunCrossPlatformDialog();
 #endif

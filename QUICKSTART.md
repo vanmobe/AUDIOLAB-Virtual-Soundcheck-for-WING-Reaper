@@ -8,7 +8,7 @@ On the Behringer WING console:
 
 1. Open `Setup -> Remote -> OSC`.
 2. Ensure OSC remote lock is disabled.
-3. Confirm OSC port (default `2223`).
+3. Confirm OSC port is `2223` (required by this plugin).
 4. Note the WING IP address.
 5. If you plan to use button MIDI actions, set `External MIDI Control` to `USB`.
 
@@ -24,7 +24,7 @@ See [INSTALL.md](INSTALL.md) if needed.
 
 1. Restart REAPER after installation.
 2. Open `Extensions -> Behringer Wing: Configure Virtual Soundcheck/Recording`.
-3. Enter the WING IP/port.
+3. Select a discovered WING or enter the WING IP manually.
 4. Run channel fetch / connect in the dialog.
 
 Expected result:
@@ -116,7 +116,8 @@ Destination is configured by `osc_out_host` + `osc_out_port`.
 ## Troubleshooting Checklist
 
 - Confirm WING and computer are on the same network.
-- Verify IP/port in AUDIOLAB.wing.reaper.virtualsoundcheck settings.
+- Verify the selected/discovered WING IP (or manual IP entry).
+- Verify the WING OSC port on the console is `2223`.
 - Check firewall rules for UDP traffic.
 - Confirm REAPER loaded the extension from `UserPlugins`.
 

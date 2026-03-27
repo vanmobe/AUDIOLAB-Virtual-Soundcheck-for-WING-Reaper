@@ -6,7 +6,7 @@ Practical guide for daily operation in REAPER with a Behringer WING.
 
 1. Restart REAPER after installing the plugin.
 2. Confirm the extension is available in REAPER.
-3. Open `Extensions -> Behringer Wing: Open Wing Connector`.
+3. Open `Extensions -> Behringer Wing: Configure Virtual Soundcheck/Recording`.
 
 ![Extensions actions](images/actions-menu.png)
 
@@ -37,7 +37,8 @@ If connection fails:
 
 - check WING OSC settings
 - verify network path and firewall
-- verify IP/port values
+- verify selected or manually entered WING IP
+- verify WING OSC port is `2223`
 
 ## 4. Use Optional Features
 
@@ -115,7 +116,7 @@ Detailed reference:
 - No connection:
   - WING and computer must be on same network
   - OSC lock must be disabled on WING
-  - OSC port must match plugin config
+  - WING OSC port must be set to `2223`
 - Plugin not visible in REAPER:
   - verify plugin binary exists in `UserPlugins`
   - restart REAPER after install

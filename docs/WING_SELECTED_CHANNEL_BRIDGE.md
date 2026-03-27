@@ -15,7 +15,7 @@ That affects the bridge work in two ways:
 
 Current action split:
 
-- `Behringer Wing: Open Wing Connector`
+- `Behringer Wing: Configure Virtual Soundcheck/Recording`
   - main connection, source discovery, track setup, soundcheck, MIDI CC transport, and recorder-related workflows
 - `Behringer Wing: Selected Channel Bridge Setup`
   - dedicated entry point for bridge-specific notes, validation status, and future bridge configuration

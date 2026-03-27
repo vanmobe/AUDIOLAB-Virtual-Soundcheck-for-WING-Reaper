@@ -20,6 +20,8 @@ using namespace WingConnector;
 
 namespace {
 
+constexpr bool kShowBridgeTabInMainUI = false;
+
 std::string FormatNumberRanges(std::vector<int> numbers, const std::string& prefix = "") {
     if (numbers.empty()) {
         return "none";
@@ -269,7 +271,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 }
 @end
 
-@interface WingConnectorWindowController : NSWindowController <NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate>
+@interface WingConnectorWindowController : NSWindowController <NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTabViewDelegate>
 {
     // UI Elements
     NSScrollView* mainScrollView;
@@ -393,6 +395,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 - (void)refreshBridgeSourceNumberDropdown;
 - (void)refreshBridgeMappingTable;
 - (void)loadBridgeMappingSelectionIntoEditor;
+- (void)scrollTabViewToTop:(NSScrollView*)scrollView;
 
 - (void)startDiscoveryScan;
 - (void)populateDropdownWithItems:(NSArray*)items ips:(NSArray*)ips;
@@ -735,9 +738,38 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
         [parent addSubview:label];
     };
 
+    auto addIntroCallout = ^(NSView* parent, NSRect frame, NSString* text) {
+        NSView* box = [[NSView alloc] initWithFrame:frame];
+        [box setWantsLayer:YES];
+        [[box layer] setCornerRadius:8.0];
+        [[box layer] setBorderWidth:1.0];
+        [[box layer] setBorderColor:[[NSColor colorWithWhite:0.86 alpha:1.0] CGColor]];
+        [[box layer] setBackgroundColor:[[NSColor colorWithWhite:0.965 alpha:1.0] CGColor]];
+        [parent addSubview:box];
+
+        const CGFloat labelWidth = NSWidth(frame) - 28.0;
+        const CGFloat maxLabelHeight = NSHeight(frame) - 12.0;
+        NSTextField* label = [[NSTextField alloc] initWithFrame:NSMakeRect(14.0, 0.0, labelWidth, maxLabelHeight)];
+        [label setStringValue:text];
+        [label setFont:[NSFont systemFontOfSize:12]];
+        [label setBezeled:NO];
+        [label setEditable:NO];
+        [label setSelectable:NO];
+        [label setBackgroundColor:[NSColor clearColor]];
+        [label setTextColor:[NSColor secondaryLabelColor]];
+        [label setLineBreakMode:NSLineBreakByWordWrapping];
+        [label setUsesSingleLineMode:NO];
+        NSSize labelSize = [[label cell] cellSizeForBounds:NSMakeRect(0.0, 0.0, labelWidth, maxLabelHeight)];
+        CGFloat centeredY = floor((NSHeight(frame) - labelSize.height) * 0.5);
+        centeredY = std::max<CGFloat>(6.0, centeredY);
+        [label setFrame:NSMakeRect(14.0, centeredY, labelWidth, std::min(maxLabelHeight, labelSize.height))];
+        [box addSubview:label];
+    };
+
     settingsTabView = [[NSTabView alloc] initWithFrame:NSMakeRect(20, 20, contentWidth - 40, 620)];
     [settingsTabView setTabViewType:NSTopTabsBezelBorder];
     [settingsTabView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+    [settingsTabView setDelegate:self];
     [contentView addSubview:settingsTabView];
 
     auto makeScrollableTab = ^NSScrollView* (WingConnectorFlippedView** documentViewOut, CGFloat documentHeight) {
@@ -760,43 +792,58 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 
     WingConnectorFlippedView* setupTabView = nil;
     WingConnectorFlippedView* automationTabView = nil;
+    WingConnectorFlippedView* wingTabView = nil;
     WingConnectorFlippedView* advancedTabView = nil;
     WingConnectorFlippedView* bridgeTabView = nil;
-    NSScrollView* setupTabScrollView = makeScrollableTab(&setupTabView, 700.0);
-    NSScrollView* automationTabScrollView = makeScrollableTab(&automationTabView, 980.0);
-    NSScrollView* advancedTabScrollView = makeScrollableTab(&advancedTabView, 600.0);
-    NSScrollView* bridgeTabScrollView = makeScrollableTab(&bridgeTabView, 980.0);
+    const CGFloat setupTabHeight = 760.0;
+    const CGFloat automationTabHeight = 1120.0;
+    const CGFloat wingTabHeight = 760.0;
+    const CGFloat advancedTabHeight = 760.0;
+    const CGFloat bridgeTabHeight = 980.0;
+    const CGFloat tabTopInset = 26.0;
+    const CGFloat introLabelHeight = 56.0;
+    NSScrollView* setupTabScrollView = makeScrollableTab(&setupTabView, setupTabHeight);
+    NSScrollView* automationTabScrollView = makeScrollableTab(&automationTabView, automationTabHeight);
+    NSScrollView* wingTabScrollView = makeScrollableTab(&wingTabView, wingTabHeight);
+    NSScrollView* advancedTabScrollView = makeScrollableTab(&advancedTabView, advancedTabHeight);
+    NSScrollView* bridgeTabScrollView = makeScrollableTab(&bridgeTabView, bridgeTabHeight);
 
-    NSTabViewItem* setupItem = [[NSTabViewItem alloc] initWithIdentifier:@"setup"];
-    [setupItem setLabel:@"Setup"];
+    NSTabViewItem* setupItem = [[NSTabViewItem alloc] initWithIdentifier:@"console"];
+    [setupItem setLabel:@"Console"];
     [setupItem setView:setupTabScrollView];
     [settingsTabView addTabViewItem:setupItem];
 
-    NSTabViewItem* automationItem = [[NSTabViewItem alloc] initWithIdentifier:@"automation"];
-    [automationItem setLabel:@"Automation"];
+    NSTabViewItem* automationItem = [[NSTabViewItem alloc] initWithIdentifier:@"reaper"];
+    [automationItem setLabel:@"Reaper"];
     [automationItem setView:automationTabScrollView];
     [settingsTabView addTabViewItem:automationItem];
 
-    NSTabViewItem* advancedItem = [[NSTabViewItem alloc] initWithIdentifier:@"advanced"];
-    [advancedItem setLabel:@"Advanced"];
+    NSTabViewItem* wingItem = [[NSTabViewItem alloc] initWithIdentifier:@"wing"];
+    [wingItem setLabel:@"Wing"];
+    [wingItem setView:wingTabScrollView];
+    [settingsTabView addTabViewItem:wingItem];
+
+    NSTabViewItem* advancedItem = [[NSTabViewItem alloc] initWithIdentifier:@"control-integration"];
+    [advancedItem setLabel:@"Control Integration"];
     [advancedItem setView:advancedTabScrollView];
     [settingsTabView addTabViewItem:advancedItem];
 
-    NSTabViewItem* bridgeItem = [[NSTabViewItem alloc] initWithIdentifier:@"bridge"];
-    [bridgeItem setLabel:@"Bridge"];
-    [bridgeItem setView:bridgeTabScrollView];
-    [settingsTabView addTabViewItem:bridgeItem];
+    if (kShowBridgeTabInMainUI) {
+        NSTabViewItem* bridgeItem = [[NSTabViewItem alloc] initWithIdentifier:@"bridge"];
+        [bridgeItem setLabel:@"Bridge"];
+        [bridgeItem setView:bridgeTabScrollView];
+        [settingsTabView addTabViewItem:bridgeItem];
+    }
 
     const CGFloat labelX = 20;
     const CGFloat controlX = 220;
     const CGFloat labelW = 180;
     const CGFloat setupWidth = 760;
 
-    CGFloat setupY = 520;
-    addInfoLabel(setupTabView, NSMakeRect(20, setupY, 760, 34),
-                 @"Connect to a Wing, choose where recording channels go, and get live or soundcheck playback ready without cable gymnastics.",
-                 12, [NSColor secondaryLabelColor]);
-    setupY -= 44;
+    CGFloat setupY = setupTabHeight - tabTopInset - introLabelHeight;
+    addIntroCallout(setupTabView, NSMakeRect(20, setupY, 760, introLabelHeight),
+                    @"Connect to a Wing, choose where recording channels go, and get live or soundcheck playback ready without cable gymnastics.");
+    setupY -= (introLabelHeight + 10.0);
 
     NSTextField* setupConnectionHeader = [[NSTextField alloc] initWithFrame:NSMakeRect(20, setupY, 300, 20)];
     [setupConnectionHeader setStringValue:@"🌐 Connection"];
@@ -879,9 +926,13 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     NSBox* setupSeparator = [[NSBox alloc] initWithFrame:NSMakeRect(20, setupY, setupWidth, 1)];
     [setupSeparator setBoxType:NSBoxSeparator];
     [setupTabView addSubview:setupSeparator];
-    setupY -= 28;
+    
+    CGFloat reaperY = automationTabHeight - tabTopInset - introLabelHeight;
+    addIntroCallout(automationTabView, NSMakeRect(20, reaperY, 760, introLabelHeight),
+                    @"Prepare REAPER for live recording and virtual soundcheck here: choose USB or CARD routing, stage and apply the source layout, switch prepared channels between live inputs and playback, and use Auto Trigger when you want signal-driven starts.");
+    reaperY -= (introLabelHeight + 10.0);
 
-    NSTextField* routingHeader = [[NSTextField alloc] initWithFrame:NSMakeRect(20, setupY, 300, 20)];
+    NSTextField* routingHeader = [[NSTextField alloc] initWithFrame:NSMakeRect(20, reaperY, 300, 20)];
     [routingHeader setStringValue:@"🎚 Recording and Soundcheck"];
     [routingHeader setFont:[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold]];
     [routingHeader setBezeled:NO];
@@ -889,22 +940,22 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [routingHeader setSelectable:NO];
     [routingHeader setBackgroundColor:[NSColor clearColor]];
     [routingHeader setTextColor:[NSColor labelColor]];
-    [setupTabView addSubview:routingHeader];
-    setupY -= 32;
-    addInfoLabel(setupTabView, NSMakeRect(20, setupY, 760, 30),
+    [automationTabView addSubview:routingHeader];
+    reaperY -= 32;
+    addInfoLabel(automationTabView, NSMakeRect(20, reaperY, 760, 30),
                  @"Setup Live Recording can replace the current REAPER track list, rebuild the selected recording paths, and keep soundcheck switching limited to prepared channels.",
                  11, [NSColor secondaryLabelColor]);
-    setupY -= 44;
+    reaperY -= 44;
 
-    NSTextField* outputModeLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(labelX, setupY + 8, labelW, 20)];
+    NSTextField* outputModeLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(labelX, reaperY + 8, labelW, 20)];
     [outputModeLabel setStringValue:@"Recording I/O Mode:"];
     [outputModeLabel setFont:[NSFont systemFontOfSize:11]];
     [outputModeLabel setBezeled:NO];
     [outputModeLabel setEditable:NO];
     [outputModeLabel setSelectable:NO];
     [outputModeLabel setBackgroundColor:[NSColor clearColor]];
-    [setupTabView addSubview:outputModeLabel];
-    outputModeControl = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(controlX, setupY + 4, 120, 24)];
+    [automationTabView addSubview:outputModeLabel];
+    outputModeControl = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(controlX, reaperY + 4, 120, 24)];
     [outputModeControl setSegmentCount:2];
     [outputModeControl setLabel:@"USB" forSegment:0];
     [outputModeControl setLabel:@"CARD" forSegment:1];
@@ -912,14 +963,14 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [outputModeControl setSegmentStyle:NSSegmentStyleRounded];
     [outputModeControl setTarget:self];
     [outputModeControl setAction:@selector(onOutputModeChanged:)];
-    [setupTabView addSubview:outputModeControl];
-    setupY -= 28;
-    addInfoLabel(setupTabView, NSMakeRect(controlX, setupY, 520, 28),
+    [automationTabView addSubview:outputModeControl];
+    reaperY -= 28;
+    addInfoLabel(automationTabView, NSMakeRect(controlX, reaperY, 520, 28),
                  @"Choose where the Wing sends the recording channels. USB is the usual direct-to-computer path; CARD uses the Wing audio card route.",
                  10, [NSColor tertiaryLabelColor]);
-    setupY -= 40;
+    reaperY -= 40;
 
-    pendingSetupSummaryLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(controlX, setupY, 540, 36)];
+    pendingSetupSummaryLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(controlX, reaperY, 540, 36)];
     [pendingSetupSummaryLabel setStringValue:@"No pending setup changes. Choose sources or change recording mode to stage updates."];
     [pendingSetupSummaryLabel setFont:[NSFont systemFontOfSize:11]];
     [pendingSetupSummaryLabel setBezeled:NO];
@@ -929,10 +980,10 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [pendingSetupSummaryLabel setTextColor:[NSColor secondaryLabelColor]];
     [pendingSetupSummaryLabel setLineBreakMode:NSLineBreakByWordWrapping];
     [pendingSetupSummaryLabel setUsesSingleLineMode:NO];
-    [setupTabView addSubview:pendingSetupSummaryLabel];
-    setupY -= 46;
+    [automationTabView addSubview:pendingSetupSummaryLabel];
+    reaperY -= 46;
 
-    setupReadinessDetailLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(controlX, setupY, 540, 38)];
+    setupReadinessDetailLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(controlX, reaperY, 540, 56)];
     [setupReadinessDetailLabel setStringValue:@"Connect to a Wing and apply a source setup to prepare recording and virtual soundcheck."];
     [setupReadinessDetailLabel setFont:[NSFont systemFontOfSize:10.5]];
     [setupReadinessDetailLabel setBezeled:NO];
@@ -942,70 +993,61 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [setupReadinessDetailLabel setTextColor:[NSColor secondaryLabelColor]];
     [setupReadinessDetailLabel setLineBreakMode:NSLineBreakByWordWrapping];
     [setupReadinessDetailLabel setUsesSingleLineMode:NO];
-    [setupTabView addSubview:setupReadinessDetailLabel];
-    setupY -= 42;
+    [automationTabView addSubview:setupReadinessDetailLabel];
+    reaperY -= 60;
 
-    setupSoundcheckButton = [[NSButton alloc] initWithFrame:NSMakeRect(controlX, setupY, 160, 32)];
+    setupSoundcheckButton = [[NSButton alloc] initWithFrame:NSMakeRect(controlX, reaperY, 160, 32)];
     [setupSoundcheckButton setBezelStyle:NSBezelStyleRounded];
     [setupSoundcheckButton setTitle:@"Choose Sources…"];
     [setupSoundcheckButton setTarget:self];
     [setupSoundcheckButton setAction:@selector(onSetupSoundcheckClicked:)];
-    [setupTabView addSubview:setupSoundcheckButton];
+    [automationTabView addSubview:setupSoundcheckButton];
 
-    applyPendingSetupButton = [[NSButton alloc] initWithFrame:NSMakeRect(controlX + 180, setupY, 180, 32)];
+    applyPendingSetupButton = [[NSButton alloc] initWithFrame:NSMakeRect(controlX + 180, reaperY, 180, 32)];
     [applyPendingSetupButton setBezelStyle:NSBezelStyleRounded];
     [applyPendingSetupButton setTitle:@"Apply Pending Setup"];
     [applyPendingSetupButton setTarget:self];
     [applyPendingSetupButton setAction:@selector(onApplyPendingSetupClicked:)];
     [applyPendingSetupButton setEnabled:NO];
-    [setupTabView addSubview:applyPendingSetupButton];
+    [automationTabView addSubview:applyPendingSetupButton];
 
-    discardPendingSetupButton = [[NSButton alloc] initWithFrame:NSMakeRect(controlX + 370, setupY, 140, 32)];
+    discardPendingSetupButton = [[NSButton alloc] initWithFrame:NSMakeRect(controlX + 370, reaperY, 140, 32)];
     [discardPendingSetupButton setBezelStyle:NSBezelStyleRounded];
     [discardPendingSetupButton setTitle:@"Discard"];
     [discardPendingSetupButton setTarget:self];
     [discardPendingSetupButton setAction:@selector(onDiscardPendingSetupClicked:)];
     [discardPendingSetupButton setEnabled:NO];
-    [setupTabView addSubview:discardPendingSetupButton];
+    [automationTabView addSubview:discardPendingSetupButton];
 
-    setupSoundcheckDescriptionLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(labelX, setupY + 8, 250, 20)];
-    [setupSoundcheckDescriptionLabel setStringValue:@""];
-    [setupSoundcheckDescriptionLabel setFont:[NSFont systemFontOfSize:11]];
-    [setupSoundcheckDescriptionLabel setBezeled:NO];
-    [setupSoundcheckDescriptionLabel setEditable:NO];
-    [setupSoundcheckDescriptionLabel setSelectable:NO];
-    [setupSoundcheckDescriptionLabel setBackgroundColor:[NSColor clearColor]];
-    [setupSoundcheckDescriptionLabel setTextColor:[NSColor secondaryLabelColor]];
-    [setupSoundcheckDescriptionLabel setHidden:YES];
-    [setupTabView addSubview:setupSoundcheckDescriptionLabel];
-    setupY -= 42;
+    reaperY -= 42;
 
-    toggleSoundcheckButton = [[NSButton alloc] initWithFrame:NSMakeRect(controlX, setupY, 220, 32)];
+    toggleSoundcheckButton = [[NSButton alloc] initWithFrame:NSMakeRect(controlX, reaperY, 220, 32)];
     [toggleSoundcheckButton setBezelStyle:NSBezelStyleRounded];
     [toggleSoundcheckButton setTitle:@"🎙️ Live Mode"];
     [toggleSoundcheckButton setTarget:self];
     [toggleSoundcheckButton setAction:@selector(onToggleSoundcheckClicked:)];
     [toggleSoundcheckButton setEnabled:NO];
-    [setupTabView addSubview:toggleSoundcheckButton];
-    NSTextField* toggleDesc = [[NSTextField alloc] initWithFrame:NSMakeRect(labelX, setupY + 8, labelW, 20)];
+    [automationTabView addSubview:toggleSoundcheckButton];
+    NSTextField* toggleDesc = [[NSTextField alloc] initWithFrame:NSMakeRect(labelX, reaperY + 8, labelW, 20)];
     [toggleDesc setStringValue:@"Switch live/soundcheck:"];
     [toggleDesc setFont:[NSFont systemFontOfSize:11]];
     [toggleDesc setBezeled:NO];
     [toggleDesc setEditable:NO];
     [toggleDesc setSelectable:NO];
     [toggleDesc setBackgroundColor:[NSColor clearColor]];
-    [setupTabView addSubview:toggleDesc];
-    setupY -= 42;
-    addInfoLabel(setupTabView, NSMakeRect(controlX, setupY, 540, 28),
+    [automationTabView addSubview:toggleDesc];
+    reaperY -= 42;
+    addInfoLabel(automationTabView, NSMakeRect(controlX, reaperY, 540, 28),
                  @"After setup is validated, this flips prepared channels between live inputs and REAPER playback. One button, less panic.",
                  10, [NSColor tertiaryLabelColor]);
-    setupY -= 38;
+    reaperY -= 42;
 
-    CGFloat autoY = 720;
-    addInfoLabel(automationTabView, NSMakeRect(20, autoY, 590, 34),
-                 @"Automation watches a REAPER track, reacts to signal level, and can optionally bring the Wing recorder along for the ride.",
-                 12, [NSColor secondaryLabelColor]);
-    autoY -= 44;
+    NSBox* reaperSeparator = [[NSBox alloc] initWithFrame:NSMakeRect(20, reaperY, setupWidth, 1)];
+    [reaperSeparator setBoxType:NSBoxSeparator];
+    [automationTabView addSubview:reaperSeparator];
+    reaperY -= 28;
+
+    CGFloat autoY = reaperY;
 
     NSTextField* triggerHeader = [[NSTextField alloc] initWithFrame:NSMakeRect(20, autoY, 240, 20)];
     [triggerHeader setStringValue:@"⚡ Auto Trigger"];
@@ -1064,7 +1106,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     autoY -= 32;
 
     automationDetailLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(controlX, autoY, 540, 38)];
-    [automationDetailLabel setStringValue:@"Automation will become available once recording setup is ready."];
+    [automationDetailLabel setStringValue:@"Auto Trigger will become available once recording setup is ready."];
     [automationDetailLabel setFont:[NSFont systemFontOfSize:10.5]];
     [automationDetailLabel setBezeled:NO];
     [automationDetailLabel setEditable:NO];
@@ -1155,7 +1197,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 
     applyAutomationButton = [[NSButton alloc] initWithFrame:NSMakeRect(controlX, autoY, 220, 32)];
     [applyAutomationButton setBezelStyle:NSBezelStyleRounded];
-    [applyAutomationButton setTitle:@"Apply Automation Settings"];
+    [applyAutomationButton setTitle:@"Apply Auto Trigger Settings"];
     [applyAutomationButton setTarget:self];
     [applyAutomationButton setAction:@selector(onApplyAutomationSettingsClicked:)];
     [applyAutomationButton setEnabled:NO];
@@ -1169,12 +1211,12 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
                  10, [NSColor secondaryLabelColor]);
     autoY -= 40;
 
-    NSBox* automationSeparator = [[NSBox alloc] initWithFrame:NSMakeRect(20, autoY, setupWidth, 1)];
-    [automationSeparator setBoxType:NSBoxSeparator];
-    [automationTabView addSubview:automationSeparator];
-    autoY -= 28;
+    CGFloat wingY = wingTabHeight - tabTopInset - introLabelHeight;
+    addIntroCallout(wingTabView, NSMakeRect(20, wingY, 760, introLabelHeight),
+                    @"Manage the Wing-side recorder behavior here: target selection, source feed, and whether the recorder follows REAPER-triggered automation.");
+    wingY -= (introLabelHeight + 10.0);
 
-    NSTextField* recorderHeader = [[NSTextField alloc] initWithFrame:NSMakeRect(20, autoY, 240, 20)];
+    NSTextField* recorderHeader = [[NSTextField alloc] initWithFrame:NSMakeRect(20, wingY, 240, 20)];
     [recorderHeader setStringValue:@"📼 Recorder Coordination"];
     [recorderHeader setFont:[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold]];
     [recorderHeader setBezeled:NO];
@@ -1182,66 +1224,66 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [recorderHeader setSelectable:NO];
     [recorderHeader setBackgroundColor:[NSColor clearColor]];
     [recorderHeader setTextColor:[NSColor labelColor]];
-    [automationTabView addSubview:recorderHeader];
-    autoY -= 32;
-    addInfoLabel(automationTabView, NSMakeRect(20, autoY, 590, 30),
+    [wingTabView addSubview:recorderHeader];
+    wingY -= 32;
+    addInfoLabel(wingTabView, NSMakeRect(20, wingY, 590, 30),
                  @"These options decide which Wing recorder is prepared and whether it follows the auto-trigger or REAPER transport.",
                  11, [NSColor secondaryLabelColor]);
-    autoY -= 44;
+    wingY -= 44;
 
-    NSTextField* recorderEnableLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(20, autoY + 8, 180, 20)];
+    NSTextField* recorderEnableLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(20, wingY + 8, 180, 20)];
     [recorderEnableLabel setStringValue:@"Recorder Control:"];
     [recorderEnableLabel setFont:[NSFont systemFontOfSize:11]];
     [recorderEnableLabel setBezeled:NO];
     [recorderEnableLabel setEditable:NO];
     [recorderEnableLabel setSelectable:NO];
     [recorderEnableLabel setBackgroundColor:[NSColor clearColor]];
-    [automationTabView addSubview:recorderEnableLabel];
-    recorderEnableControl = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(controlX, autoY + 4, 120, 24)];
+    [wingTabView addSubview:recorderEnableLabel];
+    recorderEnableControl = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(controlX, wingY + 4, 120, 24)];
     [recorderEnableControl setSegmentCount:2];
     [recorderEnableControl setLabel:@"OFF" forSegment:0];
     [recorderEnableControl setLabel:@"ON" forSegment:1];
     [recorderEnableControl setSelectedSegment:cfg.recorder_coordination_enabled ? 1 : 0];
     [recorderEnableControl setTarget:self];
     [recorderEnableControl setAction:@selector(onRecorderSettingsChanged:)];
-    [automationTabView addSubview:recorderEnableControl];
-    autoY -= 28;
-    addInfoLabel(automationTabView, NSMakeRect(controlX, autoY, 360, 28),
+    [wingTabView addSubview:recorderEnableControl];
+    wingY -= 28;
+    addInfoLabel(wingTabView, NSMakeRect(controlX, wingY, 360, 28),
                  @"Turns WING recorder coordination on or off for this workflow.",
                  10, [NSColor tertiaryLabelColor]);
-    autoY -= 36;
+    wingY -= 36;
 
-    NSTextField* recorderTargetLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(20, autoY + 8, 180, 20)];
+    NSTextField* recorderTargetLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(20, wingY + 8, 180, 20)];
     [recorderTargetLabel setStringValue:@"Recorder Target:"];
     [recorderTargetLabel setFont:[NSFont systemFontOfSize:11]];
     [recorderTargetLabel setBezeled:NO];
     [recorderTargetLabel setEditable:NO];
     [recorderTargetLabel setSelectable:NO];
     [recorderTargetLabel setBackgroundColor:[NSColor clearColor]];
-    [automationTabView addSubview:recorderTargetLabel];
-    recorderTargetControl = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(controlX, autoY + 4, 300, 24)];
+    [wingTabView addSubview:recorderTargetLabel];
+    recorderTargetControl = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(controlX, wingY + 4, 300, 24)];
     [recorderTargetControl setSegmentCount:2];
     [recorderTargetControl setLabel:@"SD (WING-LIVE)" forSegment:0];
     [recorderTargetControl setLabel:@"USB Recorder" forSegment:1];
     [recorderTargetControl setSelectedSegment:(cfg.recorder_target == "USBREC") ? 1 : 0];
     [recorderTargetControl setTarget:self];
     [recorderTargetControl setAction:@selector(onRecorderSettingsChanged:)];
-    [automationTabView addSubview:recorderTargetControl];
-    autoY -= 28;
-    addInfoLabel(automationTabView, NSMakeRect(controlX, autoY, 360, 28),
+    [wingTabView addSubview:recorderTargetControl];
+    wingY -= 28;
+    addInfoLabel(wingTabView, NSMakeRect(controlX, wingY, 360, 28),
                  @"Choose which recorder gets the red-light treatment when recorder automation is enabled.",
                  10, [NSColor tertiaryLabelColor]);
-    autoY -= 36;
+    wingY -= 36;
 
-    NSTextField* sdSourceLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(20, autoY + 8, 180, 20)];
+    NSTextField* sdSourceLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(20, wingY + 8, 180, 20)];
     [sdSourceLabel setStringValue:@"Recorder Source Pair:"];
     [sdSourceLabel setFont:[NSFont systemFontOfSize:11]];
     [sdSourceLabel setBezeled:NO];
     [sdSourceLabel setEditable:NO];
     [sdSourceLabel setSelectable:NO];
     [sdSourceLabel setBackgroundColor:[NSColor clearColor]];
-    [automationTabView addSubview:sdSourceLabel];
-    sdSourceDropdown = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(controlX, autoY + 4, 220, 24) pullsDown:NO];
+    [wingTabView addSubview:sdSourceLabel];
+    sdSourceDropdown = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(controlX, wingY + 4, 220, 24) pullsDown:NO];
     for (int i = 1; i <= 7; i += 2) {
         NSString* title = [NSString stringWithFormat:@"MAIN %d/%d", i, i + 1];
         [sdSourceDropdown addItemWithTitle:title];
@@ -1252,36 +1294,36 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [sdSourceDropdown selectItemAtIndex:selectedIndex];
     [sdSourceDropdown setTarget:self];
     [sdSourceDropdown setAction:@selector(onRecorderSettingsChanged:)];
-    [automationTabView addSubview:sdSourceDropdown];
-    autoY -= 28;
-    addInfoLabel(automationTabView, NSMakeRect(controlX, autoY, 360, 28),
+    [wingTabView addSubview:sdSourceDropdown];
+    wingY -= 28;
+    addInfoLabel(wingTabView, NSMakeRect(controlX, wingY, 360, 28),
                  @"Select which MAIN stereo pair is sent to the chosen Wing recorder when settings are applied.",
                  10, [NSColor tertiaryLabelColor]);
-    autoY -= 36;
+    wingY -= 36;
 
-    NSTextField* recorderFollowLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(20, autoY + 8, 180, 20)];
+    NSTextField* recorderFollowLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(20, wingY + 8, 180, 20)];
     [recorderFollowLabel setStringValue:@"Follow Auto-Trigger:"];
     [recorderFollowLabel setFont:[NSFont systemFontOfSize:11]];
     [recorderFollowLabel setBezeled:NO];
     [recorderFollowLabel setEditable:NO];
     [recorderFollowLabel setSelectable:NO];
     [recorderFollowLabel setBackgroundColor:[NSColor clearColor]];
-    [automationTabView addSubview:recorderFollowLabel];
-    recorderFollowControl = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(controlX, autoY + 4, 120, 24)];
+    [wingTabView addSubview:recorderFollowLabel];
+    recorderFollowControl = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(controlX, wingY + 4, 120, 24)];
     [recorderFollowControl setSegmentCount:2];
     [recorderFollowControl setLabel:@"OFF" forSegment:0];
     [recorderFollowControl setLabel:@"ON" forSegment:1];
     [recorderFollowControl setSelectedSegment:cfg.sd_auto_record_with_reaper ? 1 : 0];
     [recorderFollowControl setTarget:self];
     [recorderFollowControl setAction:@selector(onRecorderSettingsChanged:)];
-    [automationTabView addSubview:recorderFollowControl];
-    autoY -= 28;
-    addInfoLabel(automationTabView, NSMakeRect(controlX, autoY, 540, 28),
+    [wingTabView addSubview:recorderFollowControl];
+    wingY -= 28;
+    addInfoLabel(wingTabView, NSMakeRect(controlX, wingY, 540, 28),
                  @"When enabled, the chosen Wing recorder follows plugin-controlled auto-trigger recordings.",
                  10, [NSColor tertiaryLabelColor]);
-    autoY -= 30;
+    wingY -= 30;
 
-    recorderFollowHintLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(controlX, autoY, 540, 34)];
+    recorderFollowHintLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(controlX, wingY, 540, 34)];
     [recorderFollowHintLabel setStringValue:@""];
     [recorderFollowHintLabel setFont:[NSFont systemFontOfSize:10.5]];
     [recorderFollowHintLabel setBezeled:NO];
@@ -1291,10 +1333,10 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [recorderFollowHintLabel setTextColor:[NSColor secondaryLabelColor]];
     [recorderFollowHintLabel setLineBreakMode:NSLineBreakByWordWrapping];
     [recorderFollowHintLabel setUsesSingleLineMode:NO];
-    [automationTabView addSubview:recorderFollowHintLabel];
-    autoY -= 40;
+    [wingTabView addSubview:recorderFollowHintLabel];
+    wingY -= 40;
 
-    recorderDetailLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(controlX, autoY, 540, 38)];
+    recorderDetailLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(controlX, wingY, 540, 38)];
     [recorderDetailLabel setStringValue:@"Recorder coordination is using the currently applied settings."];
     [recorderDetailLabel setFont:[NSFont systemFontOfSize:10.5]];
     [recorderDetailLabel setBezeled:NO];
@@ -1304,31 +1346,29 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [recorderDetailLabel setTextColor:[NSColor secondaryLabelColor]];
     [recorderDetailLabel setLineBreakMode:NSLineBreakByWordWrapping];
     [recorderDetailLabel setUsesSingleLineMode:NO];
-    [automationTabView addSubview:recorderDetailLabel];
-    autoY -= 42;
+    [wingTabView addSubview:recorderDetailLabel];
+    wingY -= 42;
 
-    applyRecorderButton = [[NSButton alloc] initWithFrame:NSMakeRect(controlX, autoY, 220, 32)];
+    applyRecorderButton = [[NSButton alloc] initWithFrame:NSMakeRect(controlX, wingY, 220, 32)];
     [applyRecorderButton setBezelStyle:NSBezelStyleRounded];
     [applyRecorderButton setTitle:@"Apply Recorder Settings"];
     [applyRecorderButton setTarget:self];
     [applyRecorderButton setAction:@selector(onApplyRecorderSettingsClicked:)];
     [applyRecorderButton setEnabled:NO];
-    [automationTabView addSubview:applyRecorderButton];
-    addInfoLabel(automationTabView, NSMakeRect(controlX + 230, autoY + 8, 260, 20),
+    [wingTabView addSubview:applyRecorderButton];
+    addInfoLabel(wingTabView, NSMakeRect(controlX + 230, wingY + 8, 260, 20),
                  @"Recorder changes stay staged until you apply them.",
                  10, [NSColor tertiaryLabelColor]);
 
-    CGFloat advY = 520;
-    addInfoLabel(advancedTabView, NSMakeRect(20, advY, 590, 34),
-                 @"Advanced options add a few extra levers for REAPER control and make troubleshooting less mysterious.",
-                 12, [NSColor secondaryLabelColor]);
-    advY -= 44;
+    CGFloat advY = advancedTabHeight - tabTopInset - introLabelHeight;
+    addIntroCallout(advancedTabView, NSMakeRect(20, advY, 760, introLabelHeight),
+                    @"Map Wing controls into REAPER here, and keep diagnostics close by when you need to verify what the plugin is doing.");
+    advY -= (introLabelHeight + 10.0);
 
-    CGFloat bridgeY = 860;
-    addInfoLabel(bridgeTabView, NSMakeRect(20, bridgeY, 590, 34),
-                 @"Bridge the selected WING strip to an external MIDI target. This runs separately from live recording and soundcheck setup, but uses the same shared Wing connection.",
-                 12, [NSColor secondaryLabelColor]);
-    bridgeY -= 44;
+    CGFloat bridgeY = bridgeTabHeight - tabTopInset - introLabelHeight;
+    addIntroCallout(bridgeTabView, NSMakeRect(20, bridgeY, 760, introLabelHeight),
+                    @"Bridge the selected WING strip to an external MIDI target. This runs separately from live recording and soundcheck setup, but uses the same shared Wing connection.");
+    bridgeY -= (introLabelHeight + 10.0);
 
     NSTextField* bridgeHeader = [[NSTextField alloc] initWithFrame:NSMakeRect(20, bridgeY, 300, 20)];
     [bridgeHeader setStringValue:@"🔀 Selected Channel Bridge"];
@@ -1716,24 +1756,19 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     };
     normalizeTabDocument(setupTabView, 26.0);
     normalizeTabDocument(automationTabView, 26.0);
+    normalizeTabDocument(wingTabView, 26.0);
     normalizeTabDocument(advancedTabView, 26.0);
+    if (kShowBridgeTabInMainUI) {
+        normalizeTabDocument(bridgeTabView, 26.0);
+    }
 
-    auto scrollTabToTop = ^(NSScrollView* scrollView) {
-        NSClipView* clipView = [scrollView contentView];
-        NSView* documentView = [scrollView documentView];
-        if (!clipView || !documentView) {
-            return;
-        }
-        NSRect clipBounds = [clipView bounds];
-        NSRect documentBounds = [documentView bounds];
-        CGFloat topOffset = std::max<CGFloat>(0.0, NSMaxY(documentBounds) - NSHeight(clipBounds));
-        [clipView scrollToPoint:NSMakePoint(0, topOffset)];
-        [scrollView reflectScrolledClipView:clipView];
-    };
-    scrollTabToTop(setupTabScrollView);
-    scrollTabToTop(automationTabScrollView);
-    scrollTabToTop(advancedTabScrollView);
-    scrollTabToTop(bridgeTabScrollView);
+    [self scrollTabViewToTop:setupTabScrollView];
+    [self scrollTabViewToTop:automationTabScrollView];
+    [self scrollTabViewToTop:wingTabScrollView];
+    [self scrollTabViewToTop:advancedTabScrollView];
+    if (kShowBridgeTabInMainUI) {
+        [self scrollTabViewToTop:bridgeTabScrollView];
+    }
 
     [self refreshBridgeMidiOutputDropdown];
     [self refreshBridgeStatus];
@@ -1770,6 +1805,46 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [self updateAutoTriggerControlsEnabled];
     [self updateAutomationDetails];
     [self refreshLiveSetupValidation];
+}
+
+- (void)scrollTabViewToTop:(NSScrollView*)scrollView {
+    if (!scrollView) {
+        return;
+    }
+
+    NSClipView* clipView = [scrollView contentView];
+    NSView* documentView = [scrollView documentView];
+    if (!clipView || !documentView) {
+        return;
+    }
+
+    CGFloat maxY = 0.0;
+    for (NSView* subview in [documentView subviews]) {
+        if ([subview isHidden]) {
+            continue;
+        }
+        maxY = std::max(maxY, NSMaxY([subview frame]));
+    }
+
+    const CGFloat desiredTopPadding = 26.0;
+    const CGFloat clipHeight = NSHeight([clipView bounds]);
+    const CGFloat documentHeight = NSHeight([documentView bounds]);
+    const CGFloat contentTop = maxY + desiredTopPadding;
+    const CGFloat maxOffset = std::max<CGFloat>(0.0, documentHeight - clipHeight);
+    const CGFloat topOffset = std::max<CGFloat>(0.0, std::min(maxOffset, contentTop - clipHeight));
+    [clipView scrollToPoint:NSMakePoint(0, topOffset)];
+    [scrollView reflectScrolledClipView:clipView];
+}
+
+- (void)tabView:(NSTabView*)tabView didSelectTabViewItem:(NSTabViewItem*)tabViewItem {
+    if (tabView != settingsTabView) {
+        return;
+    }
+
+    NSView* view = [tabViewItem view];
+    if ([view isKindOfClass:[NSScrollView class]]) {
+        [self scrollTabViewToTop:(NSScrollView*)view];
+    }
 }
 
 - (void)setHeaderStatusIcon:(NSImageView*)iconView symbolName:(NSString*)symbolName fallback:(NSString*)fallback color:(NSColor*)color {
@@ -1906,21 +1981,29 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
         return;
     }
     NSString* detail = @"Connect to a Wing and apply a source setup to prepare recording and virtual soundcheck.";
+    NSString* nextStep = @"Next step: connect to a WING, then choose sources to prepare recording and soundcheck.";
     NSColor* detailColor = [NSColor secondaryLabelColor];
 
-    if (hasPendingSetupDraft || pendingOutputMode != ReaperExtension::Instance().GetConfig().soundcheck_output_mode) {
+    if (isWorking) {
+        detail = @"Working on the current request.";
+        nextStep = @"Next step: wait for the current operation to finish before staging another setup change.";
+    } else if (hasPendingSetupDraft || pendingOutputMode != ReaperExtension::Instance().GetConfig().soundcheck_output_mode) {
         detail = @"Pending setup changes are staged. Apply them to rebuild WING routing, REAPER tracks, and virtual soundcheck inputs.";
+        nextStep = @"Next step: review the staged source draft, then click Apply Pending Setup.";
         detailColor = [NSColor systemOrangeColor];
     } else if (!latestLiveSetupValidationDetails.empty()) {
         detail = [NSString stringWithUTF8String:latestLiveSetupValidationDetails.c_str()];
         if (latestLiveSetupValidationState == ValidationState::Ready) {
+            nextStep = @"Setup is ready. Choose Sources stages changes; Live/Soundcheck switches the already validated setup.";
             detailColor = [NSColor systemGreenColor];
         } else if (latestLiveSetupValidationState == ValidationState::Warning) {
+            nextStep = @"Next step: finish validating the current setup, then use Choose Sources if you need to stage changes.";
             detailColor = [NSColor systemOrangeColor];
         }
     }
 
-    [setupReadinessDetailLabel setStringValue:detail];
+    NSString* combined = [NSString stringWithFormat:@"%@\n%@", detail, nextStep];
+    [setupReadinessDetailLabel setStringValue:combined];
     [setupReadinessDetailLabel setTextColor:detailColor];
 }
 
@@ -1994,21 +2077,21 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     if (!automationDetailLabel) {
         return;
     }
-    NSString* detail = @"Automation will become available once recording setup is ready.";
+    NSString* detail = @"Next step: connect to a WING, choose sources, and apply the setup before enabling Auto Trigger.";
     NSColor* detailColor = [NSColor secondaryLabelColor];
 
     if (automationSettingsDirty) {
-        detail = @"Automation settings changed. Apply them to resume trigger monitoring with the new threshold, hold time, recorder, and CC layer.";
+        detail = @"Auto Trigger settings changed. Next step: click Apply Auto Trigger Settings to resume trigger monitoring with the staged threshold, hold time, recorder, and CC layer.";
         detailColor = [NSColor systemOrangeColor];
     } else if (hasPendingSetupDraft || pendingOutputMode != ReaperExtension::Instance().GetConfig().soundcheck_output_mode) {
-        detail = @"Automation is waiting for the pending recording setup to be applied first.";
+        detail = @"Auto Trigger is blocked by pending setup changes. Next step: click Apply Pending Setup in the Reaper tab.";
         detailColor = [NSColor systemOrangeColor];
     } else if (!liveSetupValidated) {
-        detail = [NSString stringWithFormat:@"Automation is blocked until recording setup is ready. %s",
-                  latestLiveSetupValidationDetails.empty() ? "Prepare sources and routing in the Setup tab." : latestLiveSetupValidationDetails.c_str()];
+        detail = [NSString stringWithFormat:@"Auto Trigger is blocked until recording setup validates. Next step: %s",
+                  latestLiveSetupValidationDetails.empty() ? "prepare sources and routing in the Reaper tab." : latestLiveSetupValidationDetails.c_str()];
         detailColor = isConnected ? [NSColor systemOrangeColor] : [NSColor secondaryLabelColor];
     } else {
-        detail = @"Automation is clear to run with the current recording and virtual soundcheck setup.";
+        detail = @"Auto Trigger is clear to run with the current recording and virtual soundcheck setup.";
         detailColor = [NSColor systemGreenColor];
     }
 
@@ -2019,12 +2102,14 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
         NSString* recorderDetail = @"Recorder coordination is using the currently applied settings.";
         NSColor* recorderColor = [NSColor secondaryLabelColor];
         if (recorderSettingsDirty) {
-            recorderDetail = @"Recorder coordination changes are staged. Apply them to update the target recorder, source pair, and recorder follow behavior.";
+            recorderDetail = @"Recorder coordination changes are staged. Next step: click Apply Recorder Settings to update the target recorder, source pair, and follow behavior.";
             recorderColor = [NSColor systemOrangeColor];
         } else if (!ReaperExtension::Instance().GetConfig().recorder_coordination_enabled) {
-            recorderDetail = @"Recorder coordination is off. Enable it to prepare a WING recorder and optionally follow auto-trigger recordings.";
+            recorderDetail = @"Recorder coordination is off. Next step: turn Recorder Control on to prepare a WING recorder and optionally follow auto-trigger recordings.";
         } else if (!liveSetupValidated && !isConnected) {
-            recorderDetail = @"Recorder coordination can be staged now and applied when the WING is connected.";
+            recorderDetail = @"Recorder coordination can be staged now. Next step: connect to the WING before applying recorder settings.";
+        } else if (!liveSetupValidated) {
+            recorderDetail = @"Recorder coordination is waiting for setup validation. Next step: finish the Reaper tab workflow first.";
         } else if (liveSetupValidated) {
             recorderDetail = @"Recorder coordination is aligned with the current setup and ready to be used.";
             recorderColor = [NSColor systemGreenColor];
@@ -2201,12 +2286,13 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 }
 
 - (void)updateAutoTriggerControlsEnabled {
-    const bool pending_apply = hasPendingSetupDraft || pendingOutputMode != ReaperExtension::Instance().GetConfig().soundcheck_output_mode;
+    auto& extension = ReaperExtension::Instance();
+    const bool pending_apply = hasPendingSetupDraft || pendingOutputMode != extension.GetConfig().soundcheck_output_mode;
     const BOOL liveSetupControlsEnabled = (liveSetupValidated && !pending_apply && !isWorking) ? YES : NO;
     const BOOL sdControlsEnabled = isWorking ? NO : YES;
-    const BOOL midiToggleEnabled = (!isWorking && (liveSetupValidated || ReaperExtension::Instance().IsMidiActionsEnabled() || midiActionsDirty)) ? YES : NO;
-    const BOOL autoTriggerEnabled = (liveSetupControlsEnabled && ReaperExtension::Instance().GetConfig().auto_record_enabled) ? YES : NO;
-    const BOOL recorderControlsEnabled = (sdControlsEnabled && ReaperExtension::Instance().GetConfig().recorder_coordination_enabled) ? YES : NO;
+    const BOOL midiToggleEnabled = (!isWorking && (liveSetupValidated || extension.IsMidiActionsEnabled() || midiActionsDirty)) ? YES : NO;
+    const BOOL autoTriggerEnabled = (liveSetupControlsEnabled && extension.GetConfig().auto_record_enabled) ? YES : NO;
+    const BOOL recorderControlsEnabled = (sdControlsEnabled && extension.GetConfig().recorder_coordination_enabled) ? YES : NO;
     const BOOL recorderFollowEnabled = (recorderControlsEnabled &&
                                         autoTriggerEnabled &&
                                         !automationSettingsDirty) ? YES : NO;
@@ -2319,6 +2405,9 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     isWorking = working;
     [setupSoundcheckButton setEnabled:!working];
     [scanButton setEnabled:!working];
+    if (!working && scanButton) {
+        [scanButton setTitle:@"Scan"];
+    }
     [connectButton setEnabled:!working];
     [self updatePendingSetupUI];
     // Toggle button state depends on both working state and setup completion
@@ -3037,6 +3126,9 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     if (!settingsTabView || !identifier) {
         return;
     }
+    if (!kShowBridgeTabInMainUI && [identifier isEqualToString:@"bridge"]) {
+        identifier = @"control-integration";
+    }
     for (NSTabViewItem* item in [settingsTabView tabViewItems]) {
         if ([[item identifier] isKindOfClass:[NSString class]] &&
             [(NSString*)[item identifier] isEqualToString:identifier]) {
@@ -3176,14 +3268,14 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     automationSettingsDirty = YES;
     [self updateAutoTriggerControlsEnabled];
     [self updateAutomationDetails];
-    [self appendToLog:[NSString stringWithFormat:@"Automation settings pending: %s, mode=%s, source=REAPER, threshold=%.1f dBFS, hold=%.1fs, track=%d, ccLayer=%d\n",
+    [self appendToLog:[NSString stringWithFormat:@"Auto Trigger settings pending: %s, mode=%s, source=REAPER, threshold=%.1f dBFS, hold=%.1fs, track=%d, ccLayer=%d\n",
                        config.auto_record_enabled ? "ON" : "OFF",
                        config.auto_record_warning_only ? "WARNING" : "RECORD",
                        config.auto_record_threshold_db,
                        config.auto_record_hold_ms / 1000.0,
                        config.auto_record_monitor_track,
                        config.warning_flash_cc_layer]];
-    [self appendToLog:@"Auto-trigger paused. Apply the automation settings to make them active.\n"];
+    [self appendToLog:@"Auto-trigger paused. Apply the Auto Trigger settings to make them active.\n"];
 }
 
 - (void)onRecorderSettingsChanged:(id)sender {
@@ -3216,14 +3308,14 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     automationSettingsDirty = NO;
     [self updateAutoTriggerControlsEnabled];
     [self updateAutomationDetails];
-    [self appendToLog:[NSString stringWithFormat:@"Applied automation settings: %s, mode=%s, source=REAPER, threshold=%.1f dBFS, hold=%.1fs, track=%d, ccLayer=%d\n",
+    [self appendToLog:[NSString stringWithFormat:@"Applied Auto Trigger settings: %s, mode=%s, source=REAPER, threshold=%.1f dBFS, hold=%.1fs, track=%d, ccLayer=%d\n",
                        config.auto_record_enabled ? "ON" : "OFF",
                        config.auto_record_warning_only ? "WARNING" : "RECORD",
                        config.auto_record_threshold_db,
                        config.auto_record_hold_ms / 1000.0,
                        config.auto_record_monitor_track,
                        config.warning_flash_cc_layer]];
-    [self persistConfigAndLog:@"Saved and applied automation settings.\n"];
+    [self persistConfigAndLog:@"Saved and applied Auto Trigger settings.\n"];
 }
 
 - (void)onApplyRecorderSettingsClicked:(id)sender {
@@ -3623,7 +3715,7 @@ extern "C" {
 void ShowWingConnectorDialogAtTab(const char* tab_identifier) {
     // Static to keep controller alive in MRC - window doesn't retain it by default
     static WingConnectorWindowController* controller = nil;
-    NSString* desiredTab = tab_identifier ? [NSString stringWithUTF8String:tab_identifier] : @"setup";
+    NSString* desiredTab = tab_identifier ? [NSString stringWithUTF8String:tab_identifier] : @"console";
     
     // Must run UI operations on main thread
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -3647,7 +3739,7 @@ void ShowWingConnectorDialogAtTab(const char* tab_identifier) {
 }
 
 void ShowWingConnectorDialog() {
-    ShowWingConnectorDialogAtTab("setup");
+    ShowWingConnectorDialogAtTab("console");
 }
 
 } // extern "C"

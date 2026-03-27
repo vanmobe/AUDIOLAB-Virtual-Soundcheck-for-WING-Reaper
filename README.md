@@ -31,9 +31,10 @@ Platform-specific steps are in [INSTALL.md](INSTALL.md).
 
 1. Install the plugin for your platform.
 2. Restart REAPER.
-3. Open `Extensions -> Behringer Wing: Open Wing Connector`.
-4. Enter your WING IP and port (default `2223`) and fetch channels.
-5. Confirm tracks are created/updated in REAPER.
+3. Open `Extensions -> Behringer Wing: Configure Virtual Soundcheck/Recording`.
+4. Select a discovered WING or enter the WING IP manually, then fetch channels.
+5. Ensure the WING OSC port on the console is set to `2223` (the plugin uses `2223`).
+6. Confirm tracks are created/updated in REAPER.
 
 See [QUICKSTART.md](QUICKSTART.md) for the 5-minute flow.
 
