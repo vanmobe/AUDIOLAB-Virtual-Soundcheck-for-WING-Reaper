@@ -19,9 +19,9 @@ if [[ ! -f "$STAGE_DIR/$PLUGIN_NAME" ]]; then
   echo "Missing $STAGE_DIR/$PLUGIN_NAME" >&2
   exit 1
 fi
-if [[ ! -f "$STAGE_DIR/$CONFIG_NAME" ]]; then
-  echo "Missing $STAGE_DIR/$CONFIG_NAME" >&2
-  exit 1
+HAS_CONFIG=0
+if [[ -f "$STAGE_DIR/$CONFIG_NAME" ]]; then
+  HAS_CONFIG=1
 fi
 
 mkdir -p "$OUT_DIR"
@@ -31,7 +31,9 @@ PKG_SCRIPTS="$TMP_ROOT/scripts"
 mkdir -p "$PKG_ROOT" "$PKG_SCRIPTS"
 
 cp "$STAGE_DIR/$PLUGIN_NAME" "$PKG_ROOT/$PLUGIN_NAME"
-cp "$STAGE_DIR/$CONFIG_NAME" "$PKG_ROOT/$CONFIG_NAME"
+if [[ "$HAS_CONFIG" -eq 1 ]]; then
+  cp "$STAGE_DIR/$CONFIG_NAME" "$PKG_ROOT/$CONFIG_NAME"
+fi
 
 cat > "$PKG_SCRIPTS/postinstall" << 'POSTINSTALL'
 #!/usr/bin/env bash

@@ -14,9 +14,7 @@ $stagePath = (Resolve-Path $StageDir).Path
 if (-not (Test-Path (Join-Path $stagePath $pluginName))) {
     throw "Missing $pluginName in $stagePath"
 }
-if (-not (Test-Path (Join-Path $stagePath $configName))) {
-    throw "Missing $configName in $stagePath"
-}
+$hasConfig = Test-Path (Join-Path $stagePath $configName)
 
 New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 $outPath = (Resolve-Path $OutDir).Path
@@ -57,14 +55,16 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "$stagePath\$pluginName"; DestDir: "{userappdata}\REAPER\UserPlugins"; Flags: ignoreversion
-Source: "$stagePath\$configName"; DestDir: "{userappdata}\REAPER\UserPlugins"; Flags: onlyifdoesntexist uninsneveruninstall
-
 [Icons]
 Name: "{autoprograms}\$appName\Uninstall $appName"; Filename: "{uninstallexe}"
 
 [Run]
 Filename: "{cmd}"; Parameters: "/c echo Installed to %APPDATA%\REAPER\UserPlugins"; Flags: runhidden
 "@
+
+if ($hasConfig) {
+    $iss += "`r`nSource: `"$stagePath\$configName`"; DestDir: `"{userappdata}\REAPER\UserPlugins`"; Flags: onlyifdoesntexist uninsneveruninstall`r`n"
+}
 
 Set-Content -Path $issPath -Value $iss -NoNewline
 

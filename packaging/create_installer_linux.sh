@@ -14,9 +14,9 @@ if [[ ! -f "$STAGE_DIR/$PLUGIN_NAME" ]]; then
   echo "Missing $STAGE_DIR/$PLUGIN_NAME" >&2
   exit 1
 fi
-if [[ ! -f "$STAGE_DIR/$CONFIG_NAME" ]]; then
-  echo "Missing $STAGE_DIR/$CONFIG_NAME" >&2
-  exit 1
+HAS_CONFIG=0
+if [[ -f "$STAGE_DIR/$CONFIG_NAME" ]]; then
+  HAS_CONFIG=1
 fi
 
 mkdir -p "$OUT_DIR"
@@ -26,7 +26,9 @@ SHARE_DIR="/usr/share/${PACKAGE_NAME}"
 mkdir -p "$PKG_DIR/DEBIAN" "$PKG_DIR${SHARE_DIR}"
 
 cp "$STAGE_DIR/$PLUGIN_NAME" "$PKG_DIR${SHARE_DIR}/$PLUGIN_NAME"
-cp "$STAGE_DIR/$CONFIG_NAME" "$PKG_DIR${SHARE_DIR}/$CONFIG_NAME"
+if [[ "$HAS_CONFIG" -eq 1 ]]; then
+  cp "$STAGE_DIR/$CONFIG_NAME" "$PKG_DIR${SHARE_DIR}/$CONFIG_NAME"
+fi
 
 cat > "$PKG_DIR/DEBIAN/control" << EOF
 Package: ${PACKAGE_NAME}
@@ -36,7 +38,7 @@ Priority: optional
 Architecture: ${ARCH}
 Maintainer: CO LAB <noreply@example.com>
 Description: AUDIOLAB Virtual Soundcheck for REAPER and Behringer WING
- Installs the REAPER AUDIOLAB Virtual Soundcheck plugin and config file.
+ Installs the REAPER AUDIOLAB Virtual Soundcheck plugin and optional config file.
 EOF
 
 cat > "$PKG_DIR/DEBIAN/postinst" << 'EOF'
@@ -54,7 +56,7 @@ for home_dir in /home/*; do
   target_dir="$home_dir/.config/REAPER/UserPlugins"
   mkdir -p "$target_dir"
   cp -f "$SOURCE_DIR/reaper_wingconnector.so" "$target_dir/reaper_wingconnector.so"
-  if [[ ! -f "$target_dir/config.json" ]]; then
+  if [[ -f "$SOURCE_DIR/config.json" && ! -f "$target_dir/config.json" ]]; then
     cp -f "$SOURCE_DIR/config.json" "$target_dir/config.json"
   fi
   chown "$user_name:$user_name" "$target_dir/reaper_wingconnector.so" || true
