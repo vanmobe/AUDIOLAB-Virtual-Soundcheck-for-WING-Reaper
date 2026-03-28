@@ -144,6 +144,7 @@ private:
     void MonitorAutoRecordLoop();
     void StartAutoRecordMonitor();
     void StopAutoRecordMonitor();
+    void QueueManagedSourceMonitorWarning(const std::string& warning);
     double GetMaxArmedTrackPeak() const;
     void StartWarningFlash();
     void StopWarningFlash(bool force = false);
@@ -160,6 +161,16 @@ private:
     void SyncExternalRecorderWithReaperState(bool is_recording_now);
     void StartExternalRecorderFollow();
     void StopExternalRecorderFollow();
+    void StartManagedSourceMonitor();
+    void StopManagedSourceMonitor();
+    void ManagedSourceMonitorLoop();
+    void RefreshManagedSourceMonitorScope();
+    std::vector<int> GetManagedMonitorChannelNumbers() const;
+    std::map<int, ManagedChannelDisplayState> BuildManagedEffectiveDisplayStates(const std::map<int, ManagedChannelInputState>& latest_states) const;
+    bool ReapplyManagedChannelRouting(const std::map<int, ManagedChannelInputState>& latest_states, const std::string& reason);
+    void ApplyManagedTrackMetadataUpdate(const std::map<int, ManagedChannelDisplayState>& latest_display_states);
+    void ApplyManagedTrackRoutingUpdate(const std::vector<SourceSelectionInfo>& selected_sources,
+                                        const std::vector<USBAllocation>& allocations);
     void StartSelectedChannelBridge();
     void StopSelectedChannelBridge();
     void SelectedChannelBridgeLoop();
@@ -194,6 +205,14 @@ private:
     std::atomic<bool> suppress_midi_processing_{false};
     std::atomic<bool> external_recorder_started_by_plugin_{false};
     std::atomic<bool> last_known_reaper_recording_state_{false};
+    std::atomic<bool> managed_source_monitor_running_{false};
+    std::atomic<bool> suppress_managed_source_monitor_{false};
+    std::unique_ptr<std::thread> managed_source_monitor_thread_;
+    mutable std::mutex managed_source_monitor_mutex_;
+    std::string pending_source_monitor_warning_;
+    std::vector<int> managed_monitor_channel_numbers_;
+    std::map<int, ManagedChannelInputState> managed_monitor_snapshot_;
+    std::map<int, ManagedChannelDisplayState> managed_monitor_display_snapshot_;
     std::unique_ptr<std::thread> manual_transport_flash_thread_;
     std::mutex manual_transport_flash_mutex_;
     std::atomic<long long> transport_guard_until_ms_{0};

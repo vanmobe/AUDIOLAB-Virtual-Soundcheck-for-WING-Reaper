@@ -1,4 +1,6 @@
-# Wing Connector Architecture
+# WINGuard Architecture
+
+> Guard every take. Faster setup, safer record(w)ing!
 
 ## Overview
 
@@ -34,12 +36,13 @@ Headers are split between:
 1. REAPER loads plugin via `REAPER_PLUGIN_ENTRYPOINT`.
 2. API function pointers are resolved.
 3. Extension singleton initializes configuration and runtime components.
-4. REAPER actions are registered for the main Wing Connector flow and the standalone selected-channel bridge setup flow.
+4. REAPER actions are registered for the main WINGuard flow and the standalone selected-channel bridge setup flow.
 5. User triggers an action; the matching UI or bridge entry point starts.
 6. OSC queries fetch channel data from WING.
 7. Track manager creates/updates REAPER tracks.
 8. Optional auto-trigger and virtual soundcheck actions operate from dialog controls.
 9. Optional MIDI CC transport/marker control is handled directly by plugin MIDI hooks/capture (with WING custom-button command syncing).
+10. After a channel-based setup is applied, a managed-source watcher polls only the managed WING channels and reapplies routing when compatible source changes are detected.
 
 ## UI Strategy
 
@@ -77,4 +80,5 @@ Packaging scripts:
 - Dialog and platform utilities isolate UI/platform complexity from core behavior.
 - Configuration is file-based (`config.json`) for predictable deployment.
 - WING shortcut command assignment is plugin-managed (not dependent on REAPER action-list shortcuts being reloaded at runtime).
+- Managed source monitoring is orchestrated in `src/extension/` and reuses the existing `src/core/` routing/allocation code instead of maintaining a second routing engine.
 - Selected-channel bridge work is intentionally isolated from live soundcheck and recorder flows until the WING event source is protocol-confirmed.

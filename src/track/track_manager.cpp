@@ -115,6 +115,20 @@ void TrackManager::SetTrackColor(MediaTrack* track, int wing_color_id) {
     SetMediaTrackInfo_Value(track, "I_CUSTOMCOLOR", color | 0x01000000);
 }
 
+bool TrackManager::TrackColorMatches(MediaTrack* track, int wing_color_id) {
+    if (!track) {
+        return false;
+    }
+
+    const int stored_color = static_cast<int>(GetMediaTrackInfo_Value(track, "I_CUSTOMCOLOR"));
+    if ((stored_color & 0x01000000) == 0) {
+        return false;
+    }
+
+    const int expected_color = WingColorToReaperColor(wing_color_id);
+    return (stored_color & 0x00FFFFFF) == (expected_color & 0x00FFFFFF);
+}
+
 /**
  * SetTrackName() - Set track name with optional prefix
  * 

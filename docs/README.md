@@ -17,8 +17,10 @@ Use this page as the starting point for repository documentation.
 
 ## Additional Reference
 
+- [ISSUE_13_RECORDING_VIRTUAL_SOUNDCHECK_READINESS.md](ISSUE_13_RECORDING_VIRTUAL_SOUNDCHECK_READINESS.md) - intake notes and readiness decision for rebuilding soundcheck from an existing REAPER project
 - [WING_SELECTED_CHANNEL_BRIDGE.md](WING_SELECTED_CHANNEL_BRIDGE.md) - current action split, scope, and next steps for the standalone bridge
 - [WING_SELECTED_CHANNEL_SUPERRACK_BRIDGE_PLAN_VALIDATION.md](WING_SELECTED_CHANNEL_SUPERRACK_BRIDGE_PLAN_VALIDATION.md) - validation notes for the selected-channel bridge plan
+- [ISSUE_14_SELECTED_CHANNEL_BRIDGE_IMPLEMENTATION_PROPOSAL.md](ISSUE_14_SELECTED_CHANNEL_BRIDGE_IMPLEMENTATION_PROPOSAL.md) - implementation proposal for issue #14 selected-channel bridge delivery
 - [../snapshots/README.md](../snapshots/README.md) - snapshot and legacy/manual MIDI mapping notes
 - [../releases/README.md](../releases/README.md) - packaged release artifacts in this repo
 

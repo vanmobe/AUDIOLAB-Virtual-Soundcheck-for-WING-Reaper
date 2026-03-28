@@ -6,6 +6,7 @@
 
 #include "wingconnector/reaper_extension.h"
 #include "reaper_plugin_functions.h"
+#include "internal/managed_source_monitor.h"
 #ifdef __APPLE__
 #include "internal/settings_dialog_macos.h"
 #endif
@@ -46,9 +47,11 @@ namespace WingConnector {
 namespace {
 constexpr int kChannelQueryAttempts = 2;
 constexpr int kQueryResponseWaitMs = 250;  // Wait time for OSC responses after sending all queries
+constexpr int kManagedSourceMonitorPollMs = 900;
 constexpr int kReaperPlayStatePlayingBit = 1;
 constexpr int kReaperPlayStateRecordingBit = 4;
 constexpr const char* kTrackSourceIdExtKey = "P_EXT:WINGCONNECTOR_SOURCE_ID";
+constexpr const char* kProductName = "WINGuard";
 
 const char* SourceKindTag(SourceKind kind) {
     switch (kind) {
@@ -74,6 +77,71 @@ std::string SourcePersistentId(SourceKind kind, int source_number) {
 
 std::string SourcePersistentId(const SourceSelectionInfo& source) {
     return SourcePersistentId(source.kind, source.source_number);
+}
+
+std::string StableChannelTrackName(int channel_number) {
+    return "CH" + std::to_string(channel_number);
+}
+
+bool IsGenericSourceDisplayName(const std::string& name) {
+    if (name.empty()) {
+        return true;
+    }
+    if (name.rfind("CH", 0) == 0 || name.rfind("Channel ", 0) == 0) {
+        return true;
+    }
+    if (name.rfind("USB", 0) == 0 || name.rfind("CARD", 0) == 0 || name.rfind("CRD", 0) == 0) {
+        return true;
+    }
+    if (name.rfind("Input ", 0) == 0 || name.rfind("In ", 0) == 0) {
+        return true;
+    }
+    return false;
+}
+
+std::string PreferredChannelTrackName(int channel_number, const std::string& effective_name) {
+    return IsGenericSourceDisplayName(effective_name) ? StableChannelTrackName(channel_number) : effective_name;
+}
+
+std::pair<std::string, int> ResolveDisplaySource(WingOSC* osc_handler,
+                                                 const std::string& grp,
+                                                 int in) {
+    if (in <= 0) {
+        return {grp, in};
+    }
+    if (grp == "A" || grp == "USR") {
+        return {grp, in};
+    }
+    return osc_handler ? osc_handler->ResolveRoutingChain(grp, in) : std::make_pair(grp, in);
+}
+
+std::map<int, ManagedChannelInputState> BuildChannelInputStateMap(const std::map<int, ChannelInfo>& channel_data);
+
+std::string JoinChannelNumbers(const std::vector<int>& channels) {
+    std::ostringstream out;
+    for (size_t i = 0; i < channels.size(); ++i) {
+        if (i > 0) {
+            out << ", ";
+        }
+        out << "CH" << channels[i];
+    }
+    return out.str();
+}
+
+bool ParseChannelSourcePersistentId(const std::string& source_id, int& channel_number_out) {
+    if (source_id.rfind("CH:", 0) != 0) {
+        return false;
+    }
+    try {
+        const int parsed = std::stoi(source_id.substr(3));
+        if (parsed <= 0) {
+            return false;
+        }
+        channel_number_out = parsed;
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 std::string NormalizeManagedTrackName(std::string track_name, const std::string& track_prefix) {
@@ -424,6 +492,7 @@ bool ReaperExtension::Initialize(reaper_plugin_info_t* rec) {
     if (config_.configure_midi_actions) {
         EnableMidiActions(true);
     }
+    RefreshManagedSourceMonitorScope();
     ApplyBridgeSettings();
 
     if (g_rec_) {
@@ -445,6 +514,7 @@ void ReaperExtension::Shutdown() {
     StopManualTransportFlash();
     StopMidiCapture();
     StopAutoRecordMonitor();
+    StopManagedSourceMonitor();
     StopSelectedChannelBridge();
     EnableMidiActions(false);
     DisconnectFromWing();
@@ -529,6 +599,18 @@ void ReaperExtension::MainThreadTimerTick() {
         }
     }
 
+    std::string pending_source_warning;
+    {
+        std::lock_guard<std::mutex> lock(ext.managed_source_monitor_mutex_);
+        pending_source_warning.swap(ext.pending_source_monitor_warning_);
+    }
+    if (!pending_source_warning.empty()) {
+        ext.status_message_ = "Managed source change needs review";
+        ShowMessageBox(pending_source_warning.c_str(),
+                       "WINGuard - Managed Source Warning",
+                       0);
+    }
+
     const int play_state_after_actions = GetPlayState();
     const bool is_recording_after_actions = (play_state_after_actions & kReaperPlayStateRecordingBit) != 0;
     if (is_recording_after_actions != is_recording_now) {
@@ -610,6 +692,8 @@ bool ReaperExtension::ConnectToWing() {
 
     // If MIDI actions are enabled in the extension, re-apply current mapping to the Wing.
     SyncMidiActionsToWing();
+    RefreshManagedSourceMonitorScope();
+    StartManagedSourceMonitor();
     ApplyBridgeSettings();
     
     return true;
@@ -680,22 +764,18 @@ std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
     // Query USR routing so popup can display resolved sources (e.g. USR:25 -> A:8)
     osc_handler_->QueryUserSignalInputs(48);
 
-    auto use_direct_display_source = [](const std::string& grp) {
-        return grp == "A" || grp == "LCL" || grp == "USR";
-    };
-
     // Query source labels used by the selection popup (for name fallback).
     std::set<std::pair<std::string, int>> source_endpoints;
     std::map<int, std::pair<std::string, int>> channel_display_sources;
+    const auto effective_display_states = BuildManagedEffectiveDisplayStates(BuildChannelInputStateMap(channel_data));
+
     for (const auto& pair : channel_data) {
         const ChannelInfo& ch = pair.second;
         if (ch.primary_source_group.empty() || ch.primary_source_input <= 0) {
             continue;
         }
         std::pair<std::string, int> display_source =
-            use_direct_display_source(ch.primary_source_group)
-                ? std::make_pair(ch.primary_source_group, ch.primary_source_input)
-                : osc_handler_->ResolveRoutingChain(ch.primary_source_group, ch.primary_source_input);
+            ResolveDisplaySource(osc_handler_.get(), ch.primary_source_group, ch.primary_source_input);
         source_endpoints.insert(display_source);
         channel_display_sources[ch.channel_number] = display_source;
         if (ch.stereo_linked) {
@@ -750,7 +830,8 @@ std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
         SourceSelectionInfo info;
         info.kind = SourceKind::Channel;
         info.source_number = ch.channel_number;
-        info.name = ch.name;
+        info.name = StableChannelTrackName(ch.channel_number);
+        info.color_id = ch.color;
         info.source_group = ch.primary_source_group;
         info.source_input = ch.primary_source_input;
         
@@ -759,9 +840,7 @@ std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
         
         const std::pair<std::string, int> raw_source = {ch.primary_source_group, ch.primary_source_input};
         const std::pair<std::string, int> display_source =
-            use_direct_display_source(raw_source.first)
-                ? raw_source
-                : osc_handler_->ResolveRoutingChain(raw_source.first, raw_source.second);
+            ResolveDisplaySource(osc_handler_.get(), raw_source.first, raw_source.second);
         info.source_group = display_source.first;
         info.source_input = display_source.second;
 
@@ -771,19 +850,11 @@ std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
             info.partner_source_input = info.source_input + 1;
         }
 
-        const bool has_generic_channel_name =
-            info.name.empty() || info.name.rfind("CH", 0) == 0 || info.name.rfind("Channel ", 0) == 0;
-        if (has_generic_channel_name) {
-            std::string src_name = osc_handler_->GetInputSourceName(info.source_group, info.source_input);
-            if (src_name.empty()) {
-                const std::string key = "/io/in/" + info.source_group + "/" + std::to_string(info.source_input) + "/name";
-                auto direct_it = direct_channel_names.find(key);
-                if (direct_it != direct_channel_names.end()) {
-                    src_name = direct_it->second;
-                }
-            }
-            if (!src_name.empty()) {
-                info.name = src_name;
+        auto effective_it = effective_display_states.find(ch.channel_number);
+        if (effective_it != effective_display_states.end()) {
+            info.name = PreferredChannelTrackName(ch.channel_number, effective_it->second.name);
+            if (effective_it->second.color_id >= 0) {
+                info.color_id = effective_it->second.color_id;
             }
         }
 
@@ -922,8 +993,6 @@ void ReaperExtension::CreateTracksFromSelection(const std::vector<SourceSelectio
     auto allocations = osc_handler_->CalculateUSBAllocation(selected);
     int track_index = 0;
     int created_tracks = 0;
-    const auto& channel_data = osc_handler_->GetChannelData();
-
     Undo_BeginBlock();
     for (const auto& alloc : allocations) {
         auto it = std::find_if(selected.begin(), selected.end(), [&](const SourceSelectionInfo& source) {
@@ -933,13 +1002,7 @@ void ReaperExtension::CreateTracksFromSelection(const std::vector<SourceSelectio
             continue;
         }
 
-        int color_id = 0;
-        if (it->kind == SourceKind::Channel) {
-            auto ch_it = channel_data.find(it->source_number);
-            if (ch_it != channel_data.end()) {
-                color_id = ch_it->second.color;
-            }
-        }
+        int color_id = (it->color_id >= 0) ? it->color_id : 0;
 
         MediaTrack* track = alloc.is_stereo
             ? track_manager_->CreateStereoTrack(track_index, it->name, color_id)
@@ -1003,6 +1066,7 @@ ValidationState ReaperExtension::ValidateLiveRecordingSetup(std::string& details
         details = "No channel data received from Wing.";
         return ValidationState::NotReady;
     }
+    const auto effective_display_states = BuildManagedEffectiveDisplayStates(BuildChannelInputStateMap(channel_data));
 
     const bool card_mode = (config_.soundcheck_output_mode == "CARD");
     const std::string input_group = card_mode ? "CRD" : "USB";
@@ -1019,6 +1083,7 @@ ValidationState ReaperExtension::ValidateLiveRecordingSetup(std::string& details
     int routable_channels = 0;
     int alt_configured_channels = 0;
     int alt_enabled_channels = 0;
+    std::map<int, int> channel_by_alt_input_1based;
     for (const auto& [ch_num, ch] : channel_data) {
         (void)ch_num;
         if (ch.primary_source_group.empty() || ch.primary_source_group == "OFF" || ch.primary_source_input <= 0) {
@@ -1029,6 +1094,10 @@ ValidationState ReaperExtension::ValidateLiveRecordingSetup(std::string& details
         if (accepted_alt_groups.count(ch.alt_source_group) > 0 && ch.alt_source_input > 0) {
             alt_configured_channels++;
             expected_track_inputs_1based.insert(ch.alt_source_input);
+            channel_by_alt_input_1based.emplace(ch.alt_source_input, ch_num);
+            if (ch.stereo_linked) {
+                channel_by_alt_input_1based.emplace(ch.alt_source_input + 1, ch_num);
+            }
             if (ch.alt_source_enabled) {
                 alt_enabled_channels++;
             }
@@ -1057,6 +1126,11 @@ ValidationState ReaperExtension::ValidateLiveRecordingSetup(std::string& details
     int matching_tracks = 0;
     std::set<int> matched_inputs_1based;
     std::map<int, TrackRouteExpectation> route_expectations;
+    std::vector<std::string> warnings;
+    int track_name_ok = 0;
+    int expected_track_name_count = 0;
+    int track_color_ok = 0;
+    int expected_track_color_count = 0;
     const int track_count = CountTracks(proj);
     for (int i = 0; i < track_count; ++i) {
         MediaTrack* track = GetTrack(proj, i);
@@ -1095,14 +1169,53 @@ ValidationState ReaperExtension::ValidateLiveRecordingSetup(std::string& details
         matched_inputs_1based.insert(rec_input_1based);
         char track_name_buf[512]{};
         std::string track_name;
+        std::string raw_track_name;
         if (GetSetMediaTrackInfo_String(track, "P_NAME", track_name_buf, false) && track_name_buf[0] != '\0') {
-            track_name = NormalizeManagedTrackName(track_name_buf, config_.track_prefix);
+            raw_track_name = track_name_buf;
+            track_name = NormalizeManagedTrackName(raw_track_name, config_.track_prefix);
         } else {
             track_name = "Input " + std::to_string(rec_input_1based);
         }
         route_expectations[rec_input_1based] = TrackRouteExpectation{rec_input_1based, stereo_input, track_name};
         if (stereo_input) {
             route_expectations[rec_input_1based + 1] = TrackRouteExpectation{rec_input_1based + 1, true, track_name};
+        }
+
+        int expected_channel_number = 0;
+        char source_id_buf[256]{};
+        if (GetSetMediaTrackInfo_String(track, kTrackSourceIdExtKey, source_id_buf, false) && source_id_buf[0] != '\0') {
+            ParseChannelSourcePersistentId(source_id_buf, expected_channel_number);
+        }
+        if (expected_channel_number <= 0) {
+            auto alt_channel_it = channel_by_alt_input_1based.find(rec_input_1based);
+            if (alt_channel_it != channel_by_alt_input_1based.end()) {
+                expected_channel_number = alt_channel_it->second;
+            }
+        }
+
+        if (expected_channel_number > 0) {
+            auto display_it = effective_display_states.find(expected_channel_number);
+            if (display_it != effective_display_states.end() && display_it->second.readable) {
+                const std::string expected_track_name =
+                    PreferredChannelTrackName(expected_channel_number, display_it->second.name);
+                expected_track_name_count++;
+                if (track_name == expected_track_name) {
+                    track_name_ok++;
+                } else {
+                    warnings.push_back(std::string("track ") + std::to_string(i + 1) +
+                                       " name is \"" + track_name + "\", expected \"" +
+                                       expected_track_name + "\"");
+                }
+                if (config_.color_tracks && display_it->second.color_id >= 0) {
+                    expected_track_color_count++;
+                    if (track_manager_ && track_manager_->TrackColorMatches(track, display_it->second.color_id)) {
+                        track_color_ok++;
+                    } else {
+                        warnings.push_back(std::string("track ") + std::to_string(i + 1) +
+                                           " color does not match managed channel display");
+                    }
+                }
+            }
         }
     }
 
@@ -1134,7 +1247,6 @@ ValidationState ReaperExtension::ValidateLiveRecordingSetup(std::string& details
     const auto input_modes = osc_handler_->QueryStringAddressesDirect(mode_addresses, 180, 40);
     const auto input_names = osc_handler_->QueryStringAddressesDirect(name_addresses, 180, 40);
 
-    std::vector<std::string> warnings;
     int mode_ok = 0;
     int name_ok = 0;
     for (const auto& [input_1based, expectation] : route_expectations) {
@@ -1170,6 +1282,14 @@ ValidationState ReaperExtension::ValidateLiveRecordingSetup(std::string& details
             << matching_tracks << " REAPER tracks match live I/O routing, "
             << mode_ok << "/" << route_expectations.size() << " playback input modes confirmed, "
             << name_ok << "/" << route_expectations.size() << " playback input names present";
+    if (expected_track_name_count > 0) {
+        summary << ", " << track_name_ok << "/" << expected_track_name_count
+                << " track names aligned";
+    }
+    if (config_.color_tracks && expected_track_color_count > 0) {
+        summary << ", " << track_color_ok << "/" << expected_track_color_count
+                << " track colors aligned";
+    }
     if (alt_enabled_channels > 0) {
         summary << ", " << alt_enabled_channels << " channels currently in soundcheck mode";
     }
@@ -1190,6 +1310,18 @@ void ReaperExtension::SetupSoundcheckFromSelection(const std::vector<SourceSelec
         explicit ScopedMidiSuppress(std::atomic<bool>& f) : flag(f) { flag = true; }
         ~ScopedMidiSuppress() { flag = false; }
     } midi_suppress_guard(suppress_midi_processing_);
+    struct ScopedMonitorSuppress {
+        ReaperExtension& ext;
+        explicit ScopedMonitorSuppress(ReaperExtension& extension) : ext(extension) {
+            ext.suppress_managed_source_monitor_ = true;
+            ext.StopManagedSourceMonitor();
+        }
+        ~ScopedMonitorSuppress() {
+            ext.suppress_managed_source_monitor_ = false;
+            ext.RefreshManagedSourceMonitorScope();
+            ext.StartManagedSourceMonitor();
+        }
+    } monitor_suppress_guard(*this);
 
     if (!connected_ || !osc_handler_) {
         Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Not connected\n");
@@ -1213,9 +1345,7 @@ void ReaperExtension::SetupSoundcheckFromSelection(const std::vector<SourceSelec
                 continue;
             }
             if (selected.name.empty()) {
-                selected.name = it->second.name.empty()
-                    ? ("CH" + std::to_string(selected.source_number))
-                    : it->second.name;
+                selected.name = StableChannelTrackName(selected.source_number);
             }
         }
         selected_sources.push_back(selected);
@@ -1243,9 +1373,7 @@ void ReaperExtension::SetupSoundcheckFromSelection(const std::vector<SourceSelec
         if (it != updated_channel_data.end()) {
             selected.stereo_linked = it->second.stereo_linked;
             if (selected.name.empty()) {
-                selected.name = it->second.name.empty()
-                    ? ("CH" + std::to_string(selected.source_number))
-                    : it->second.name;
+                selected.name = StableChannelTrackName(selected.source_number);
             }
         }
     }
@@ -1294,7 +1422,7 @@ void ReaperExtension::SetupSoundcheckFromSelection(const std::vector<SourceSelec
             << " " << output_type << " slots.\n\n"
             << "The last stereo pair would be incomplete or missing.\n\n"
             << "Choose fewer sources or switch output mode.";
-        ShowMessageBox(msg.str().c_str(), "AUDIOLAB.wing.reaper.virtualsoundcheck - Output Bank Exceeded", 0);
+        ShowMessageBox(msg.str().c_str(), "WINGuard - Output Bank Exceeded", 0);
         return;
     }
 
@@ -1318,7 +1446,7 @@ void ReaperExtension::SetupSoundcheckFromSelection(const std::vector<SourceSelec
             << "Available now: " << available_inputs << " inputs / "
             << available_outputs << " outputs.\n\n"
             << "Please switch REAPER audio device/range or choose fewer sources.";
-        ShowMessageBox(msg.str().c_str(), "AUDIOLAB.wing.reaper.virtualsoundcheck - Audio I/O Not Available", 0);
+        ShowMessageBox(msg.str().c_str(), "WINGuard - Audio I/O Not Available", 0);
         return;
     }
     if (setup_soundcheck && !has_soundcheck_capable) {
@@ -1383,13 +1511,7 @@ void ReaperExtension::SetupSoundcheckFromSelection(const std::vector<SourceSelec
         if (it == selected_sources.end()) {
             continue;
         }
-        int color_id = 0;
-        if (it->kind == SourceKind::Channel) {
-            auto ch_it = updated_channel_data.find(it->source_number);
-            if (ch_it != updated_channel_data.end()) {
-                color_id = ch_it->second.color;
-            }
-        }
+        int color_id = (it->color_id >= 0) ? it->color_id : 0;
         const std::string track_name = it->name.empty() ? SourceIdentity(*it) : it->name;
         
         MediaTrack* track = nullptr;
@@ -1469,10 +1591,325 @@ void ReaperExtension::SetupSoundcheckFromSelection(const std::vector<SourceSelec
     }
 }
 
+void ReaperExtension::ApplyManagedTrackRoutingUpdate(const std::vector<SourceSelectionInfo>& selected_sources,
+                                                     const std::vector<USBAllocation>& allocations) {
+    ReaProject* proj = EnumProjects(-1, nullptr, 0);
+    if (!proj) {
+        return;
+    }
+
+    std::map<std::string, USBAllocation> allocation_by_source_id;
+    for (const auto& allocation : allocations) {
+        allocation_by_source_id[SourcePersistentId(allocation.source_kind, allocation.source_number)] = allocation;
+    }
+
+    const int track_count = CountTracks(proj);
+    std::map<std::string, SourceSelectionInfo> sources_by_id;
+    for (const auto& source : selected_sources) {
+        sources_by_id[SourcePersistentId(source)] = source;
+    }
+    const std::string output_type = (config_.soundcheck_output_mode == "CARD") ? "CARD" : "USB";
+
+    for (int i = 0; i < track_count; ++i) {
+        MediaTrack* track = GetTrack(proj, i);
+        if (!track) {
+            continue;
+        }
+
+        char source_id_buf[256]{};
+        if (!GetSetMediaTrackInfo_String(track, kTrackSourceIdExtKey, source_id_buf, false) || source_id_buf[0] == '\0') {
+            continue;
+        }
+
+        auto allocation_it = allocation_by_source_id.find(source_id_buf);
+        if (allocation_it == allocation_by_source_id.end()) {
+            continue;
+        }
+        auto source_it = sources_by_id.find(source_id_buf);
+        if (source_it == sources_by_id.end()) {
+            continue;
+        }
+
+        const USBAllocation& allocation = allocation_it->second;
+        const std::string track_name = allocation.is_stereo
+            ? (source_it->second.name + " (Stereo)")
+            : source_it->second.name;
+        track_manager_->SetTrackName(track, track_name);
+        if (config_.color_tracks &&
+            source_it->second.kind == SourceKind::Channel &&
+            source_it->second.color_id >= 0) {
+            track_manager_->SetTrackColor(track, source_it->second.color_id);
+        }
+        track_manager_->SetTrackInput(track, allocation.usb_start - 1, allocation.is_stereo ? 2 : 1);
+        if (source_it->second.soundcheck_capable) {
+            track_manager_->SetTrackHardwareOutput(track, allocation.usb_start - 1, allocation.is_stereo ? 2 : 1);
+        } else {
+            track_manager_->ClearTrackHardwareOutputs(track);
+        }
+
+        std::ostringstream msg;
+        msg << "AUDIOLAB.wing.reaper.virtualsoundcheck: Updated managed track routing for "
+            << source_id_buf << " to " << output_type << " " << allocation.usb_start;
+        if (allocation.is_stereo) {
+            msg << "-" << allocation.usb_end;
+        }
+        msg << ".\n";
+        Log(msg.str());
+    }
+}
+
+void ReaperExtension::ApplyManagedTrackMetadataUpdate(const std::map<int, ManagedChannelDisplayState>& latest_display_states) {
+    if (!track_manager_) {
+        return;
+    }
+
+    ReaProject* proj = EnumProjects(-1, nullptr, 0);
+    if (!proj) {
+        return;
+    }
+
+    const int track_count = CountTracks(proj);
+    for (int i = 0; i < track_count; ++i) {
+        MediaTrack* track = GetTrack(proj, i);
+        if (!track) {
+            continue;
+        }
+
+        char source_id_buf[256]{};
+        if (!GetSetMediaTrackInfo_String(track, kTrackSourceIdExtKey, source_id_buf, false) || source_id_buf[0] == '\0') {
+            continue;
+        }
+
+        int channel_number = 0;
+        if (!ParseChannelSourcePersistentId(source_id_buf, channel_number)) {
+            continue;
+        }
+
+        auto display_it = latest_display_states.find(channel_number);
+        if (display_it == latest_display_states.end() || !display_it->second.readable) {
+            continue;
+        }
+
+        const ManagedChannelDisplayState& display = display_it->second;
+        char track_name_buf[512]{};
+        bool is_stereo_track = false;
+        if (GetSetMediaTrackInfo_String(track, "P_NAME", track_name_buf, false) && track_name_buf[0] != '\0') {
+            const std::string current_name = track_name_buf;
+            is_stereo_track = current_name.size() >= 9 &&
+                              current_name.compare(current_name.size() - 9, 9, " (Stereo)") == 0;
+        }
+
+        const std::string base_name = PreferredChannelTrackName(channel_number, display.name);
+        const std::string next_name = is_stereo_track ? (base_name + " (Stereo)") : base_name;
+        track_manager_->SetTrackName(track, next_name);
+        if (config_.color_tracks && display.color_id >= 0) {
+            track_manager_->SetTrackColor(track, display.color_id);
+        }
+    }
+}
+
+void ReaperExtension::QueueManagedSourceMonitorWarning(const std::string& warning) {
+    std::lock_guard<std::mutex> lock(managed_source_monitor_mutex_);
+    pending_source_monitor_warning_ = warning;
+}
+
+bool ReaperExtension::ReapplyManagedChannelRouting(const std::map<int, ManagedChannelInputState>& latest_states,
+                                                   const std::string& reason) {
+    if (!connected_ || !osc_handler_ || !track_manager_) {
+        return false;
+    }
+
+    const auto channel_display_states = BuildManagedEffectiveDisplayStates(latest_states);
+
+    std::vector<SourceSelectionInfo> selected_sources;
+    selected_sources.reserve(latest_states.size());
+    bool configure_soundcheck_inputs = false;
+    const bool card_mode = (config_.soundcheck_output_mode == "CARD");
+    for (const auto& [channel_number, state] : latest_states) {
+        if (!WingConnector::ManagedSourceMonitor::IsValidState(state)) {
+            continue;
+        }
+
+        ChannelInfo channel_info{};
+        if (!osc_handler_->GetChannelInfo(channel_number, channel_info)) {
+            continue;
+        }
+
+        SourceSelectionInfo selected;
+        selected.kind = SourceKind::Channel;
+        selected.source_number = channel_number;
+        selected.name = StableChannelTrackName(channel_number);
+        auto channel_display_it = channel_display_states.find(channel_number);
+        if (channel_display_it != channel_display_states.end()) {
+            selected.name = PreferredChannelTrackName(channel_number, channel_display_it->second.name);
+            selected.color_id = channel_display_it->second.color_id;
+        } else {
+            selected.color_id = channel_info.color;
+        }
+
+        selected.source_group = state.source_group;
+        selected.source_input = state.source_input;
+        selected.stereo_linked = state.stereo_linked;
+        selected.selected = true;
+        selected.soundcheck_capable = false;
+        if (selected.stereo_linked) {
+            selected.partner_source_group = selected.source_group;
+            selected.partner_source_input = selected.source_input + 1;
+        }
+
+        const bool alt_matches_output = card_mode
+            ? (channel_info.alt_source_group == "CARD" || channel_info.alt_source_group == "CRD")
+            : (channel_info.alt_source_group == "USB");
+        if (alt_matches_output && channel_info.alt_source_input > 0) {
+            selected.soundcheck_capable = true;
+            configure_soundcheck_inputs = true;
+        }
+
+        selected_sources.push_back(selected);
+    }
+
+    if (selected_sources.empty()) {
+        return false;
+    }
+
+    const auto allocations = osc_handler_->CalculateUSBAllocation(selected_sources);
+    osc_handler_->QueryUserSignalInputs(48);
+    osc_handler_->ApplyUSBAllocationAsAlt(allocations, selected_sources, config_.soundcheck_output_mode, configure_soundcheck_inputs);
+    ApplyManagedTrackRoutingUpdate(selected_sources, allocations);
+
+    std::lock_guard<std::mutex> lock(managed_source_monitor_mutex_);
+    managed_monitor_snapshot_ = latest_states;
+    managed_monitor_display_snapshot_ = channel_display_states;
+    status_message_ = "Managed routing refreshed";
+    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Reapplied managed routing after " + reason + ".\n");
+    return true;
+}
+
+void ReaperExtension::ManagedSourceMonitorLoop() {
+    while (managed_source_monitor_running_) {
+        if (suppress_managed_source_monitor_ || !connected_ || !osc_handler_) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(kManagedSourceMonitorPollMs));
+            continue;
+        }
+
+        std::vector<int> channel_numbers;
+        std::map<int, ManagedChannelInputState> previous_snapshot;
+        std::map<int, ManagedChannelDisplayState> previous_display_snapshot;
+        {
+            std::lock_guard<std::mutex> lock(managed_source_monitor_mutex_);
+            if (managed_monitor_channel_numbers_.empty()) {
+                managed_monitor_channel_numbers_ = GetManagedMonitorChannelNumbers();
+            }
+            channel_numbers = managed_monitor_channel_numbers_;
+            previous_snapshot = managed_monitor_snapshot_;
+            previous_display_snapshot = managed_monitor_display_snapshot_;
+        }
+
+        if (channel_numbers.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(kManagedSourceMonitorPollMs));
+            continue;
+        }
+
+        const auto current_snapshot = osc_handler_->QueryManagedChannelInputStatesDirect(channel_numbers);
+        if (current_snapshot.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(kManagedSourceMonitorPollMs));
+            continue;
+        }
+        const auto current_display_snapshot = BuildManagedEffectiveDisplayStates(current_snapshot);
+
+        if (previous_snapshot.empty()) {
+            std::lock_guard<std::mutex> lock(managed_source_monitor_mutex_);
+            managed_monitor_snapshot_ = current_snapshot;
+            managed_monitor_display_snapshot_ = current_display_snapshot;
+            std::this_thread::sleep_for(std::chrono::milliseconds(kManagedSourceMonitorPollMs));
+            continue;
+        }
+
+        const auto decision = WingConnector::ManagedSourceMonitor::ClassifyChange(previous_snapshot, current_snapshot);
+        if (decision.action == WingConnector::ManagedSourceMonitor::Action::WarnTopologyChange) {
+            std::ostringstream warning;
+            warning << "AUDIOLAB.wing.reaper.virtualsoundcheck: Managed channel source topology changed on "
+                    << JoinChannelNumbers(decision.changed_channels)
+                    << ". Review and re-apply setup manually.\n";
+            Log(warning.str());
+            std::ostringstream popup_warning;
+            popup_warning << kProductName << ": managed channel source topology changed on "
+                          << JoinChannelNumbers(decision.changed_channels)
+                          << ". Review and re-apply setup manually.";
+            QueueManagedSourceMonitorWarning(popup_warning.str());
+            status_message_ = "Managed routing warning";
+            std::lock_guard<std::mutex> lock(managed_source_monitor_mutex_);
+            managed_monitor_snapshot_ = current_snapshot;
+            managed_monitor_display_snapshot_ = current_display_snapshot;
+        } else if (decision.action == WingConnector::ManagedSourceMonitor::Action::WarnInvalidSource) {
+            std::ostringstream warning;
+            warning << "AUDIOLAB.wing.reaper.virtualsoundcheck: Managed channel source became unreadable or OFF on "
+                    << JoinChannelNumbers(decision.changed_channels)
+                    << ". Keeping the last applied routing.\n";
+            Log(warning.str());
+            std::ostringstream popup_warning;
+            popup_warning << kProductName << ": managed channel source became unreadable or OFF on "
+                          << JoinChannelNumbers(decision.changed_channels)
+                          << ". Keeping the last applied routing.";
+            QueueManagedSourceMonitorWarning(popup_warning.str());
+            status_message_ = "Managed routing warning";
+            std::lock_guard<std::mutex> lock(managed_source_monitor_mutex_);
+            managed_monitor_snapshot_ = current_snapshot;
+            managed_monitor_display_snapshot_ = current_display_snapshot;
+        } else if (decision.action == WingConnector::ManagedSourceMonitor::Action::ReapplyRouting) {
+            ReapplyManagedChannelRouting(current_snapshot, "managed channel source change");
+        } else {
+            bool display_changed = false;
+            for (const auto& [channel_number, current_display] : current_display_snapshot) {
+                auto previous_it = previous_display_snapshot.find(channel_number);
+                if (previous_it == previous_display_snapshot.end()) {
+                    display_changed = true;
+                    break;
+                }
+                const ManagedChannelDisplayState& previous_display = previous_it->second;
+                if (current_display.name != previous_display.name ||
+                    current_display.color_id != previous_display.color_id ||
+                    current_display.customization_linked != previous_display.customization_linked ||
+                    current_display.readable != previous_display.readable) {
+                    display_changed = true;
+                    break;
+                }
+            }
+            if (display_changed) {
+                std::vector<int> link_changed_channels;
+                for (const auto& [channel_number, current_display] : current_display_snapshot) {
+                    auto previous_it = previous_display_snapshot.find(channel_number);
+                    if (previous_it == previous_display_snapshot.end()) {
+                        continue;
+                    }
+                    if (current_display.customization_linked != previous_it->second.customization_linked) {
+                        link_changed_channels.push_back(channel_number);
+                    }
+                }
+                if (!link_changed_channels.empty()) {
+                    std::ostringstream msg;
+                    msg << "AUDIOLAB.wing.reaper.virtualsoundcheck: Managed channel customization link changed on "
+                        << JoinChannelNumbers(link_changed_channels)
+                        << ". Refreshing track metadata.\n";
+                    Log(msg.str());
+                }
+                ApplyManagedTrackMetadataUpdate(current_display_snapshot);
+                std::lock_guard<std::mutex> lock(managed_source_monitor_mutex_);
+                managed_monitor_snapshot_ = current_snapshot;
+                managed_monitor_display_snapshot_ = current_display_snapshot;
+                status_message_ = "Managed metadata refreshed";
+            }
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(kManagedSourceMonitorPollMs));
+    }
+}
+
 void ReaperExtension::DisconnectFromWing() {
     if (!connected_) {
         return;
     }
+    StopManagedSourceMonitor();
     StopSelectedChannelBridge();
     StopExternalRecorderFollow();
     last_known_reaper_recording_state_ = false;
@@ -1737,7 +2174,7 @@ void ReaperExtension::RefreshTracks() {
         ShowMessageBox(
             "Not connected to Wing console.\n"
             "Please connect first.",
-            "AUDIOLAB.wing.reaper.virtualsoundcheck",
+            "WINGuard",
             0
         );
         return;
@@ -1774,7 +2211,7 @@ void ReaperExtension::ShowSettings() {
         std::string new_ip = ip_buffer;
         if (new_ip.empty() || new_ip.length() > 15) {
             ShowMessageBox("Invalid IP address.\nPlease use format: 192.168.0.1", 
-                          "AUDIOLAB.wing.reaper.virtualsoundcheck - Error", 0);
+                          "WINGuard - Error", 0);
             return;
         }
         // Update configuration
@@ -1793,7 +2230,7 @@ void ReaperExtension::ShowSettings() {
                 "Changes will apply on next connection.",
                 config_.wing_ip.c_str());
             
-            ShowMessageBox(success_msg, "AUDIOLAB.wing.reaper.virtualsoundcheck - Settings Saved", 0);
+            ShowMessageBox(success_msg, "WINGuard - Settings Saved", 0);
             Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Settings updated from dialog\n");
         } else {
             char error_msg[512];
@@ -1801,21 +2238,23 @@ void ReaperExtension::ShowSettings() {
                       "Failed to save settings to:\n%s\n\nPlease check file permissions.",
                       config_path.c_str());
             ShowMessageBox(error_msg,
-                          "AUDIOLAB.wing.reaper.virtualsoundcheck - Error", 0);
+                          "WINGuard - Error", 0);
         }
     }
     #else
     // Fallback for non-macOS platforms
     char settings_msg[512];
     snprintf(settings_msg, sizeof(settings_msg), 
-        "AUDIOLAB.wing.reaper.virtualsoundcheck Settings\n\n"
+        "WINGuard Settings\n\n"
+        "%s\n\n"
         "Current Configuration:\n"
         "  Wing IP: %s\n"
         "  OSC Port: 2223\n"
         "\nEdit config.json to change settings.\n",
+        "Guard every take. Faster setup, safer record(w)ing!",
         config_.wing_ip.c_str());
     
-    ShowMessageBox(settings_msg, "AUDIOLAB.wing.reaper.virtualsoundcheck - Settings", 0);
+    ShowMessageBox(settings_msg, "WINGuard - Settings", 0);
     #endif
 }
 
@@ -1832,6 +2271,174 @@ void ReaperExtension::EnableMonitoring(bool enable) {
 int ReaperExtension::GetProjectTrackCount() const {
     ReaProject* proj = EnumProjects(-1, nullptr, 0);
     return proj ? CountTracks(proj) : 0;
+}
+
+std::vector<int> ReaperExtension::GetManagedMonitorChannelNumbers() const {
+    std::set<int> channel_numbers;
+    for (const auto& source_id : config_.last_selected_source_ids) {
+        int channel_number = 0;
+        if (ParseChannelSourcePersistentId(source_id, channel_number)) {
+            channel_numbers.insert(channel_number);
+        }
+    }
+
+    if (track_manager_) {
+        const auto existing_tracks = track_manager_->FindExistingWingTracks();
+        for (MediaTrack* track : existing_tracks) {
+            if (!track) {
+                continue;
+            }
+            char source_id_buf[256]{};
+            if (!GetSetMediaTrackInfo_String(track, kTrackSourceIdExtKey, source_id_buf, false) ||
+                source_id_buf[0] == '\0') {
+                continue;
+            }
+            int channel_number = 0;
+            if (ParseChannelSourcePersistentId(source_id_buf, channel_number)) {
+                channel_numbers.insert(channel_number);
+            }
+        }
+    }
+
+    return std::vector<int>(channel_numbers.begin(), channel_numbers.end());
+}
+
+std::map<int, ManagedChannelDisplayState> ReaperExtension::BuildManagedEffectiveDisplayStates(
+    const std::map<int, ManagedChannelInputState>& latest_states) const {
+    std::map<int, ManagedChannelDisplayState> effective_states;
+    if (!osc_handler_) {
+        return effective_states;
+    }
+
+    std::vector<int> channel_numbers;
+    channel_numbers.reserve(latest_states.size());
+    std::set<std::pair<std::string, int>> display_sources;
+    std::map<int, std::pair<std::string, int>> channel_display_sources;
+    for (const auto& [channel_number, state] : latest_states) {
+        if (!WingConnector::ManagedSourceMonitor::IsValidState(state)) {
+            continue;
+        }
+        channel_numbers.push_back(channel_number);
+        const std::pair<std::string, int> display_source =
+            ResolveDisplaySource(osc_handler_.get(), state.source_group, state.source_input);
+        channel_display_sources[channel_number] = display_source;
+        display_sources.insert(display_source);
+        if (state.stereo_linked) {
+            display_sources.insert({display_source.first, display_source.second + 1});
+        }
+    }
+
+    const auto channel_display_states = osc_handler_->QueryManagedChannelDisplayStatesDirect(channel_numbers);
+    std::vector<std::string> source_name_addresses;
+    std::vector<std::string> source_color_addresses;
+    source_name_addresses.reserve(display_sources.size());
+    source_color_addresses.reserve(display_sources.size());
+    for (const auto& [grp, in] : display_sources) {
+        source_name_addresses.push_back("/io/in/" + grp + "/" + std::to_string(in) + "/name");
+        source_color_addresses.push_back("/io/in/" + grp + "/" + std::to_string(in) + "/col");
+    }
+    const auto source_names = osc_handler_->QueryStringAddressesDirect(source_name_addresses, 120, 20);
+    const auto source_colors = osc_handler_->QueryIntAddressesDirect(source_color_addresses, 120, 20);
+
+    for (const auto& [channel_number, state] : latest_states) {
+        if (!WingConnector::ManagedSourceMonitor::IsValidState(state)) {
+            continue;
+        }
+
+        ManagedChannelDisplayState effective{};
+        effective.channel_number = channel_number;
+
+        auto channel_it = channel_display_states.find(channel_number);
+        if (channel_it != channel_display_states.end()) {
+            effective = channel_it->second;
+        }
+        if (effective.customization_linked) {
+            // When the channel follows source customization, naming/color must come
+            // only from the current source endpoint. If that source name is empty,
+            // later fallback logic should resolve to CH<n>, not a stale channel/USB label.
+            effective.name.clear();
+            effective.color_id = -1;
+        }
+
+        auto source_it = channel_display_sources.find(channel_number);
+        if (effective.customization_linked && source_it != channel_display_sources.end()) {
+            const std::string source_name_path =
+                "/io/in/" + source_it->second.first + "/" + std::to_string(source_it->second.second) + "/name";
+            const std::string source_color_path =
+                "/io/in/" + source_it->second.first + "/" + std::to_string(source_it->second.second) + "/col";
+
+            auto source_name_it = source_names.find(source_name_path);
+            if (source_name_it != source_names.end() &&
+                !source_name_it->second.empty()) {
+                effective.name = source_name_it->second;
+            }
+
+            auto source_color_it = source_colors.find(source_color_path);
+            if (source_color_it != source_colors.end()) {
+                effective.color_id = source_color_it->second;
+            }
+        }
+
+        effective.readable = !effective.name.empty() || effective.color_id >= 0;
+        effective_states[channel_number] = effective;
+    }
+
+    return effective_states;
+}
+
+namespace {
+std::map<int, ManagedChannelInputState> BuildChannelInputStateMap(const std::map<int, ChannelInfo>& channel_data) {
+    std::map<int, ManagedChannelInputState> states;
+    for (const auto& [channel_number, ch] : channel_data) {
+        ManagedChannelInputState state;
+        state.channel_number = channel_number;
+        state.source_group = ch.primary_source_group;
+        state.source_input = ch.primary_source_input;
+        state.stereo_linked = ch.stereo_linked;
+        state.readable = !ch.primary_source_group.empty() && ch.primary_source_input > 0;
+        states[channel_number] = state;
+    }
+    return states;
+}
+}
+
+void ReaperExtension::RefreshManagedSourceMonitorScope() {
+    std::lock_guard<std::mutex> lock(managed_source_monitor_mutex_);
+    managed_monitor_channel_numbers_ = GetManagedMonitorChannelNumbers();
+    managed_monitor_snapshot_.clear();
+    managed_monitor_display_snapshot_.clear();
+}
+
+void ReaperExtension::StartManagedSourceMonitor() {
+    if (managed_source_monitor_running_ || !connected_ || !osc_handler_) {
+        return;
+    }
+
+    RefreshManagedSourceMonitorScope();
+    {
+        std::lock_guard<std::mutex> lock(managed_source_monitor_mutex_);
+        if (managed_monitor_channel_numbers_.empty()) {
+            return;
+        }
+    }
+
+    managed_source_monitor_running_ = true;
+    managed_source_monitor_thread_ = std::make_unique<std::thread>(&ReaperExtension::ManagedSourceMonitorLoop, this);
+    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Managed source monitor started.\n");
+}
+
+void ReaperExtension::StopManagedSourceMonitor() {
+    if (!managed_source_monitor_running_) {
+        return;
+    }
+    managed_source_monitor_running_ = false;
+    if (managed_source_monitor_thread_ && managed_source_monitor_thread_->joinable()) {
+        managed_source_monitor_thread_->join();
+    }
+    managed_source_monitor_thread_.reset();
+    std::lock_guard<std::mutex> lock(managed_source_monitor_mutex_);
+    managed_monitor_snapshot_.clear();
+    managed_monitor_display_snapshot_.clear();
 }
 
 void ReaperExtension::StartAutoRecordMonitor() {
@@ -2405,7 +3012,7 @@ void ReaperExtension::RouteMainLRToCardForSDRecording() {
     if (!connected_ || !osc_handler_) {
         ShowMessageBox(
             "Not connected to Wing console.\nPlease connect first.",
-            "AUDIOLAB.wing.reaper.virtualsoundcheck",
+            "WINGuard",
             0
         );
         return;
@@ -2439,7 +3046,7 @@ void ReaperExtension::RouteMainLRToCardForSDRecording() {
                                    " 1/2 routing from Main LR.\nVerify the routing on WING before starting recorder capture.";
     ShowMessageBox(
         verify_msg.c_str(),
-        "AUDIOLAB.wing.reaper.virtualsoundcheck",
+        "WINGuard",
         0
     );
 }
@@ -2553,7 +3160,7 @@ void ReaperExtension::ConfigureVirtualSoundcheck() {
     if (!connected_ || !osc_handler_) {
         ShowMessageBox(
             "Please connect to Wing console first",
-            "AUDIOLAB.wing.reaper.virtualsoundcheck - Virtual Soundcheck",
+            "WINGuard - Virtual Soundcheck",
             0
         );
         return;
@@ -2565,7 +3172,7 @@ void ReaperExtension::ConfigureVirtualSoundcheck() {
     if (sources.empty()) {
         ShowMessageBox(
             "No selectable sources available.\nPlease refresh tracks first.",
-            "AUDIOLAB.wing.reaper.virtualsoundcheck - Virtual Soundcheck",
+            "WINGuard - Virtual Soundcheck",
             0
         );
         return;
@@ -2602,7 +3209,7 @@ void ReaperExtension::ToggleSoundcheckMode() {
     if (!connected_ || !osc_handler_) {
         ShowMessageBox(
             "Please connect to Wing console first",
-            "AUDIOLAB.wing.reaper.virtualsoundcheck - Soundcheck Mode",
+            "WINGuard - Soundcheck Mode",
             0
         );
         return;

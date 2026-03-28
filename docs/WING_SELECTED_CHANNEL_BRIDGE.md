@@ -2,6 +2,8 @@
 
 This document records the current implementation decision for bringing the selected-channel bridge into this plugin.
 
+WINGuard tagline: Guard every take. Faster setup, safer record(w)ing!
+
 ## Product Direction
 
 This repository is no longer only a virtual soundcheck helper. It is better treated as a broader WING integration plugin for REAPER.
@@ -15,9 +17,9 @@ That affects the bridge work in two ways:
 
 Current action split:
 
-- `Behringer Wing: Configure Virtual Soundcheck/Recording`
+- `WINGuard: Configure Virtual Soundcheck/Recording`
   - main connection, source discovery, track setup, soundcheck, MIDI CC transport, and recorder-related workflows
-- `Behringer Wing: Selected Channel Bridge Setup`
+- `WINGuard: Selected Channel Bridge Setup`
   - dedicated entry point for bridge-specific notes, validation status, and future bridge configuration
 
 This keeps bridge work isolated from the existing recording and soundcheck behavior.
@@ -34,7 +36,7 @@ That means the bridge no longer needs to wait on a generic â€œcan this be read?â
 
 - use polling of `/$ctl/$stat/selidx`
 - treat event subscription as a later optimization
-- reuse the same connected WING session as the main Wing Connector action instead of letting the bridge action guess its own target
+- reuse the same connected WING session as the main WINGuard action instead of letting the bridge action guess its own target
 
 The remaining runtime work is mapping the selected strip id into the intended logical bridge target and sending the corresponding MIDI output.
 
@@ -50,6 +52,6 @@ The remaining runtime work is mapping the selected strip id into the intended lo
 
 Near-term rename direction for user-facing text:
 
-- favor `Wing Connector` or `WING Connector` over `Virtual Soundcheck` for the main plugin entry point
+- favor `WINGuard` over `Virtual Soundcheck` for the main plugin entry point
 - keep `Virtual Soundcheck` only where it describes that specific feature
 - keep internal identifiers stable where changing them would break existing REAPER action bindings or packaging unexpectedly

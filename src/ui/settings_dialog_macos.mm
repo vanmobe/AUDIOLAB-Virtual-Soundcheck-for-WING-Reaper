@@ -19,8 +19,8 @@ bool ShowSettingsDialog(const char* current_ip,
     @autoreleasepool {
         // Create alert dialog
         NSAlert* alert = [[NSAlert alloc] init];
-        [alert setMessageText:@"AUDIOLAB.wing.reaper.virtualsoundcheck Settings"];
-        [alert setInformativeText:@"Edit your Wing Console settings.\nRemember to enable OSC on the Wing (Setup > Network > OSC)."];
+        [alert setMessageText:@"WINGuard Settings"];
+        [alert setInformativeText:@"Guard every take. Faster setup, safer record(w)ing!\n\nEdit your WING console settings.\nRemember to enable OSC on the WING (Setup > Network > OSC)."];
         [alert setAlertStyle:NSAlertStyleInformational];
         
         // Create view for input fields

@@ -23,11 +23,41 @@ echo "Platform: ${PLATFORM}"
 echo ""
 
 # Configuration
-BUILD_TYPE=${1:-Release}
+BUILD_TYPE="Release"
+WITH_TESTS=0
+
+usage() {
+    echo "Usage: $0 [Release|Debug|RelWithDebInfo|MinSizeRel] [--with-tests]"
+}
+
+for arg in "$@"; do
+    case "$arg" in
+        --with-tests)
+            WITH_TESTS=1
+            ;;
+        Release|Debug|RelWithDebInfo|MinSizeRel)
+            BUILD_TYPE="$arg"
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Error: unknown argument '$arg'"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
 BUILD_DIR="build"
+if [ "${WITH_TESTS}" -eq 1 ]; then
+    BUILD_DIR="build-tests"
+fi
 INSTALL_DIR="install"
 
 echo "Build type: ${BUILD_TYPE}"
+echo "Run tests: $([ "${WITH_TESTS}" -eq 1 ] && echo "yes" || echo "no")"
 echo "Build directory: ${BUILD_DIR}"
 echo ""
 
@@ -52,6 +82,7 @@ echo "Found ${CMAKE_VERSION}"
 echo ""
 echo "Running CMake configuration..."
 cmake .. -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+         -DBUILD_TESTS=$([ "${WITH_TESTS}" -eq 1 ] && echo ON || echo OFF) \
          -DCMAKE_INSTALL_PREFIX=../${INSTALL_DIR}
 
 if [ $? -ne 0 ]; then
@@ -73,6 +104,12 @@ fi
 echo ""
 echo "Installing to ${INSTALL_DIR}..."
 cmake --install . --config ${BUILD_TYPE}
+
+if [ "${WITH_TESTS}" -eq 1 ]; then
+    echo ""
+    echo "Running tests..."
+    ctest --output-on-failure --build-config ${BUILD_TYPE}
+fi
 
 cd ..
 

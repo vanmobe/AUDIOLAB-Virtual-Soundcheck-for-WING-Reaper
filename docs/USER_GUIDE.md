@@ -1,12 +1,14 @@
-# Wing Connector User Guide
+# WINGuard User Guide
 
 Practical guide for daily operation in REAPER with a Behringer WING.
+
+> Guard every take. Faster setup, safer record(w)ing!
 
 ## 1. Validate Installation
 
 1. Restart REAPER after installing the plugin.
 2. Confirm the extension is available in REAPER.
-3. Open `Extensions -> Behringer Wing: Configure Virtual Soundcheck/Recording`.
+3. Open `Extensions -> WINGuard: Configure Virtual Soundcheck/Recording`.
 
 ![Extensions actions](images/actions-menu.png)
 
@@ -14,12 +16,12 @@ If the menu is missing, verify plugin files are in your REAPER `UserPlugins` fol
 
 ## 2. Connect to WING and Fetch Channels
 
-1. In the Wing Connector dialog, use `Scan` to discover WING consoles.
+1. In the WINGuard dialog, use `Scan` to discover WING consoles.
 2. If scan fails, enter a manual WING IP in the fallback field.
 3. Start connect/fetch.
 4. Wait for channel discovery and track creation/update.
 
-![Wing Connector dialog](images/wing-connector.png)
+![WINGuard dialog](images/wing-connector.png)
 
 Expected result:
 
@@ -50,10 +52,12 @@ From the same dialog flow you can:
 - toggle soundcheck mode (ALT source switching)
 - stage source or recording-mode changes first, then apply them explicitly after reviewing the summary
 - confirm the live setup validation mark before switching modes or enabling MIDI actions
+- after applying a channel-based setup, the plugin keeps watching those managed WING channels and refreshes routing automatically if a channel changes to another mono/stereo-compatible source
+- if a managed channel changes between mono and stereo source topology, the plugin warns and leaves the routing unchanged until you review and re-apply setup manually
 
 Selected-channel bridge work is intentionally separate:
 
-- use `Extensions -> Behringer Wing: Selected Channel Bridge Setup` for bridge-specific notes and status
+- use `Extensions -> WINGuard: Selected Channel Bridge Setup` for bridge-specific notes and status
 - do not expect bridge behavior to be part of the live soundcheck/recording flow
 
 ![Actions/config view](images/action-config.png)
@@ -68,7 +72,7 @@ Selected-channel bridge work is intentionally separate:
 
 ## 6. MIDI Button Control (Automatic)
 
-Built-in CC mapping used by AUDIOLAB.wing.reaper.virtualsoundcheck:
+Built-in CC mapping used by WINGuard:
 
 | CC # | Action |
 |------|--------|

@@ -38,6 +38,7 @@ public:
     
     // Track configuration
     void SetTrackColor(MediaTrack* track, int wing_color_id);
+    bool TrackColorMatches(MediaTrack* track, int wing_color_id);
     void SetTrackName(MediaTrack* track, const std::string& name);
     void SetTrackInput(MediaTrack* track, int input_index, int num_channels = 1);
     bool SetTrackHardwareOutput(MediaTrack* track, int output_index, int num_channels = 1);
@@ -50,18 +51,24 @@ private:
     
     // Static color lookup table (Wing console colors)
     static constexpr ColorRGB WING_COLORS[] = {
-        { 50, 120, 255},  // 0:  Blue
-        {100, 200, 255},  // 1:  Light Blue
-        { 20,  40, 180},  // 2:  Dark Blue
-        {  0, 160, 190},  // 3:  Sea Blue / Teal
-        { 50, 210,  50},  // 4:  Green
-        { 20, 130,  20},  // 5:  Dark Green
-        {230, 210,  20},  // 6:  Yellow
-        {240, 130,  20},  // 7:  Orange
-        {220,  40,  40},  // 8:  Red
-        {230, 110, 180},  // 9:  Pink
-        {160,  30, 230},  // 10: Purple
-        { 90,  10, 140},  // 11: Dark Purple
+        { 68,  77, 112},  // 0
+        { 50,  85, 207},  // 1
+        {145, 116, 171},  // 2
+        { 29,  97,  88},  // 3
+        { 92, 181,  78},  // 4
+        {141, 247, 146},  // 5
+        {233, 240,  72},  // 6
+        {171, 139, 116},  // 7
+        {235,  53,  16},  // 8
+        {235, 138, 162},  // 9
+        {245, 113, 174},  // 10
+        {213, 158, 240},  // 11
+        {232, 211,  19},  // 12
+        { 78, 160, 181},  // 13
+        {207, 115,  50},  // 14
+        {102, 186, 167},  // 15
+        {115, 111, 112},  // 16
+        {212, 209, 207},  // 17
     };
     static constexpr int NUM_WING_COLORS = sizeof(WING_COLORS) / sizeof(ColorRGB);
     
