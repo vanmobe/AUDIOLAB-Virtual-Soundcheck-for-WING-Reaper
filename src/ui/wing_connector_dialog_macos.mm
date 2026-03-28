@@ -22,33 +22,6 @@ namespace {
 
 constexpr bool kShowBridgeTabInMainUI = false;
 
-std::string FormatNumberRanges(std::vector<int> numbers, const std::string& prefix = "") {
-    if (numbers.empty()) {
-        return "none";
-    }
-    std::sort(numbers.begin(), numbers.end());
-    numbers.erase(std::unique(numbers.begin(), numbers.end()), numbers.end());
-
-    std::ostringstream out;
-    for (size_t i = 0; i < numbers.size();) {
-        int start = numbers[i];
-        int end = start;
-        while (i + 1 < numbers.size() && numbers[i + 1] == end + 1) {
-            ++i;
-            end = numbers[i];
-        }
-        if (out.tellp() > 0) {
-            out << ", ";
-        }
-        out << prefix << start;
-        if (end != start) {
-            out << "-" << prefix << end;
-        }
-        ++i;
-    }
-    return out.str();
-}
-
 std::vector<WingConnector::ChannelSelectionInfo> SelectedSourcesOnly(
     const std::vector<WingConnector::ChannelSelectionInfo>& all_sources) {
     std::vector<WingConnector::ChannelSelectionInfo> selected;
@@ -58,66 +31,6 @@ std::vector<WingConnector::ChannelSelectionInfo> SelectedSourcesOnly(
         }
     }
     return selected;
-}
-
-std::string BuildPendingSetupDetails(const std::vector<WingConnector::ChannelSelectionInfo>& pending_sources,
-                                     const std::string& pending_output_mode,
-                                     bool pending_replace_existing,
-                                     bool pending_setup_soundcheck,
-                                     bool reuse_existing_selection,
-                                     WingOSC* osc) {
-    std::ostringstream summary_builder;
-    const auto selected_sources = SelectedSourcesOnly(pending_sources);
-    std::vector<int> alt_channels;
-    for (const auto& source : selected_sources) {
-        if (source.kind == SourceKind::Channel && source.soundcheck_capable) {
-            alt_channels.push_back(source.source_number);
-        }
-    }
-
-    summary_builder << "The following will happen:\n";
-    if (reuse_existing_selection || selected_sources.empty()) {
-        summary_builder << "- The current applied source selection will be reused.\n";
-        summary_builder << "- Wing " << pending_output_mode << " routing will be rebuilt for that selection.\n";
-        summary_builder << "- REAPER routing will be updated to match the rebuilt " << pending_output_mode << " mapping.\n";
-    } else {
-        const auto allocations = osc ? osc->CalculateUSBAllocation(selected_sources) : std::vector<USBAllocation>{};
-        int first_slot = std::numeric_limits<int>::max();
-        int last_slot = 0;
-        for (const auto& alloc : allocations) {
-            if (!alloc.allocation_note.empty() && alloc.allocation_note.find("ERROR") != std::string::npos) {
-                continue;
-            }
-            first_slot = std::min(first_slot, alloc.usb_start);
-            last_slot = std::max(last_slot, alloc.usb_end);
-        }
-
-        summary_builder << "- Wing " << pending_output_mode << " outputs";
-        if (last_slot > 0) {
-            summary_builder << " " << first_slot << "-" << last_slot;
-        }
-        summary_builder << " will be cleared and remapped for " << selected_sources.size() << " selected sources.\n";
-
-        if (pending_setup_soundcheck && !alt_channels.empty()) {
-            summary_builder << "- Wing " << pending_output_mode << " inputs";
-            if (last_slot > 0) {
-                summary_builder << " " << first_slot << "-" << last_slot;
-            }
-            summary_builder << " will be renamed/reconfigured for REAPER playback.\n";
-            summary_builder << "- ALT routing will be rebuilt for " << FormatNumberRanges(alt_channels, "CH") << ".\n";
-        } else {
-            summary_builder << "- ALT routing will not be rebuilt because soundcheck is off or no channel sources are selected.\n";
-        }
-
-        summary_builder << "- REAPER will " << (pending_replace_existing ? "replace existing managed tracks and rebuild routing" : "keep existing tracks and append the new routing")
-                        << ".\n";
-    }
-
-    summary_builder << "\nTo change this before applying:\n";
-    summary_builder << "- Click `Edit Pending Sources…` to review the source draft.\n";
-    summary_builder << "- Switch `USB/CARD` to stage a different recording I/O mode.\n";
-    summary_builder << "- Click `Discard` to abandon the staged changes.";
-    return summary_builder.str();
 }
 
 }  // namespace
@@ -294,6 +207,16 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     NSButton* connectButton;
     NSImageView* validationIconView;
     NSTextField* validationStatusLabel;
+    NSTabViewItem* consoleTabItem;
+    NSTabViewItem* reaperTabItem;
+    NSTabViewItem* wingTabItemRef;
+    NSTabViewItem* controlIntegrationTabItem;
+    NSTabViewItem* bridgeTabItemRef;
+    NSTextField* consoleTabStatusLabel;
+    NSTextField* reaperTabStatusLabel;
+    NSTextField* wingTabStatusLabel;
+    NSTextField* controlIntegrationTabStatusLabel;
+    NSTextField* bridgeTabStatusLabel;
     NSTextField* pendingSetupSummaryLabel;
     NSTextField* setupReadinessDetailLabel;
     NSTextField* setupSoundcheckDescriptionLabel;
@@ -377,6 +300,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 - (void)updateAutomationDetails;
 - (void)updateRecorderStatusLabel;
 - (void)updateMidiStatusLabel;
+- (void)updateTabStatusIndicators;
 - (void)clearPendingSetupDraft:(BOOL)resetMode;
 - (void)setHeaderStatusIcon:(NSImageView*)iconView symbolName:(NSString*)symbolName fallback:(NSString*)fallback color:(NSColor*)color;
 - (void)setConnectionStatusText:(NSString*)text color:(NSColor*)color connected:(BOOL)connected;
@@ -452,7 +376,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
                                                                NSWindowStyleMaskResizable)
                                                        backing:NSBackingStoreBuffered
                                                          defer:NO];
-    [window setTitle:@"Behringer Wing"];
+    [window setTitle:@"WINGuard"];
     [window setMinSize:NSMakeSize(820, 560)];
     [window center];
     
@@ -532,6 +456,17 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [toggleSoundcheckButton release];
     [connectButton release];
     [validationIconView release];
+    [validationStatusLabel release];
+    [consoleTabItem release];
+    [reaperTabItem release];
+    [wingTabItemRef release];
+    [controlIntegrationTabItem release];
+    [bridgeTabItemRef release];
+    [consoleTabStatusLabel release];
+    [reaperTabStatusLabel release];
+    [wingTabStatusLabel release];
+    [controlIntegrationTabStatusLabel release];
+    [bridgeTabStatusLabel release];
     [setupSoundcheckDescriptionLabel release];
     [setupReadinessDetailLabel release];
     [settingsTabView release];
@@ -616,7 +551,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     
     // Title
     NSTextField* titleLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(70, yPos + 20, 400, 24)];
-    [titleLabel setStringValue:@"Behringer Wing"];
+    [titleLabel setStringValue:@"WINGuard"];
     [titleLabel setFont:[NSFont systemFontOfSize:18 weight:NSFontWeightMedium]];
     [titleLabel setBezeled:NO];
     [titleLabel setEditable:NO];
@@ -628,7 +563,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     
     // Subtitle
     NSTextField* subtitleLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(70, yPos, 400, 18)];
-    [subtitleLabel setStringValue:@"Configure virtual soundcheck / recording"];
+    [subtitleLabel setStringValue:@"Guard every take. Faster setup, safer record(w)ing!"];
     [subtitleLabel setFont:[NSFont systemFontOfSize:12]];
     [subtitleLabel setBezeled:NO];
     [subtitleLabel setEditable:NO];
@@ -808,37 +743,52 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     NSScrollView* advancedTabScrollView = makeScrollableTab(&advancedTabView, advancedTabHeight);
     NSScrollView* bridgeTabScrollView = makeScrollableTab(&bridgeTabView, bridgeTabHeight);
 
-    NSTabViewItem* setupItem = [[NSTabViewItem alloc] initWithIdentifier:@"console"];
-    [setupItem setLabel:@"Console"];
-    [setupItem setView:setupTabScrollView];
-    [settingsTabView addTabViewItem:setupItem];
+    consoleTabItem = [[NSTabViewItem alloc] initWithIdentifier:@"console"];
+    [consoleTabItem setLabel:@"Console"];
+    [consoleTabItem setView:setupTabScrollView];
+    [settingsTabView addTabViewItem:consoleTabItem];
 
-    NSTabViewItem* automationItem = [[NSTabViewItem alloc] initWithIdentifier:@"reaper"];
-    [automationItem setLabel:@"Reaper"];
-    [automationItem setView:automationTabScrollView];
-    [settingsTabView addTabViewItem:automationItem];
+    reaperTabItem = [[NSTabViewItem alloc] initWithIdentifier:@"reaper"];
+    [reaperTabItem setLabel:@"Reaper"];
+    [reaperTabItem setView:automationTabScrollView];
+    [settingsTabView addTabViewItem:reaperTabItem];
 
-    NSTabViewItem* wingItem = [[NSTabViewItem alloc] initWithIdentifier:@"wing"];
-    [wingItem setLabel:@"Wing"];
-    [wingItem setView:wingTabScrollView];
-    [settingsTabView addTabViewItem:wingItem];
+    wingTabItemRef = [[NSTabViewItem alloc] initWithIdentifier:@"wing"];
+    [wingTabItemRef setLabel:@"Wing"];
+    [wingTabItemRef setView:wingTabScrollView];
+    [settingsTabView addTabViewItem:wingTabItemRef];
 
-    NSTabViewItem* advancedItem = [[NSTabViewItem alloc] initWithIdentifier:@"control-integration"];
-    [advancedItem setLabel:@"Control Integration"];
-    [advancedItem setView:advancedTabScrollView];
-    [settingsTabView addTabViewItem:advancedItem];
+    controlIntegrationTabItem = [[NSTabViewItem alloc] initWithIdentifier:@"control-integration"];
+    [controlIntegrationTabItem setLabel:@"Control Integration"];
+    [controlIntegrationTabItem setView:advancedTabScrollView];
+    [settingsTabView addTabViewItem:controlIntegrationTabItem];
 
     if (kShowBridgeTabInMainUI) {
-        NSTabViewItem* bridgeItem = [[NSTabViewItem alloc] initWithIdentifier:@"bridge"];
-        [bridgeItem setLabel:@"Bridge"];
-        [bridgeItem setView:bridgeTabScrollView];
-        [settingsTabView addTabViewItem:bridgeItem];
+        bridgeTabItemRef = [[NSTabViewItem alloc] initWithIdentifier:@"bridge"];
+        [bridgeTabItemRef setLabel:@"Bridge"];
+        [bridgeTabItemRef setView:bridgeTabScrollView];
+        [settingsTabView addTabViewItem:bridgeTabItemRef];
     }
 
     const CGFloat labelX = 20;
     const CGFloat controlX = 220;
     const CGFloat labelW = 180;
     const CGFloat setupWidth = 760;
+    const CGFloat statusChipX = 620;
+
+    auto makeTabStatusLabel = ^NSTextField*(NSView* parent, CGFloat y) {
+        NSTextField* label = [[NSTextField alloc] initWithFrame:NSMakeRect(statusChipX, y, 140, 20)];
+        [label setStringValue:@"Inactive"];
+        [label setFont:[NSFont systemFontOfSize:12.5 weight:NSFontWeightBold]];
+        [label setBezeled:NO];
+        [label setEditable:NO];
+        [label setSelectable:NO];
+        [label setBackgroundColor:[NSColor clearColor]];
+        [label setAlignment:NSTextAlignmentRight];
+        [label setTextColor:[NSColor secondaryLabelColor]];
+        [parent addSubview:label];
+        return label;
+    };
 
     CGFloat setupY = setupTabHeight - tabTopInset - introLabelHeight;
     addIntroCallout(setupTabView, NSMakeRect(20, setupY, 760, introLabelHeight),
@@ -854,6 +804,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [setupConnectionHeader setBackgroundColor:[NSColor clearColor]];
     [setupConnectionHeader setTextColor:[NSColor labelColor]];
     [setupTabView addSubview:setupConnectionHeader];
+    consoleTabStatusLabel = makeTabStatusLabel(setupTabView, setupY);
     setupY -= 32;
     addInfoLabel(setupTabView, NSMakeRect(20, setupY, 760, 30),
                  @"Use Scan to find a console on the network, or enter its IP manually if discovery comes back empty-handed.",
@@ -941,6 +892,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [routingHeader setBackgroundColor:[NSColor clearColor]];
     [routingHeader setTextColor:[NSColor labelColor]];
     [automationTabView addSubview:routingHeader];
+    reaperTabStatusLabel = makeTabStatusLabel(automationTabView, reaperY);
     reaperY -= 32;
     addInfoLabel(automationTabView, NSMakeRect(20, reaperY, 760, 30),
                  @"Setup Live Recording can replace the current REAPER track list, rebuild the selected recording paths, and keep soundcheck switching limited to prepared channels.",
@@ -1225,6 +1177,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [recorderHeader setBackgroundColor:[NSColor clearColor]];
     [recorderHeader setTextColor:[NSColor labelColor]];
     [wingTabView addSubview:recorderHeader];
+    wingTabStatusLabel = makeTabStatusLabel(wingTabView, wingY);
     wingY -= 32;
     addInfoLabel(wingTabView, NSMakeRect(20, wingY, 590, 30),
                  @"These options decide which Wing recorder is prepared and whether it follows the auto-trigger or REAPER transport.",
@@ -1379,6 +1332,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [bridgeHeader setBackgroundColor:[NSColor clearColor]];
     [bridgeHeader setTextColor:[NSColor labelColor]];
     [bridgeTabView addSubview:bridgeHeader];
+    bridgeTabStatusLabel = makeTabStatusLabel(bridgeTabView, bridgeY);
     bridgeY -= 32;
 
     bridgeEnableCheckbox = [[NSButton alloc] initWithFrame:NSMakeRect(20, bridgeY + 4, 420, 20)];
@@ -1571,6 +1525,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [midiHeader setBackgroundColor:[NSColor clearColor]];
     [midiHeader setTextColor:[NSColor labelColor]];
     [advancedTabView addSubview:midiHeader];
+    controlIntegrationTabStatusLabel = makeTabStatusLabel(advancedTabView, advY);
     advY -= 32;
     addInfoLabel(advancedTabView, NSMakeRect(20, advY, 590, 30),
                  @"These options map Wing user controls to REAPER actions and warning feedback for operators who want hands on the console.",
@@ -1876,6 +1831,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
                    symbolName:(connected ? @"dot.radiowaves.left.and.right" : @"bolt.horizontal.circle")
                      fallback:(connected ? NSImageNameStatusAvailable : NSImageNameStatusNone)
                         color:resolvedColor];
+    [self updateTabStatusIndicators];
 }
 
 - (void)setValidationStatusText:(NSString*)text color:(NSColor*)color {
@@ -1888,7 +1844,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [validationStatusLabel setTextColor:[NSColor labelColor]];
     NSString* symbolName = @"questionmark.circle";
     NSString* fallbackName = NSImageNameStatusNone;
-    if ([resolvedText containsString:@"Enabled + Autostart"]) {
+    if ([resolvedText containsString:@"Enabled + Record"]) {
         symbolName = @"bolt.badge.checkmark";
         fallbackName = NSImageNameStatusAvailable;
     } else if ([resolvedText containsString:@"Enabled + Warning Trigger"]) {
@@ -1905,6 +1861,75 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
         fallbackName = NSImageNameCaution;
     }
     [self setHeaderStatusIcon:validationIconView symbolName:symbolName fallback:fallbackName color:resolvedColor];
+}
+
+- (void)updateTabStatusIndicators {
+    auto setTabStatus = ^(NSTextField* label, NSString* text, NSColor* color) {
+        if (!label) {
+            return;
+        }
+        [label setStringValue:text ? text : @"Inactive"];
+        [label setTextColor:color ? color : [NSColor secondaryLabelColor]];
+    };
+
+    NSString* consoleText = isConnected ? @"Connected" : @"Inactive";
+    NSColor* consoleColor = isConnected ? [NSColor systemGreenColor] : [NSColor secondaryLabelColor];
+
+    auto& config = ReaperExtension::Instance().GetConfig();
+    NSString* reaperText = @"Inactive";
+    NSColor* reaperColor = [NSColor secondaryLabelColor];
+    if (validationInProgress || hasPendingSetupDraft ||
+        pendingOutputMode != config.soundcheck_output_mode || automationSettingsDirty) {
+        reaperText = @"Pending";
+        reaperColor = [NSColor systemOrangeColor];
+    } else if (liveSetupValidated && config.auto_record_enabled && !config.auto_record_warning_only) {
+        reaperText = @"Ready";
+        reaperColor = [NSColor systemGreenColor];
+    } else if (liveSetupValidated || isConnected) {
+        reaperText = @"Attention";
+        reaperColor = [NSColor systemOrangeColor];
+    }
+
+    NSString* wingText = @"Inactive";
+    NSColor* wingColor = [NSColor secondaryLabelColor];
+    if (recorderSettingsDirty) {
+        wingText = @"Pending";
+        wingColor = [NSColor systemOrangeColor];
+    } else if (config.recorder_coordination_enabled && config.sd_auto_record_with_reaper && config.auto_record_enabled) {
+        wingText = @"Ready";
+        wingColor = [NSColor systemGreenColor];
+    } else if (config.recorder_coordination_enabled) {
+        wingText = @"Enabled";
+        wingColor = [NSColor systemOrangeColor];
+    }
+
+    NSString* controlText = @"Inactive";
+    NSColor* controlColor = [NSColor secondaryLabelColor];
+    if (midiActionsDirty || latestMidiValidationState == ValidationState::Warning) {
+        controlText = @"Pending";
+        controlColor = [NSColor systemOrangeColor];
+    } else if (ReaperExtension::Instance().IsMidiActionsEnabled()) {
+        controlText = @"Ready";
+        controlColor = [NSColor systemGreenColor];
+    }
+
+    [consoleTabItem setLabel:@"Console"];
+    [reaperTabItem setLabel:@"Reaper"];
+    [wingTabItemRef setLabel:@"Wing"];
+    [controlIntegrationTabItem setLabel:@"Control Integration"];
+
+    setTabStatus(consoleTabStatusLabel, consoleText, consoleColor);
+    setTabStatus(reaperTabStatusLabel, reaperText, reaperColor);
+    setTabStatus(wingTabStatusLabel, wingText, wingColor);
+    setTabStatus(controlIntegrationTabStatusLabel, controlText, controlColor);
+
+    if (kShowBridgeTabInMainUI) {
+        [bridgeTabItemRef setLabel:@"Bridge"];
+        const BOOL bridgeEnabled = ReaperExtension::Instance().GetConfig().bridge_enabled;
+        setTabStatus(bridgeTabStatusLabel,
+                     bridgeEnabled ? @"Enabled" : @"Inactive",
+                     bridgeEnabled ? [NSColor systemGreenColor] : [NSColor secondaryLabelColor]);
+    }
 }
 
 - (void)updateValidationStatusLabel {
@@ -1925,10 +1950,10 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
         if (config.auto_record_enabled) {
             [self setValidationStatusText:(config.auto_record_warning_only
                                            ? @"Reaper Recorder: Enabled + Warning Trigger"
-                                           : @"Reaper Recorder: Enabled + Autostart")
-                                   color:(config.auto_record_warning_only ? [NSColor systemOrangeColor] : [NSColor systemBlueColor])];
+                                           : @"Reaper Recorder: Enabled + Record")
+                                   color:(config.auto_record_warning_only ? [NSColor systemOrangeColor] : [NSColor systemGreenColor])];
         } else {
-            [self setValidationStatusText:@"Reaper Recorder: Enabled" color:[NSColor systemGreenColor]];
+            [self setValidationStatusText:@"Reaper Recorder: Enabled" color:[NSColor systemOrangeColor]];
         }
         return;
     }
@@ -1937,6 +1962,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     } else {
         [self setValidationStatusText:@"Reaper Recorder: Not Ready" color:[NSColor secondaryLabelColor]];
     }
+    [self updateTabStatusIndicators];
 }
 
 - (void)updatePendingSetupUI {
@@ -2090,6 +2116,9 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
         detail = [NSString stringWithFormat:@"Auto Trigger is blocked until recording setup validates. Next step: %s",
                   latestLiveSetupValidationDetails.empty() ? "prepare sources and routing in the Reaper tab." : latestLiveSetupValidationDetails.c_str()];
         detailColor = isConnected ? [NSColor systemOrangeColor] : [NSColor secondaryLabelColor];
+    } else if (!ReaperExtension::Instance().GetConfig().auto_record_enabled) {
+        detail = @"Auto Trigger is currently off. The recorder setup is configured, but trigger monitoring will stay idle until you turn it on and apply the change.";
+        detailColor = [NSColor systemOrangeColor];
     } else {
         detail = @"Auto Trigger is clear to run with the current recording and virtual soundcheck setup.";
         detailColor = [NSColor systemGreenColor];
@@ -2166,16 +2195,27 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
         fallback = NSImageNameRefreshTemplate;
         iconColor = [NSColor systemOrangeColor];
     } else if (config.recorder_coordination_enabled) {
-        text = config.sd_auto_record_with_reaper
-            ? @"Wing Recorder: Enabled + Autostart"
-            : @"Wing Recorder: Enabled";
-        symbol = config.sd_auto_record_with_reaper ? @"play.circle.fill" : @"record.circle.fill";
-        fallback = NSImageNameStatusAvailable;
-        iconColor = config.sd_auto_record_with_reaper ? [NSColor systemBlueColor] : [NSColor systemGreenColor];
+        if (config.sd_auto_record_with_reaper && config.auto_record_enabled) {
+            text = @"Wing Recorder: Enabled + Autostart";
+            symbol = @"play.circle.fill";
+            fallback = NSImageNameStatusAvailable;
+            iconColor = [NSColor systemGreenColor];
+        } else if (config.sd_auto_record_with_reaper) {
+            text = @"Wing Recorder: Enabled";
+            symbol = @"checkmark.circle.fill";
+            fallback = NSImageNameCaution;
+            iconColor = [NSColor systemOrangeColor];
+        } else {
+            text = @"Wing Recorder: Enabled";
+            symbol = @"record.circle.fill";
+            fallback = NSImageNameStatusAvailable;
+            iconColor = [NSColor systemGreenColor];
+        }
     }
     [recorderStatusLabel setStringValue:text];
     [recorderStatusLabel setTextColor:[NSColor labelColor]];
     [self setHeaderStatusIcon:recorderStatusIconView symbolName:symbol fallback:fallback color:iconColor];
+    [self updateTabStatusIndicators];
 }
 
 - (void)updateMidiStatusLabel {
@@ -2208,6 +2248,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [midiStatusLabel setStringValue:text];
     [midiStatusLabel setTextColor:[NSColor labelColor]];
     [self setHeaderStatusIcon:midiStatusIconView symbolName:symbol fallback:fallback color:iconColor];
+    [self updateTabStatusIndicators];
 }
 
 - (void)clearPendingSetupDraft:(BOOL)resetMode {
@@ -2302,7 +2343,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [autoRecordModeControl setEnabled:autoTriggerEnabled];
     [thresholdField setEnabled:autoTriggerEnabled];
     [holdField setEnabled:autoTriggerEnabled];
-    [applyAutomationButton setEnabled:isWorking ? NO : YES];
+    [applyAutomationButton setEnabled:(!isWorking && liveSetupControlsEnabled && automationSettingsDirty) ? YES : NO];
     [recorderTargetControl setEnabled:recorderControlsEnabled];
     [recorderEnableControl setEnabled:sdControlsEnabled];
     [recorderFollowControl setEnabled:recorderFollowEnabled];
@@ -2423,6 +2464,10 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     NSString* cleaned = [message stringByReplacingOccurrencesOfString:@"AUDIOLAB.wing.reaper.virtualsoundcheck: "
                                                            withString:@""];
     cleaned = [cleaned stringByReplacingOccurrencesOfString:@"AUDIOLAB.wing.reaper.virtualsoundcheck:"
+                                                 withString:@""];
+    cleaned = [cleaned stringByReplacingOccurrencesOfString:@"WINGuard: "
+                                                 withString:@""];
+    cleaned = [cleaned stringByReplacingOccurrencesOfString:@"WINGuard:"
                                                  withString:@""];
     NSString* currentText = [activityLogView string];
     NSString* newText = [currentText stringByAppendingString:cleaned];
@@ -2640,48 +2685,6 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
         return;
     }
 
-    const std::string details = BuildPendingSetupDetails(
-        pendingSetupChannels,
-        pendingOutputMode,
-        pendingReplaceExisting,
-        pendingSetupSoundcheck,
-        pendingSetupUsesExistingSelection,
-        ReaperExtension::Instance().GetOSCHandler());
-    NSString* detailText = [NSString stringWithUTF8String:details.c_str()];
-    NSAlert* alert = [[NSAlert alloc] init];
-    [alert setMessageText:@"Apply pending live setup?"];
-    [alert setInformativeText:@"Review the staged routing changes below before applying them."];
-    NSScrollView* detailScrollView = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 620, 180)];
-    [detailScrollView setHasVerticalScroller:YES];
-    [detailScrollView setHasHorizontalScroller:NO];
-    [detailScrollView setBorderType:NSBezelBorder];
-    NSTextView* detailTextView = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 600, 180)];
-    [detailTextView setEditable:NO];
-    [detailTextView setSelectable:NO];
-    [detailTextView setRichText:NO];
-    [detailTextView setImportsGraphics:NO];
-    [detailTextView setVerticallyResizable:YES];
-    [detailTextView setHorizontallyResizable:NO];
-    [detailTextView setAutoresizingMask:NSViewWidthSizable];
-    [detailTextView setFont:[NSFont systemFontOfSize:12]];
-    [detailTextView setTextContainerInset:NSMakeSize(10, 10)];
-    [[detailTextView textContainer] setContainerSize:NSMakeSize(600, CGFLOAT_MAX)];
-    [[detailTextView textContainer] setWidthTracksTextView:YES];
-    [detailTextView setString:detailText];
-    NSSize textSize = [[detailTextView layoutManager] usedRectForTextContainer:[detailTextView textContainer]].size;
-    NSRect detailFrame = [detailTextView frame];
-    detailFrame.size.height = std::max<CGFloat>(180.0, textSize.height + 24.0);
-    [detailTextView setFrame:detailFrame];
-    [detailScrollView setDocumentView:detailTextView];
-    [alert setAccessoryView:detailScrollView];
-    [alert addButtonWithTitle:@"Apply"];
-    [alert addButtonWithTitle:@"Cancel"];
-    [alert setAlertStyle:NSAlertStyleWarning];
-    if ([alert runModal] != NSAlertFirstButtonReturn) {
-        [self appendToLog:@"Apply pending setup cancelled.\n"];
-        return;
-    }
-
     [self appendToLog:[NSString stringWithFormat:@"\n=== Applying staged live setup (%s mode) ===\n",
                       pendingOutputMode.c_str()]];
     [self setWorkingState:YES];
@@ -2788,43 +2791,6 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     if (pendingMidiActionsEnabled && !liveSetupValidated) {
         [self appendToLog:@"Validate live setup before applying MIDI shortcut changes.\n"];
         [self updateMidiActionsUI];
-        return;
-    }
-
-    NSString* detailText = [NSString stringWithFormat:@"The WING user-control buttons on layer %ld will be reprogrammed for the %s state.\n\n- ON programs the configured REAPER shortcut buttons and validates the mapping.\n- OFF clears the plugin-managed shortcut button assignments.\n- This happens only after you confirm.",
-                           (long)[[ccLayerDropdown selectedItem] tag],
-                           pendingMidiActionsEnabled ? "ON" : "OFF"];
-    NSAlert* alert = [[NSAlert alloc] init];
-    [alert setMessageText:@"Apply MIDI shortcut changes?"];
-    [alert setInformativeText:@"Review the staged MIDI shortcut changes below before applying them."];
-    NSScrollView* detailScrollView = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 620, 150)];
-    [detailScrollView setHasVerticalScroller:YES];
-    [detailScrollView setHasHorizontalScroller:NO];
-    [detailScrollView setBorderType:NSBezelBorder];
-    NSTextView* detailTextView = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 600, 150)];
-    [detailTextView setEditable:NO];
-    [detailTextView setSelectable:NO];
-    [detailTextView setRichText:NO];
-    [detailTextView setImportsGraphics:NO];
-    [detailTextView setVerticallyResizable:YES];
-    [detailTextView setHorizontallyResizable:NO];
-    [detailTextView setAutoresizingMask:NSViewWidthSizable];
-    [detailTextView setFont:[NSFont systemFontOfSize:12]];
-    [detailTextView setTextContainerInset:NSMakeSize(10, 10)];
-    [[detailTextView textContainer] setContainerSize:NSMakeSize(600, CGFLOAT_MAX)];
-    [[detailTextView textContainer] setWidthTracksTextView:YES];
-    [detailTextView setString:detailText];
-    NSSize textSize = [[detailTextView layoutManager] usedRectForTextContainer:[detailTextView textContainer]].size;
-    NSRect detailFrame = [detailTextView frame];
-    detailFrame.size.height = std::max<CGFloat>(150.0, textSize.height + 24.0);
-    [detailTextView setFrame:detailFrame];
-    [detailScrollView setDocumentView:detailTextView];
-    [alert setAccessoryView:detailScrollView];
-    [alert addButtonWithTitle:@"Apply"];
-    [alert addButtonWithTitle:@"Cancel"];
-    [alert setAlertStyle:NSAlertStyleWarning];
-    if ([alert runModal] != NSAlertFirstButtonReturn) {
-        [self appendToLog:@"Apply MIDI shortcut changes cancelled.\n"];
         return;
     }
 
@@ -3250,7 +3216,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
                                                            NSWindowStyleMaskResizable)
                                                    backing:NSBackingStoreBuffered
                                                      defer:NO];
-    [debugLogWindow setTitle:@"Behringer Wing Debug Log"];
+    [debugLogWindow setTitle:@"WINGuard Debug Log"];
     [debugLogWindow setMinSize:NSMakeSize(520, 220)];
 
     NSView* logContentView = [debugLogWindow contentView];
@@ -3266,8 +3232,10 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [self syncPendingAutomationSettingsFromUI];
     extension.PauseAutoRecordForSetup();
     automationSettingsDirty = YES;
+    [self updateValidationStatusLabel];
     [self updateAutoTriggerControlsEnabled];
     [self updateAutomationDetails];
+    [self updateRecorderStatusLabel];
     [self appendToLog:[NSString stringWithFormat:@"Auto Trigger settings pending: %s, mode=%s, source=REAPER, threshold=%.1f dBFS, hold=%.1fs, track=%d, ccLayer=%d\n",
                        config.auto_record_enabled ? "ON" : "OFF",
                        config.auto_record_warning_only ? "WARNING" : "RECORD",
@@ -3306,8 +3274,10 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     extension.SyncMidiActionsToWing();
 
     automationSettingsDirty = NO;
+    [self updateValidationStatusLabel];
     [self updateAutoTriggerControlsEnabled];
     [self updateAutomationDetails];
+    [self updateRecorderStatusLabel];
     [self appendToLog:[NSString stringWithFormat:@"Applied Auto Trigger settings: %s, mode=%s, source=REAPER, threshold=%.1f dBFS, hold=%.1fs, track=%d, ccLayer=%d\n",
                        config.auto_record_enabled ? "ON" : "OFF",
                        config.auto_record_warning_only ? "WARNING" : "RECORD",
@@ -3329,46 +3299,6 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     NSString* recorderLabel = ([recorderTargetControl selectedSegment] == 1)
         ? @"USB recorder"
         : @"SD card (WING-LIVE)";
-    NSString* detailText = [NSString stringWithFormat:@"The following recorder coordination changes will be applied:\n\n- Recorder coordination: %s\n- Recorder target: %@\n- Follow auto-trigger recordings: %s\n- Recorder source pair: MAIN %d/%d\n\nIf connected and recorder coordination is enabled, the WING recorder routing will be refreshed after you confirm.",
-                           config.recorder_coordination_enabled ? "ON" : "OFF",
-                           recorderLabel,
-                           config.sd_auto_record_with_reaper ? "ON" : "OFF",
-                           config.sd_lr_left_input,
-                           config.sd_lr_right_input];
-    NSAlert* alert = [[NSAlert alloc] init];
-    [alert setMessageText:@"Apply recorder settings?"];
-    [alert setInformativeText:@"Review the staged recorder coordination changes below before applying them."];
-    NSScrollView* detailScrollView = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 620, 150)];
-    [detailScrollView setHasVerticalScroller:YES];
-    [detailScrollView setHasHorizontalScroller:NO];
-    [detailScrollView setBorderType:NSBezelBorder];
-    NSTextView* detailTextView = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 600, 150)];
-    [detailTextView setEditable:NO];
-    [detailTextView setSelectable:NO];
-    [detailTextView setRichText:NO];
-    [detailTextView setImportsGraphics:NO];
-    [detailTextView setVerticallyResizable:YES];
-    [detailTextView setHorizontallyResizable:NO];
-    [detailTextView setAutoresizingMask:NSViewWidthSizable];
-    [detailTextView setFont:[NSFont systemFontOfSize:12]];
-    [detailTextView setTextContainerInset:NSMakeSize(10, 10)];
-    [[detailTextView textContainer] setContainerSize:NSMakeSize(600, CGFLOAT_MAX)];
-    [[detailTextView textContainer] setWidthTracksTextView:YES];
-    [detailTextView setString:detailText];
-    NSSize textSize = [[detailTextView layoutManager] usedRectForTextContainer:[detailTextView textContainer]].size;
-    NSRect detailFrame = [detailTextView frame];
-    detailFrame.size.height = std::max<CGFloat>(150.0, textSize.height + 24.0);
-    [detailTextView setFrame:detailFrame];
-    [detailScrollView setDocumentView:detailTextView];
-    [alert setAccessoryView:detailScrollView];
-    [alert addButtonWithTitle:@"Apply"];
-    [alert addButtonWithTitle:@"Cancel"];
-    [alert setAlertStyle:NSAlertStyleWarning];
-    if ([alert runModal] != NSAlertFirstButtonReturn) {
-        [self appendToLog:@"Apply recorder settings cancelled.\n"];
-        return;
-    }
-
     extension.ApplyAutoRecordSettings();
     if (extension.IsConnected()) {
         if (config.recorder_coordination_enabled) {

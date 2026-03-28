@@ -153,6 +153,15 @@ else()
     else()
         file(GLOB OSCPACK_PLATFORM_SOURCES "lib/oscpack/ip/posix/*.cpp")
     endif()
+
+    if(APPLE)
+        set_source_files_properties(
+            ${OSCPACK_SOURCES}
+            ${OSCPACK_PLATFORM_SOURCES}
+            PROPERTIES
+            COMPILE_OPTIONS "-Wno-deprecated-declarations"
+        )
+    endif()
     
     target_sources(reaper_wingconnector PRIVATE 
         ${OSCPACK_SOURCES} 
@@ -215,5 +224,6 @@ message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
 # Optional: Build tests
 option(BUILD_TESTS "Build test programs" OFF)
 if(BUILD_TESTS)
+    enable_testing()
     add_subdirectory(tests)
 endif()

@@ -30,6 +30,7 @@ struct SourceSelectionInfo {
     SourceKind kind = SourceKind::Channel;
     int source_number = 0;
     std::string name;
+    int color_id = -1;
     std::string source_group;
     int source_input = 0;
     std::string partner_name;
@@ -38,6 +39,22 @@ struct SourceSelectionInfo {
     bool stereo_linked = false;
     bool selected = false;
     bool soundcheck_capable = false;
+};
+
+struct ManagedChannelInputState {
+    int channel_number = 0;
+    std::string source_group;
+    int source_input = 0;
+    bool stereo_linked = false;
+    bool readable = false;
+};
+
+struct ManagedChannelDisplayState {
+    int channel_number = 0;
+    std::string name;
+    int color_id = -1;
+    bool customization_linked = false;
+    bool readable = false;
 };
 
 // Channel data structure
@@ -181,6 +198,8 @@ public:
                                                        int total_timeout_ms = 150,
                                                        int idle_timeout_ms = 25) const;
     bool GetSelectedStripIndex(int& strip_index_one_based) const;
+    std::map<int, ManagedChannelInputState> QueryManagedChannelInputStatesDirect(const std::vector<int>& channel_numbers) const;
+    std::map<int, ManagedChannelDisplayState> QueryManagedChannelDisplayStatesDirect(const std::vector<int>& channel_numbers) const;
     
     // Additional Wing commands
     void GetConsoleInfo();

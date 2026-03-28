@@ -1,6 +1,8 @@
-# AUDIOLAB Wing Connector for REAPER
+# WINGuard for REAPER
 
-AUDIOLAB Wing Connector for REAPER is a C++ REAPER extension that connects to a Behringer WING console over OSC/UDP and automates track setup, channel sync, virtual soundcheck routing, and broader WING-driven workflows.
+WINGuard is a C++ REAPER extension that connects to a Behringer WING console over OSC/UDP and automates track setup, channel sync, virtual soundcheck routing, and broader WING-driven workflows.
+
+> Guard every take. Faster setup, safer record(w)ing!
 
 - Status: Production-ready
 - Platforms: macOS, Windows, Linux
@@ -31,7 +33,7 @@ Platform-specific steps are in [INSTALL.md](INSTALL.md).
 
 1. Install the plugin for your platform.
 2. Restart REAPER.
-3. Open `Extensions -> Behringer Wing: Configure Virtual Soundcheck/Recording`.
+3. Open `Extensions -> WINGuard: Configure Virtual Soundcheck/Recording`.
 4. Select a discovered WING or enter the WING IP manually, then fetch channels.
 5. Ensure the WING OSC port on the console is set to `2223` (the plugin uses `2223`).
 6. Confirm tracks are created/updated in REAPER.
@@ -44,6 +46,7 @@ See [QUICKSTART.md](QUICKSTART.md) for the 5-minute flow.
 - Channel metadata sync (name, color, source-related info)
 - Optional real-time monitoring for updates
 - Virtual soundcheck setup for channels (USB/CARD routing + staged apply flow + validation status)
+- Automatic managed-channel source monitoring after apply, with warning-only mono/stereo topology changes
 - Record-source selection for channels, buses, and matrices
 - Optional WING MIDI CC control (Play/Record/Stop/Markers/Virtual Soundcheck) with automatic button command assignment
 - Separate selected-channel bridge action and planning path for SuperRack-style integration work

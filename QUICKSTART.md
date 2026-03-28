@@ -2,6 +2,8 @@
 
 This guide gets you from install to first successful channel sync.
 
+> WINGuard: Guard every take. Faster setup, safer record(w)ing!
+
 ## 1. Prepare the WING
 
 On the Behringer WING console:
@@ -12,7 +14,7 @@ On the Behringer WING console:
 4. Note the WING IP address.
 5. If you plan to use button MIDI actions, set `External MIDI Control` to `USB`.
 
-## 2. Install AUDIOLAB.wing.reaper.virtualsoundcheck
+## 2. Install WINGuard
 
 Use the installer for your OS from GitHub Releases:
 
@@ -23,18 +25,18 @@ See [INSTALL.md](INSTALL.md) if needed.
 ## 3. Launch REAPER and Connect
 
 1. Restart REAPER after installation.
-2. Open `Extensions -> Behringer Wing: Configure Virtual Soundcheck/Recording`.
+2. Open `Extensions -> WINGuard: Configure Virtual Soundcheck/Recording`.
 3. Select a discovered WING or enter the WING IP manually.
 4. Run channel fetch / connect in the dialog.
 
 Expected result:
 
-- AUDIOLAB.wing.reaper.virtualsoundcheck connects successfully.
+- WINGuard connects successfully.
 - REAPER tracks are created or refreshed from WING channel data.
 
 ## 4. Optional: Configure Virtual Soundcheck
 
-Inside the AUDIOLAB.wing.reaper.virtualsoundcheck dialog:
+Inside the WINGuard dialog:
 
 1. Configure soundcheck output mode (`USB` or `CARD`).
 2. Run recording setup for the sources you want to capture.

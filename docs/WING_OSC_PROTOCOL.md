@@ -1,6 +1,6 @@
 # WING OSC Protocol Notes
 
-This document is a practical protocol reference for AUDIOLAB.wing.reaper.virtualsoundcheck.
+This document is a practical protocol reference for WINGuard.
 
 It is split into:
 
@@ -15,7 +15,7 @@ It is split into:
 
 ## Implemented Subset (Plugin-Relevant)
 
-AUDIOLAB.wing.reaper.virtualsoundcheck relies on core channel metadata and routing-related queries to:
+WINGuard relies on core channel metadata and routing-related queries to:
 
 - discover channels
 - read/update names and colors
@@ -59,7 +59,7 @@ The WING OSC ecosystem contains many additional paths beyond what this plugin re
 - `/scene/*`
 - `/config/*`
 
-These are useful for future features, but should not be interpreted as fully implemented behavior in AUDIOLAB.wing.reaper.virtualsoundcheck.
+These are useful for future features, but should not be interpreted as fully implemented behavior in WINGuard.
 
 ## Sources and Validation
 

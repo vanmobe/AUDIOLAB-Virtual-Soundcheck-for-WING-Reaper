@@ -1,6 +1,8 @@
-# AUDIOLAB.wing.reaper.virtualsoundcheck Installation Guide
+# WINGuard Installation Guide
 
-AUDIOLAB.wing.reaper.virtualsoundcheck provides ready-to-use installers for all supported desktop platforms.
+WINGuard provides ready-to-use installers for all supported desktop platforms.
+
+> Guard every take. Faster setup, safer record(w)ing!
 
 - macOS: `.pkg`
 - Windows: `.exe`
@@ -29,7 +31,7 @@ Platform requirements:
 1. Download the latest `AUDIOLAB-Virtual-Soundcheck-v*-macOS.pkg`.
 2. Double-click the package and follow prompts.
 3. Restart REAPER.
-4. Open `Extensions -> AUDIOLAB.wing.reaper.virtualsoundcheck`.
+4. Open `Extensions -> WINGuard: Configure Virtual Soundcheck/Recording`.
 
 Default plugin path:
 
@@ -40,7 +42,7 @@ Default plugin path:
 1. Download the latest `AUDIOLAB-Virtual-Soundcheck-v*-Windows-Setup.exe`.
 2. Run the installer and complete setup.
 3. Restart REAPER.
-4. Open `Extensions -> AUDIOLAB.wing.reaper.virtualsoundcheck`.
+4. Open `Extensions -> WINGuard: Configure Virtual Soundcheck/Recording`.
 
 Default plugin path:
 
@@ -56,7 +58,7 @@ sudo apt install ./AUDIOLAB-Virtual-Soundcheck-v<version>-<arch>.deb
 ```
 
 3. Restart REAPER.
-4. Open `Extensions -> AUDIOLAB.wing.reaper.virtualsoundcheck`.
+4. Open `Extensions -> WINGuard: Configure Virtual Soundcheck/Recording`.
 
 Default plugin path:
 
@@ -64,7 +66,7 @@ Default plugin path:
 
 ## First Run
 
-1. Go to `Extensions -> Behringer Wing: Configure Virtual Soundcheck/Recording`.
+1. Go to `Extensions -> WINGuard: Configure Virtual Soundcheck/Recording`.
 2. Set WING IP and port (default `2223`).
 3. Fetch channels and confirm track creation.
 

@@ -132,7 +132,7 @@ static void RegisterCommands() {
     action.uniqueSectionId = 0;
     // Keep the legacy action id stable so existing REAPER bindings continue to resolve.
     action.idStr = "_AUDIOLAB_VIRTUALSOUNDCHECK_MAIN_DIALOG";
-    action.name = "Behringer Wing: Configure Virtual Soundcheck/Recording";
+    action.name = "WINGuard: Configure Virtual Soundcheck/Recording";
     g_cmd_main_dialog = g_rec->Register("custom_action", &action);
     
     Logger::Debug("Main dialog action registered with ID: %d", g_cmd_main_dialog);
@@ -141,7 +141,7 @@ static void RegisterCommands() {
     memset(&bridge_action, 0, sizeof(bridge_action));
     bridge_action.uniqueSectionId = 0;
     bridge_action.idStr = "_AUDIOLAB_WING_SELECTED_CHANNEL_BRIDGE";
-    bridge_action.name = "Behringer Wing: Selected Channel Bridge Setup";
+    bridge_action.name = "WINGuard: Selected Channel Bridge Setup";
     g_cmd_selected_channel_bridge = g_rec->Register("custom_action", &bridge_action);
 
     Logger::Debug("Selected channel bridge action registered with ID: %d", g_cmd_selected_channel_bridge);

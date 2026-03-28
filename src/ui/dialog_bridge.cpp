@@ -430,7 +430,7 @@ std::string SelectedChannelBridgeSummary() {
     const auto& config = extension.GetConfig();
     std::ostringstream summary;
     summary
-        << "SuperRack Bridge Summary\n\n"
+        << "WINGuard Bridge Summary\n\n"
         << selection_status << "\n"
         << "Bridge status: " << extension.GetBridgeStatusSummary() << "\n"
         << "Enabled: " << (config.bridge_enabled ? "yes" : "no") << "\n"
@@ -451,9 +451,9 @@ void RunCrossPlatformDialog() {
         const bool connected = extension.ConnectToWing();
         if (!connected) {
             ShowMessageBox(
-                "AUDIOLAB.wing.reaper.virtualsoundcheck could not connect.\n\n"
+                "WINGuard could not connect.\n\n"
                 "Set wing_ip in config.json and ensure OSC is enabled on the console.",
-                "AUDIOLAB.wing.reaper.virtualsoundcheck",
+                "WINGuard",
                 0);
             return;
         }
@@ -463,13 +463,13 @@ void RunCrossPlatformDialog() {
     if (sources.empty()) {
         ShowMessageBox(
             "Connected, but no selectable sources were discovered.",
-            "AUDIOLAB.wing.reaper.virtualsoundcheck",
+            "WINGuard",
             0);
         return;
     }
 
     ShowMessageBox(BuildSourceCatalog(sources).c_str(),
-                   "Behringer Wing: Source Selection Help",
+                   "WINGuard: Source Selection Help",
                    0);
 
     char values[4096];
@@ -479,7 +479,7 @@ void RunCrossPlatformDialog() {
                   "SOUNDCHECK",
                   1);
 
-    if (!GetUserInputs("Wing Setup Review",
+    if (!GetUserInputs("WINGuard Setup Review",
                        3,
                        "Source selection (ALL_CH/ALL/ALL_SC or ranges),Mode (SOUNDCHECK/RECORD),Replace managed tracks (1/0)",
                        values,
@@ -490,7 +490,7 @@ void RunCrossPlatformDialog() {
     const auto parts = SplitDelimited(values, ',');
     if (parts.size() != 3) {
         ShowMessageBox("Expected 3 values: selection, mode, replace flag.",
-                       "AUDIOLAB.wing.reaper.virtualsoundcheck",
+                       "WINGuard",
                        0);
         return;
     }
@@ -499,7 +499,7 @@ void RunCrossPlatformDialog() {
     std::string selection_error;
     if (!ParseSelectionSpec(parts[0], sources, selected_sources, selection_error)) {
         ShowMessageBox(selection_error.c_str(),
-                       "AUDIOLAB.wing.reaper.virtualsoundcheck",
+                       "WINGuard",
                        0);
         return;
     }
@@ -515,7 +515,7 @@ void RunCrossPlatformDialog() {
         setup_soundcheck = false;
     } else {
         ShowMessageBox("Mode must be SOUNDCHECK or RECORD.",
-                       "AUDIOLAB.wing.reaper.virtualsoundcheck",
+                       "WINGuard",
                        0);
         return;
     }
@@ -523,18 +523,18 @@ void RunCrossPlatformDialog() {
     bool replace_existing = true;
     if (!ParseOnOffFlag(parts[2], replace_existing)) {
         ShowMessageBox("Replace managed tracks must be 1/0, ON/OFF, YES/NO, or TRUE/FALSE.",
-                       "AUDIOLAB.wing.reaper.virtualsoundcheck",
+                       "WINGuard",
                        0);
         return;
     }
 
     ShowMessageBox(BuildSelectionSummary(selected_sources, setup_soundcheck, replace_existing).c_str(),
-                   "Behringer Wing: Review Pending Setup",
+                   "WINGuard: Review Pending Setup",
                    0);
 
     char confirm_values[32];
     std::snprintf(confirm_values, sizeof(confirm_values), "%d", 0);
-    if (!GetUserInputs("Apply Wing Setup",
+    if (!GetUserInputs("Apply WINGuard Setup",
                        1,
                        "Type 1 to apply this setup now, or 0 to cancel",
                        confirm_values,
@@ -544,14 +544,14 @@ void RunCrossPlatformDialog() {
     bool apply_now = false;
     if (!ParseOnOffFlag(confirm_values, apply_now) || !apply_now) {
         ShowMessageBox("Setup cancelled before any routing changes were applied.",
-                       "AUDIOLAB.wing.reaper.virtualsoundcheck",
+                       "WINGuard",
                        0);
         return;
     }
 
     extension.SetupSoundcheckFromSelection(selected_sources, setup_soundcheck, replace_existing);
-    ShowMessageBox("Wing setup applied. Reopen the action to review or stage another selection.",
-                   "AUDIOLAB.wing.reaper.virtualsoundcheck",
+    ShowMessageBox("WINGuard setup applied. Reopen the action to review or stage another selection.",
+                   "WINGuard",
                    0);
 }
 #endif
@@ -571,7 +571,7 @@ bool ShowBridgeSetupWizard() {
         }
     }
     output_help << "\nMapping format: CH1=10;BUS1=20;MAIN1=30;MTX1=40";
-    ShowMessageBox(output_help.str().c_str(), "Behringer Wing: SuperRack Bridge", 0);
+    ShowMessageBox(output_help.str().c_str(), "WINGuard: Selected Channel Bridge", 0);
 
     char values[4096];
     std::snprintf(values, sizeof(values), "%d,%s,%d,%s,%d,%d",
@@ -582,7 +582,7 @@ bool ShowBridgeSetupWizard() {
                   config.bridge_enabled ? 1 : 0,
                   config.bridge_mappings.empty() ? 60 : config.bridge_mappings.front().midi_value);
 
-    if (!GetUserInputs("SuperRack Bridge Setup",
+    if (!GetUserInputs("WINGuard Bridge Setup",
                        6,
                        "MIDI output index,Behavior (NOTE_ON/NOTE_ON_OFF/PROGRAM),MIDI channel (1-16),Mappings,Enable bridge (0/1),Test MIDI value",
                        values,
@@ -593,7 +593,7 @@ bool ShowBridgeSetupWizard() {
     const auto parts = SplitDelimited(values, ',');
     if (parts.size() != 6) {
         ShowMessageBox("Expected 6 values from the bridge setup dialog.",
-                       "Behringer Wing: SuperRack Bridge",
+                       "WINGuard: Selected Channel Bridge",
                        0);
         return false;
     }
@@ -609,7 +609,7 @@ bool ShowBridgeSetupWizard() {
         test_value = std::stoi(parts[5]);
     } catch (...) {
         ShowMessageBox("MIDI output, channel, enable flag, and test value must be integers.",
-                       "Behringer Wing: SuperRack Bridge",
+                       "WINGuard: Selected Channel Bridge",
                        0);
         return false;
     }
@@ -620,25 +620,25 @@ bool ShowBridgeSetupWizard() {
     });
     if (behavior != "NOTE_ON" && behavior != "NOTE_ON_OFF" && behavior != "PROGRAM") {
         ShowMessageBox("Behavior must be NOTE_ON, NOTE_ON_OFF, or PROGRAM.",
-                       "Behringer Wing: SuperRack Bridge",
+                       "WINGuard: Selected Channel Bridge",
                        0);
         return false;
     }
     if (output_index < -1 || output_index >= static_cast<int>(outputs.size())) {
         ShowMessageBox("MIDI output index is out of range for the detected outputs.",
-                       "Behringer Wing: SuperRack Bridge",
+                       "WINGuard: Selected Channel Bridge",
                        0);
         return false;
     }
     if (midi_channel < 1 || midi_channel > 16) {
         ShowMessageBox("MIDI channel must be between 1 and 16.",
-                       "Behringer Wing: SuperRack Bridge",
+                       "WINGuard: Selected Channel Bridge",
                        0);
         return false;
     }
     if (test_value < 0 || test_value > 127) {
         ShowMessageBox("Test MIDI value must be between 0 and 127.",
-                       "Behringer Wing: SuperRack Bridge",
+                       "WINGuard: Selected Channel Bridge",
                        0);
         return false;
     }
@@ -646,7 +646,7 @@ bool ShowBridgeSetupWizard() {
     std::vector<BridgeMapping> parsed_mappings;
     std::string mapping_error;
     if (!ParseMappingSpec(parts[3], parsed_mappings, mapping_error)) {
-        ShowMessageBox(mapping_error.c_str(), "Behringer Wing: SuperRack Bridge", 0);
+        ShowMessageBox(mapping_error.c_str(), "WINGuard: Selected Channel Bridge", 0);
         return false;
     }
 
@@ -659,7 +659,7 @@ bool ShowBridgeSetupWizard() {
     const std::string config_path = WingConfig::GetConfigPath();
     if (!config.SaveToFile(config_path)) {
         ShowMessageBox("Failed to save bridge settings to config.json.",
-                       "Behringer Wing: SuperRack Bridge",
+                       "WINGuard: Selected Channel Bridge",
                        0);
         return false;
     }
@@ -671,7 +671,7 @@ bool ShowBridgeSetupWizard() {
 
     std::ostringstream result;
     result << SelectedChannelBridgeSummary() << "\n" << test_detail;
-    ShowMessageBox(result.str().c_str(), "Behringer Wing: SuperRack Bridge", 0);
+    ShowMessageBox(result.str().c_str(), "WINGuard: Selected Channel Bridge", 0);
     return true;
 }
 

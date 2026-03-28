@@ -124,6 +124,26 @@ struct DirectOscReply {
     int int_value = 0;
 };
 
+bool TryParseEmbeddedInt(const std::string& value, int& parsed_out) {
+    int parsed = 0;
+    bool has_digit = false;
+    for (char c : value) {
+        if (std::isdigit(static_cast<unsigned char>(c))) {
+            parsed = (parsed * 10) + (c - '0');
+            has_digit = true;
+        } else if (has_digit) {
+            break;
+        }
+    }
+
+    if (!has_digit) {
+        return false;
+    }
+
+    parsed_out = parsed;
+    return true;
+}
+
 #if defined(_WIN32)
 using NativeSocket = SOCKET;
 constexpr NativeSocket kInvalidSocket = INVALID_SOCKET;
@@ -891,6 +911,20 @@ std::map<std::string, int> WingOSC::QueryIntAddressesDirect(const std::vector<st
     std::map<std::string, int> values;
     auto replies = QueryOscAddressesDirectRaw(wing_ip_, wing_port_, addresses, total_timeout_ms, idle_timeout_ms);
     for (const auto& [address, reply] : replies) {
+        const bool prefer_native_int =
+            (address.size() >= 4 && address.compare(address.size() - 4, 4, "/col") == 0) ||
+            (address.size() >= 6 && address.compare(address.size() - 6, 6, "/color") == 0);
+        if (prefer_native_int && reply.has_int) {
+            values[address] = reply.int_value;
+            continue;
+        }
+
+        int parsed = 0;
+        if (reply.has_string && TryParseEmbeddedInt(reply.string_value, parsed)) {
+            values[address] = parsed;
+            continue;
+        }
+
         if (reply.has_int) {
             values[address] = reply.int_value;
         }
@@ -910,6 +944,144 @@ bool WingOSC::GetSelectedStripIndex(int& strip_index_one_based) const {
     // show that reads return the 0-based strip id even though writes use 1..76.
     strip_index_one_based = it->second + 1;
     return true;
+}
+
+std::map<int, ManagedChannelInputState> WingOSC::QueryManagedChannelInputStatesDirect(const std::vector<int>& channel_numbers) const {
+    std::map<int, ManagedChannelInputState> states;
+    if (channel_numbers.empty()) {
+        return states;
+    }
+
+    std::vector<std::string> string_addresses;
+    std::vector<std::string> int_addresses;
+    string_addresses.reserve(channel_numbers.size());
+    int_addresses.reserve(channel_numbers.size());
+    for (int channel_number : channel_numbers) {
+        if (channel_number <= 0) {
+            continue;
+        }
+        const std::string ch = FormatChannelNum(channel_number);
+        states[channel_number].channel_number = channel_number;
+        string_addresses.push_back("/ch/" + ch + "/in/conn/grp");
+        int_addresses.push_back("/ch/" + ch + "/in/conn/in");
+    }
+
+    const auto groups = QueryStringAddressesDirect(string_addresses, 140, 20);
+    const auto inputs = QueryIntAddressesDirect(int_addresses, 140, 20);
+    for (int channel_number : channel_numbers) {
+        if (channel_number <= 0) {
+            continue;
+        }
+        ManagedChannelInputState state;
+        state.channel_number = channel_number;
+
+        const std::string ch = FormatChannelNum(channel_number);
+        const std::string group_path = "/ch/" + ch + "/in/conn/grp";
+        const std::string input_path = "/ch/" + ch + "/in/conn/in";
+        auto group_it = groups.find(group_path);
+        auto input_it = inputs.find(input_path);
+        if (group_it == groups.end() || input_it == inputs.end()) {
+            states[channel_number] = state;
+            continue;
+        }
+
+        state.source_group = group_it->second;
+        state.source_input = input_it->second;
+        state.readable = true;
+
+        if (!state.source_group.empty() && state.source_group != "OFF" && state.source_input > 0) {
+            const std::string mode = QueryInputModeDirect(state.source_group, state.source_input);
+            state.stereo_linked = (mode == "ST" || mode == "MS");
+        }
+
+        states[channel_number] = state;
+    }
+
+    return states;
+}
+
+std::map<int, ManagedChannelDisplayState> WingOSC::QueryManagedChannelDisplayStatesDirect(const std::vector<int>& channel_numbers) const {
+    std::map<int, ManagedChannelDisplayState> states;
+    if (channel_numbers.empty()) {
+        return states;
+    }
+
+    std::vector<std::string> name_addresses;
+    std::vector<std::string> color_addresses;
+    std::vector<std::string> active_name_addresses;
+    std::vector<std::string> active_color_addresses;
+    std::vector<std::string> link_addresses;
+    name_addresses.reserve(channel_numbers.size());
+    color_addresses.reserve(channel_numbers.size());
+    active_name_addresses.reserve(channel_numbers.size());
+    active_color_addresses.reserve(channel_numbers.size());
+    link_addresses.reserve(channel_numbers.size());
+    for (int channel_number : channel_numbers) {
+        if (channel_number <= 0) {
+            continue;
+        }
+        const std::string ch = FormatChannelNum(channel_number);
+        states[channel_number].channel_number = channel_number;
+        name_addresses.push_back("/ch/" + ch + "/name");
+        color_addresses.push_back("/ch/" + ch + "/col");
+        active_name_addresses.push_back("/ch/" + ch + "/$name");
+        active_color_addresses.push_back("/ch/" + ch + "/$col");
+        link_addresses.push_back("/ch/" + ch + "/clink");
+    }
+
+    const auto name_values = QueryStringAddressesDirect(name_addresses, 120, 20);
+    const auto active_name_values = QueryStringAddressesDirect(active_name_addresses, 120, 20);
+    const auto color_values = QueryIntAddressesDirect(color_addresses, 120, 20);
+    const auto active_color_values = QueryIntAddressesDirect(active_color_addresses, 120, 20);
+    const auto link_values = QueryIntAddressesDirect(link_addresses, 120, 20);
+
+    for (int channel_number : channel_numbers) {
+        if (channel_number <= 0) {
+            continue;
+        }
+
+        ManagedChannelDisplayState state;
+        state.channel_number = channel_number;
+
+        const std::string ch = FormatChannelNum(channel_number);
+        const std::string name_path = "/ch/" + ch + "/name";
+        const std::string color_path = "/ch/" + ch + "/col";
+        const std::string active_name_path = "/ch/" + ch + "/$name";
+        const std::string active_color_path = "/ch/" + ch + "/$col";
+        const std::string link_path = "/ch/" + ch + "/clink";
+
+        auto name_it = name_values.find(name_path);
+        if (name_it != name_values.end()) {
+            state.name = name_it->second;
+        }
+
+        auto color_it = color_values.find(color_path);
+        if (color_it != color_values.end()) {
+            state.color_id = color_it->second;
+        }
+
+        auto link_it = link_values.find(link_path);
+        if (link_it != link_values.end()) {
+            state.customization_linked = (link_it->second != 0);
+        }
+
+        if (state.customization_linked) {
+            auto active_name_it = active_name_values.find(active_name_path);
+            if (active_name_it != active_name_values.end() && !active_name_it->second.empty()) {
+                state.name = active_name_it->second;
+            }
+
+            auto active_color_it = active_color_values.find(active_color_path);
+            if (active_color_it != active_color_values.end()) {
+                state.color_id = active_color_it->second;
+            }
+        }
+
+        state.readable = !state.name.empty() || state.color_id >= 0;
+        states[channel_number] = state;
+    }
+
+    return states;
 }
 
 void WingOSC::SendQueryBurst(const std::vector<std::string>& addresses) {
@@ -2271,10 +2443,14 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
             ? selected.name
             : source_key(alloc.source_kind, alloc.source_number);
         const bool can_setup_soundcheck = configure_soundcheck_inputs && selected.soundcheck_capable && has_channel_info;
-        std::string src_grp = has_channel_info ? ch_info.primary_source_group : selected.source_group;
-        int src_in = has_channel_info ? ch_info.primary_source_input : selected.source_input;
-        if (has_channel_info && !IsDirectOutputSourceGroup(src_grp)) {
-            auto resolved = ResolveRoutingChain(ch_info.primary_source_group, ch_info.primary_source_input);
+        std::string src_grp = (!selected.source_group.empty() && selected.source_input > 0)
+            ? selected.source_group
+            : (has_channel_info ? ch_info.primary_source_group : selected.source_group);
+        int src_in = (selected.source_input > 0)
+            ? selected.source_input
+            : (has_channel_info ? ch_info.primary_source_input : selected.source_input);
+        if (!src_grp.empty() && src_in > 0 && !IsDirectOutputSourceGroup(src_grp)) {
+            auto resolved = ResolveRoutingChain(src_grp, src_in);
             src_grp = resolved.first;
             src_in = resolved.second;
         }
