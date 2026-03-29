@@ -111,6 +111,10 @@ Main controls:
 - `Hold ms`
 - `CC layer` for warning/record status display on WING
 
+Safety behavior:
+
+- Auto-trigger is suppressed while virtual soundcheck mode is active (ALT source enabled on managed channels), including when soundcheck mode is changed directly on WING.
+
 Detailed reference:
 
 - [CC_BUTTONS_AND_AUTO_TRIGGER.md](CC_BUTTONS_AND_AUTO_TRIGGER.md)

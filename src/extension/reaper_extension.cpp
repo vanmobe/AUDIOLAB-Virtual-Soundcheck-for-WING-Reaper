@@ -2530,9 +2530,15 @@ void ReaperExtension::MonitorAutoRecordLoop() {
     auto last_warning_event_at = std::chrono::steady_clock::time_point{};
     auto last_record_led_step_at = std::chrono::steady_clock::time_point{};
     size_t record_led_step = 0;
+    auto next_soundcheck_probe_at = std::chrono::steady_clock::time_point{};
+    bool soundcheck_mode_active = soundcheck_mode_enabled_.load();
 
     while (auto_record_monitor_running_) {
         const auto now = std::chrono::steady_clock::now();
+        if (now >= next_soundcheck_probe_at) {
+            soundcheck_mode_active = RefreshSoundcheckModeFromWing();
+            next_soundcheck_probe_at = now + std::chrono::milliseconds(1000);
+        }
         const long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                      now.time_since_epoch())
                                      .count();
@@ -2558,8 +2564,8 @@ void ReaperExtension::MonitorAutoRecordLoop() {
             continue;
         }
 
-        // Playback should suppress warning mode entirely.
-        if (is_playing && !is_recording) {
+        // Playback and virtual soundcheck mode should suppress warning mode entirely.
+        if ((is_playing && !is_recording) || (soundcheck_mode_active && !is_recording)) {
             above_since = {};
             below_since = {};
             if (warning_flash_running_) {
@@ -2682,6 +2688,58 @@ void ReaperExtension::MonitorAutoRecordLoop() {
 
         std::this_thread::sleep_for(poll_interval);
     }
+}
+
+bool ReaperExtension::RefreshSoundcheckModeFromWing() {
+    if (!connected_ || !osc_handler_) {
+        return soundcheck_mode_enabled_.load();
+    }
+
+    const auto channel_numbers = GetManagedMonitorChannelNumbers();
+    if (channel_numbers.empty()) {
+        return soundcheck_mode_enabled_.load();
+    }
+
+    std::vector<std::string> alt_enabled_paths;
+    std::vector<std::string> alt_group_paths;
+    alt_enabled_paths.reserve(channel_numbers.size());
+    alt_group_paths.reserve(channel_numbers.size());
+    for (int channel_number : channel_numbers) {
+        const std::string ch = std::to_string(channel_number);
+        alt_enabled_paths.push_back("/ch/" + ch + "/in/set/altsrc");
+        alt_group_paths.push_back("/ch/" + ch + "/in/conn/altgrp");
+    }
+
+    const auto alt_enabled = osc_handler_->QueryIntAddressesDirect(alt_enabled_paths, 150, 30);
+    const auto alt_groups = osc_handler_->QueryStringAddressesDirect(alt_group_paths, 150, 30);
+
+    const bool card_mode = (config_.soundcheck_output_mode == "CARD");
+    bool detected_soundcheck_mode = false;
+    for (size_t i = 0; i < channel_numbers.size(); ++i) {
+        const std::string& enabled_path = alt_enabled_paths[i];
+        const std::string& group_path = alt_group_paths[i];
+        auto enabled_it = alt_enabled.find(enabled_path);
+        if (enabled_it == alt_enabled.end() || enabled_it->second == 0) {
+            continue;
+        }
+
+        auto group_it = alt_groups.find(group_path);
+        const std::string group = (group_it != alt_groups.end()) ? group_it->second : std::string();
+        const bool group_matches = card_mode
+            ? (group == "CARD" || group == "CRD")
+            : (group == "USB");
+        if (group_matches) {
+            detected_soundcheck_mode = true;
+            break;
+        }
+    }
+
+    const bool previous = soundcheck_mode_enabled_.exchange(detected_soundcheck_mode);
+    if (previous != detected_soundcheck_mode) {
+        Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: Soundcheck mode state synchronized from WING: ") +
+            (detected_soundcheck_mode ? "ENABLED\n" : "DISABLED\n"));
+    }
+    return detected_soundcheck_mode;
 }
 
 void ReaperExtension::SetWarningLayerState() {

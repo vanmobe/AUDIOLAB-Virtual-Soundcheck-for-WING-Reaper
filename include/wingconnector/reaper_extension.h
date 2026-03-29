@@ -142,6 +142,7 @@ private:
     // MIDI input handling  
     void ProcessMidiInput(const unsigned char* data, int len);
     void MonitorAutoRecordLoop();
+    bool RefreshSoundcheckModeFromWing();
     void StartAutoRecordMonitor();
     void StopAutoRecordMonitor();
     void QueueManagedSourceMonitorWarning(const std::string& warning);
