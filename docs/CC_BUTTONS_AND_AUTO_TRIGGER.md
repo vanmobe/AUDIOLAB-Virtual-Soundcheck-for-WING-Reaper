@@ -57,6 +57,9 @@ Auto-trigger is configured in the plugin `Auto Trigger` section and monitors REA
   - warning/record state stops and WING status text/lights are cleared
 - Manual transport interaction:
   - manual play/record suppresses warning behavior to avoid conflicting states
+- Virtual soundcheck interaction:
+  - when ALT source soundcheck mode is active on managed channels, auto-trigger monitoring is suppressed
+  - this state is synced from WING so desk-side mode changes are respected (not only plugin button toggles)
 
 ## 3. SD Recording (Optional)
 
