@@ -12,6 +12,8 @@ namespace WingConnector {
 void ShowMainDialog();
 // Opens the selected-channel bridge setup/help flow for the current platform.
 void ShowSelectedChannelBridgeDialog();
+// Opens the read-only imported-project adoption review flow.
+void ShowExistingProjectAdoptionDialog();
 
 } // namespace WingConnector
 

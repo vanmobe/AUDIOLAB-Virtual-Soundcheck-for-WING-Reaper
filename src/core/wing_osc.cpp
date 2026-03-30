@@ -40,9 +40,14 @@
 #endif
 
 #include "wingconnector/wing_osc.h"
+#include "internal/playback_allocator.h"
+#include "internal/osc_builder.h"
+#include "internal/playback_naming.h"
 #include "internal/logger.h"
 #include "internal/osc_helpers.h"
 #include "internal/osc_routing.h"
+#include "internal/source_input_mode_plan.h"
+#include "internal/stereo_channel_plan.h"
 
 #if defined(_WIN32)
 #ifdef ReceivedPacket
@@ -1110,6 +1115,57 @@ void WingOSC::GetChannelName(int channel_num) {
     });
 }
 
+void WingOSC::SetChannelName(int channel_num, const std::string& name) {
+    if (channel_num <= 0) {
+        return;
+    }
+    char buffer[256];
+    osc::OutboundPacketStream p(buffer, sizeof(buffer));
+    const std::string address = "/ch/" + FormatChannelNum(channel_num) + "/name";
+    p << MakeOscBeginToken(address.c_str())
+      << name.c_str()
+      << MakeOscEndToken();
+    if (!SendRawPacket(p.Data(), p.Size())) {
+        Log("[ERROR] Failed to set channel " + std::to_string(channel_num) + " name");
+        return;
+    }
+    Log("[OSC] " + address + " = " + name);
+}
+
+void WingOSC::SetChannelColor(int channel_num, int color_index) {
+    char buffer[256];
+    osc::OutboundPacketStream p(buffer, 256);
+
+    const std::string ch = FormatChannelNum(channel_num);
+    const std::string address = "/ch/" + ch + "/col";
+    p << MakeOscBeginToken(address.c_str())
+      << (int32_t)color_index
+      << MakeOscEndToken();
+
+    if (!SendRawPacket(p.Data(), p.Size())) {
+        Log("Error setting channel color for channel " + std::to_string(channel_num));
+        return;
+    }
+    Log("Set channel " + std::to_string(channel_num) + " color to " + std::to_string(color_index));
+}
+
+void WingOSC::SetChannelCustomizationLinked(int channel_num, bool enable) {
+    char buffer[256];
+    osc::OutboundPacketStream p(buffer, 256);
+
+    const std::string ch = FormatChannelNum(channel_num);
+    const std::string address = "/ch/" + ch + "/clink";
+    p << MakeOscBeginToken(address.c_str())
+      << (int32_t)(enable ? 1 : 0)
+      << MakeOscEndToken();
+
+    if (!SendRawPacket(p.Data(), p.Size())) {
+        Log("Error setting channel customization link for channel " + std::to_string(channel_num));
+        return;
+    }
+    Log("Set channel " + std::to_string(channel_num) + " customization link to " + std::string(enable ? "on" : "off"));
+}
+
 void WingOSC::GetChannelColor(int channel_num) {
     std::string ch = FormatChannelNum(channel_num);
     std::string address = "/ch/" + ch + "/col";
@@ -1231,6 +1287,37 @@ void WingOSC::QueryChannelSourceStereo(int channel_num) {
 }
 
 // Channel routing configuration for virtual soundcheck
+void WingOSC::SetChannelPrimarySource(int channel_num, const std::string& grp, int in) {
+    char buffer[256];
+    osc::OutboundPacketStream p(buffer, 256);
+
+    std::string ch = FormatChannelNum(channel_num);
+    const std::string normalized_grp = NormalizeDeskSourceGroup(grp);
+
+    std::string addr_grp = "/ch/" + ch + "/in/conn/grp";
+    p.Clear();
+    p << MakeOscBeginToken(addr_grp.c_str())
+      << normalized_grp.c_str()
+      << MakeOscEndToken();
+    if (!SendRawPacket(p.Data(), p.Size())) {
+        Log("Error setting primary source group for channel " + std::to_string(channel_num));
+        return;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+    std::string addr_in = "/ch/" + ch + "/in/conn/in";
+    p.Clear();
+    p << MakeOscBeginToken(addr_in.c_str())
+      << (int32_t)in
+      << MakeOscEndToken();
+    if (!SendRawPacket(p.Data(), p.Size())) {
+        Log("Error setting primary source input for channel " + std::to_string(channel_num));
+        return;
+    }
+
+    Log("Set channel " + std::to_string(channel_num) + " primary source to " + normalized_grp + " " + std::to_string(in));
+}
+
 void WingOSC::SetChannelAltSource(int channel_num, const std::string& grp, int in) {
     char buffer[256];
     osc::OutboundPacketStream p(buffer, 256);
@@ -1328,8 +1415,9 @@ void WingOSC::SetUSBOutputName(int usb_num, const std::string& name) {
     Log("[OSC] SetUSBOutputName: USB OUTPUT " + std::to_string(usb_num) + 
         " name = '" + name + "'");
     
-    // Set USB output name: /io/out/USB/[1-48]/name
-    std::string addr_name = "/io/out/USB/" + std::to_string(usb_num) + "/name";
+    // USB output naming is address-format sensitive on the desk. Use the
+    // canonical zero-padded path form.
+    std::string addr_name = OscBuilder::UsbPath(usb_num, "out", "name");
     p.Clear();
     p << MakeOscBeginToken(addr_name.c_str())
       << name.c_str()
@@ -1428,8 +1516,7 @@ void WingOSC::SetCardOutputName(int card_num, const std::string& name) {
     Log("[OSC] SetCardOutputName: CARD OUTPUT " + std::to_string(card_num) + 
         " name = '" + name + "'");
     
-    // Set CARD output name: /io/out/CRD/[1-32]/name
-    std::string addr_name = "/io/out/CRD/" + std::to_string(card_num) + "/name";
+    std::string addr_name = OscBuilder::CardPath(card_num, "name");
     p.Clear();
     p << MakeOscBeginToken(addr_name.c_str())
       << name.c_str()
@@ -1526,6 +1613,27 @@ void WingOSC::SetCardInputName(int card_num, const std::string& name) {
     
     if (!SendRawPacket(p.Data(), p.Size())) {
         Log("[ERROR] Failed to set CARD " + std::to_string(card_num) + " input name");
+        return;
+    }
+    Log("[OSC] " + addr_name + " = " + name);
+}
+
+void WingOSC::SetSourceInputName(const std::string& group, int input_num, const std::string& name) {
+    if (group.empty() || input_num <= 0) {
+        return;
+    }
+
+    char buffer[256];
+    osc::OutboundPacketStream p(buffer, 256);
+    const std::string normalized_group = NormalizeDeskSourceGroup(group);
+    const std::string addr_name = "/io/in/" + normalized_group + "/" + std::to_string(input_num) + "/name";
+    p.Clear();
+    p << MakeOscBeginToken(addr_name.c_str())
+      << name.c_str()
+      << MakeOscEndToken();
+
+    if (!SendRawPacket(p.Data(), p.Size())) {
+        Log("[ERROR] Failed to set " + normalized_group + " input " + std::to_string(input_num) + " name");
         return;
     }
     Log("[OSC] " + addr_name + " = " + name);
@@ -1952,6 +2060,26 @@ void WingOSC::SetCardInputMode(int card_num, const std::string& mode) {
     Log("[OSC] " + addr_mode + " = " + mode);
 }
 
+void WingOSC::SetSourceInputMode(const std::string& group, int input_num, const std::string& mode) {
+    if (group.empty() || input_num <= 0) {
+        return;
+    }
+
+    char buffer[256];
+    osc::OutboundPacketStream p(buffer, 256);
+    const std::string addr_mode = "/io/in/" + group + "/" + std::to_string(input_num) + "/mode";
+    p.Clear();
+    p << MakeOscBeginToken(addr_mode.c_str())
+      << mode.c_str()
+      << MakeOscEndToken();
+
+    if (!SendRawPacket(p.Data(), p.Size())) {
+        Log("[ERROR] Failed to set " + group + " input " + std::to_string(input_num) + " mode");
+        return;
+    }
+    Log("[OSC] " + addr_mode + " = " + mode);
+}
+
 void WingOSC::ClearUSBInput(int usb_num) {
     char buffer[256];
     osc::OutboundPacketStream p(buffer, 256);
@@ -2031,61 +2159,24 @@ void WingOSC::SetAllChannelsAltEnabled(bool enable) {
     }
 }
 
-// USB allocation algorithm with gap backfilling
-std::vector<USBAllocation> WingOSC::CalculateUSBAllocation(const std::vector<SourceSelectionInfo>& channels) {
-    std::vector<USBAllocation> allocations;
-    
-    Log("Calculating USB allocation for " + std::to_string(channels.size()) + " sources...");
-    
-    int next_usb = 1;
-    // Gap slots created when stereo forces alignment to an odd number.
-    // Subsequent mono channels fill these before consuming new slots.
-    std::vector<int> gap_slots;
-    
-    for (const auto& ch : channels) {
-        USBAllocation alloc;
-        alloc.source_kind = ch.kind;
-        alloc.source_number = ch.source_number;
-        alloc.is_stereo = ch.stereo_linked;
-        
-        if (ch.stereo_linked) {
-            // Source-based stereo: single channel, two physical inputs (source_input and source_input+1).
-            // Must start on an odd USB slot.
-            if (next_usb % 2 == 0) {
-                // Record the skipped slot — a later mono channel can use it.
-                gap_slots.push_back(next_usb);
-                Log("  USB " + std::to_string(next_usb) + " held as gap (available for later mono)");
-                next_usb++;
-            }
-            
-            alloc.usb_start = next_usb;
-            alloc.usb_end   = next_usb + 1;
-            alloc.allocation_note = "Stereo on USB " + std::to_string(next_usb) + "-" + std::to_string(next_usb + 1);
-            allocations.push_back(alloc);
-            
-            Log("Source " + std::to_string(ch.source_number) + " (stereo) → USB " + 
-                std::to_string(next_usb) + "-" + std::to_string(next_usb + 1));
-            
-            next_usb += 2;
+// Playback allocation algorithm with gap backfilling.
+std::vector<PlaybackAllocation> WingOSC::CalculatePlaybackAllocation(const std::vector<SourceSelectionInfo>& channels) {
+    Log("Calculating playback allocation for " + std::to_string(channels.size()) + " sources...");
+    auto allocations = PlaybackAllocator::BuildSequentialPlaybackAllocation(channels);
+    for (const auto& alloc : allocations) {
+        if (alloc.is_stereo) {
+            Log("Source " + std::to_string(alloc.source_number) + " (stereo) → slot " +
+                std::to_string(alloc.usb_start) + "-" + std::to_string(alloc.usb_end));
         } else {
-            // Mono: fill a gap slot first if one exists, otherwise take the next slot.
-            int slot;
-            if (!gap_slots.empty()) {
-                slot = gap_slots.front();
-                gap_slots.erase(gap_slots.begin());
-                Log("Source " + std::to_string(ch.source_number) + " (mono) → USB " + 
-                    std::to_string(slot) + " (gap fill)");
-            } else {
-                slot = next_usb++;
-                Log("Source " + std::to_string(ch.source_number) + " (mono) → USB " + std::to_string(slot));
-            }
-            alloc.usb_start = alloc.usb_end = slot;
-            alloc.allocation_note = "Mono on USB " + std::to_string(slot);
-            allocations.push_back(alloc);
+            Log("Source " + std::to_string(alloc.source_number) + " (mono) → slot " +
+                std::to_string(alloc.usb_start));
         }
     }
-    
     return allocations;
+}
+
+std::vector<PlaybackAllocation> WingOSC::CalculateUSBAllocation(const std::vector<SourceSelectionInfo>& channels) {
+    return CalculatePlaybackAllocation(channels);
 }
 
 void WingOSC::QueryUserSignalInputs(int count) {
@@ -2319,10 +2410,10 @@ std::string WingOSC::QueryConsoleSourceNameDirect(SourceKind kind, int number) c
     return "";
 }
 
-void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocations, 
-                                       const std::vector<SourceSelectionInfo>& channels,
-                                       const std::string& output_mode,
-                                       bool setup_soundcheck) {
+void WingOSC::ApplyPlaybackAllocationAsAlt(const std::vector<PlaybackAllocation>& allocations,
+                                           const std::vector<SourceSelectionInfo>& channels,
+                                           const std::string& output_mode,
+                                           bool setup_soundcheck) {
     std::string output_type = (output_mode == "CARD") ? "CARD" : "USB";
     auto kind_label = [](SourceKind kind) {
         switch (kind) {
@@ -2351,7 +2442,7 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
         Log("║     RECORDING-ONLY " + output_type + " CONFIGURATION                     ║");
     }
     Log("╚═══════════════════════════════════════════════════════════╝");
-    Log("\n[SETUP] ApplyUSBAllocationAsAlt called with " + std::to_string(allocations.size()) + 
+    Log("\n[SETUP] ApplyPlaybackAllocationAsAlt called with " + std::to_string(allocations.size()) +
         " allocations and " + std::to_string(channels.size()) + " selected sources");
     Log("[SETUP] Output mode: " + output_type);
     Log("[SETUP] Setup soundcheck: " + std::string(configure_soundcheck_inputs ? "YES" : "NO"));
@@ -2454,8 +2545,11 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
             src_grp = resolved.first;
             src_in = resolved.second;
         }
+        const int planned_primary_stereo_start =
+            alloc.is_stereo ? WingConnector::SourceInputModePlan::PlannedStereoPrimaryInputStart(src_in, alloc.usb_start) : src_in;
         
         if (alloc.is_stereo) {
+            const int partner_channel = WingConnector::StereoChannelPlan::PartnerChannel(alloc.source_number);
             Log("\n[STEREO] " + source_key(alloc.source_kind, alloc.source_number) + ": " + display_name);
             Log("         Primary source: " + src_grp + ":" + std::to_string(src_in));
 
@@ -2484,8 +2578,9 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
             Log("\n         [NAMING " + output_type + " OUTPUTS]");
             
             // Name outputs (what Wing console sends)
-            std::string out_left_name = display_name + " (L)";
-            std::string out_right_name = display_name + " (R)";
+            std::string out_left_name = WingConnector::PlaybackNaming::StereoOutputLeftName(display_name);
+            std::string out_right_name = WingConnector::PlaybackNaming::StereoOutputRightName(display_name);
+            std::string in_pair_name = WingConnector::PlaybackNaming::StereoInputName(display_name);
             
             Log("           " + output_type + " OUTPUT " + std::to_string(alloc.usb_start) + 
                 " name: '" + out_left_name + "'");
@@ -2506,16 +2601,89 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
             
             if (can_setup_soundcheck) {
+                Log("\n         [NAME CHANNEL]");
+                Log("           CH" + std::to_string(alloc.source_number) + " name: '" + display_name + "'");
+                SetChannelName(alloc.source_number, display_name);
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                if (partner_channel > 0) {
+                    Log("           CH" + std::to_string(partner_channel) + " name: ''");
+                    SetChannelName(partner_channel, "");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+                if (selected.color_id >= 0) {
+                    Log("           CH" + std::to_string(alloc.source_number) + " color: " + std::to_string(selected.color_id));
+                    SetChannelColor(alloc.source_number, selected.color_id);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+
+                Log("\n         [SET CHANNEL CUSTOMIZATION LINK]");
+                Log("           CH" + std::to_string(alloc.source_number) + " customization link: off");
+                SetChannelCustomizationLinked(alloc.source_number, false);
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                if (partner_channel > 0) {
+                    Log("           CH" + std::to_string(partner_channel) + " customization link: off");
+                    SetChannelCustomizationLinked(partner_channel, false);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+
+                Log("\n         [RESET ALT SOURCE]");
+                SetChannelAltSource(alloc.source_number, "OFF", 1);
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                EnableChannelAltSource(alloc.source_number, false);
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                if (partner_channel > 0) {
+                    SetChannelAltSource(partner_channel, "OFF", 1);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                    EnableChannelAltSource(partner_channel, false);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                }
+
+                if (!src_grp.empty() && planned_primary_stereo_start > 0) {
+                    Log("\n         [REASSIGN PRIMARY SOURCE]");
+                    Log("           CH" + std::to_string(alloc.source_number) + " primary: " +
+                        src_grp + ":" + std::to_string(planned_primary_stereo_start));
+                    SetChannelPrimarySource(alloc.source_number, src_grp, planned_primary_stereo_start);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    if (partner_channel > 0) {
+                        Log("           CH" + std::to_string(partner_channel) + " primary: OFF:1");
+                        SetChannelPrimarySource(partner_channel, "OFF", 1);
+                        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    }
+
+                    Log("\n         [NAME PRIMARY SOURCE INPUTS]");
+                    Log("           " + src_grp + " INPUT " + std::to_string(planned_primary_stereo_start) + " name: '" + out_left_name + "'");
+                    SetSourceInputName(src_grp, planned_primary_stereo_start, out_left_name);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    Log("           " + src_grp + " INPUT " + std::to_string(planned_primary_stereo_start + 1) + " name: '" + out_right_name + "'");
+                    SetSourceInputName(src_grp, planned_primary_stereo_start + 1, out_right_name);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+                    Log("\n         [SET PRIMARY SOURCE MODE] (Stereo source)");
+                    Log("           " + src_grp + " INPUT " + std::to_string(planned_primary_stereo_start) + " mode: ST");
+                    SetSourceInputMode(src_grp, planned_primary_stereo_start, "ST");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    Log("           " + src_grp + " INPUT " + std::to_string(planned_primary_stereo_start + 1) + " mode: ST");
+                    SetSourceInputMode(src_grp, planned_primary_stereo_start + 1, "ST");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                } else {
+                    Log("\n         [SKIP PRIMARY SOURCE PAIRING]");
+                    if (src_grp.empty()) {
+                        Log("           Primary source group is unavailable; leaving channel primary source unchanged.");
+                    } else {
+                        Log("           No valid odd-start stereo primary source pair is available for this adopted source.");
+                    }
+                }
+
                 if (output_type == "USB") {
                     Log("\n         [NAMING USB INPUTS] (For REAPER playback)");
                     Log("           USB INPUT " + std::to_string(alloc.usb_start) + 
-                        " name: '" + out_left_name + "'");
-                    SetUSBInputName(alloc.usb_start, out_left_name);
+                        " name: '" + in_pair_name + "'");
+                    SetUSBInputName(alloc.usb_start, in_pair_name);
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
                     
                     Log("           USB INPUT " + std::to_string(alloc.usb_end) + 
-                        " name: '" + out_right_name + "'");
-                    SetUSBInputName(alloc.usb_end, out_right_name);
+                        " name: '" + in_pair_name + "'");
+                    SetUSBInputName(alloc.usb_end, in_pair_name);
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
                     
                     Log("\n         [SET USB INPUT MODES] (Stereo pair)");
@@ -2529,13 +2697,13 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
                 } else if (output_type == "CARD") {
                     Log("\n         [NAMING CARD INPUTS] (For REAPER playback)");
                     Log("           CARD INPUT " + std::to_string(alloc.usb_start) + 
-                        " name: '" + out_left_name + "'");
-                    SetCardInputName(alloc.usb_start, out_left_name);
+                        " name: '" + in_pair_name + "'");
+                    SetCardInputName(alloc.usb_start, in_pair_name);
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
                     
                     Log("           CARD INPUT " + std::to_string(alloc.usb_end) + 
-                        " name: '" + out_right_name + "'");
-                    SetCardInputName(alloc.usb_end, out_right_name);
+                        " name: '" + in_pair_name + "'");
+                    SetCardInputName(alloc.usb_end, in_pair_name);
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
                     
                     Log("\n         [SET CARD INPUT MODES] (Stereo pair)");
@@ -2588,6 +2756,34 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
             
             if (can_setup_soundcheck) {
+                Log("\n       [NAME CHANNEL]");
+                Log("         CH" + std::to_string(alloc.source_number) + " name: '" + display_name + "'");
+                SetChannelName(alloc.source_number, display_name);
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                if (selected.color_id >= 0) {
+                    Log("         CH" + std::to_string(alloc.source_number) + " color: " + std::to_string(selected.color_id));
+                    SetChannelColor(alloc.source_number, selected.color_id);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+
+                Log("\n       [RESET ALT SOURCE]");
+                SetChannelAltSource(alloc.source_number, "OFF", 1);
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                EnableChannelAltSource(alloc.source_number, false);
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+
+                if (!src_grp.empty() && src_in > 0) {
+                    Log("\n       [NAME PRIMARY SOURCE INPUT]");
+                    Log("         " + src_grp + " INPUT " + std::to_string(src_in) + " name: '" + display_name + "'");
+                    SetSourceInputName(src_grp, src_in, display_name);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+                    Log("\n       [SET PRIMARY SOURCE MODE] (Mono)");
+                    Log("         " + src_grp + " INPUT " + std::to_string(src_in) + " mode: M");
+                    SetSourceInputMode(src_grp, src_in, "M");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+
                 if (output_type == "USB") {
                     Log("\n       [NAMING USB INPUT] (For REAPER playback)");
                     Log("         USB INPUT " + std::to_string(alloc.usb_start) + 
@@ -2663,6 +2859,13 @@ void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocati
         Log("║     RECORDING READY - READY FOR REAPER TRACK SETUP        ║");
     }
     Log("╚═══════════════════════════════════════════════════════════╝\n");
+}
+
+void WingOSC::ApplyUSBAllocationAsAlt(const std::vector<PlaybackAllocation>& allocations,
+                                      const std::vector<SourceSelectionInfo>& channels,
+                                      const std::string& output_mode,
+                                      bool setup_soundcheck) {
+    ApplyPlaybackAllocationAsAlt(allocations, channels, output_mode, setup_soundcheck);
 }
 
 void WingOSC::QueryChannel(int channel_num) {

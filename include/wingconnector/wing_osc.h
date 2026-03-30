@@ -37,6 +37,7 @@ struct SourceSelectionInfo {
     std::string partner_source_group;
     int partner_source_input = 0;
     bool stereo_linked = false;
+    bool stereo_intent_override = false;
     bool selected = false;
     bool soundcheck_capable = false;
 };
@@ -82,8 +83,8 @@ struct ChannelInfo {
     int usb_output_end = 0;            // For stereo: start+1, for mono: same as start
 };
 
-// USB allocation result
-struct USBAllocation {
+// Playback allocation result shared by USB and CARD.
+struct PlaybackAllocation {
     SourceKind source_kind = SourceKind::Channel;
     int source_number = 0;
     bool is_stereo;
@@ -91,6 +92,8 @@ struct USBAllocation {
     int usb_end;    // For stereo: usb_start+1, for mono: same as start
     std::string allocation_note;
 };
+
+using USBAllocation = PlaybackAllocation;
 
 // Basic metadata returned by the Wing handshake reply
 struct WingInfo {
@@ -134,6 +137,9 @@ public:
     
     // Wing-specific OSC commands (based on Patrick-Gilles Maillot's manual)
     void GetChannelName(int channel_num);
+    void SetChannelName(int channel_num, const std::string& name);
+    void SetChannelColor(int channel_num, int color_index);
+    void SetChannelCustomizationLinked(int channel_num, bool enable);
     void GetChannelColor(int channel_num);
     void GetChannelConfig(int channel_num);
     void GetChannelIcon(int channel_num);
@@ -146,6 +152,7 @@ public:
     void QueryChannelSourceStereo(int channel_num);    // Query source stereo via /io/in/{grp}/{num}/mode
     
     // Channel routing configuration (for virtual soundcheck)
+    void SetChannelPrimarySource(int channel_num, const std::string& grp, int in);
     void SetChannelAltSource(int channel_num, const std::string& grp, int in);
     void EnableChannelAltSource(int channel_num, bool enable);
     void SetAllChannelsAltEnabled(bool enable);  // Batch toggle for soundcheck mode
@@ -162,6 +169,7 @@ public:
     void SetCardOutputSource(int card_num, const std::string& grp, int in);
     void SetCardOutputName(int card_num, const std::string& name);
     void SetCardInputName(int card_num, const std::string& name);    // Name CARD input (REAPER sends back to)
+    void SetSourceInputName(const std::string& group, int input_num, const std::string& name);  // Name a generic source input
     void ClearCardOutput(int card_num);  // Clear CARD output routing (set to OFF)
     void SetWLiveRecordTrackCount(int slot, int tracks);
     void SetRecorderOutputSource(int recorder_num, const std::string& grp, int in);
@@ -171,15 +179,21 @@ public:
     // USB/CARD input mode configuration (stereo/mono)
     void SetUSBInputMode(int usb_num, const std::string& mode);  // Set USB input mode: "ST" = stereo, "M" = mono
     void SetCardInputMode(int card_num, const std::string& mode);  // Set CARD input mode: "ST" = stereo, "M" = mono
+    void SetSourceInputMode(const std::string& group, int input_num, const std::string& mode);  // Set a generic input source mode
     void ClearUSBInput(int usb_num);  // Clear USB input (reset to mono mode)
     void ClearCardInput(int card_num);  // Clear CARD input (reset to mono mode)
     
-    // USB allocation utilities
-    std::vector<USBAllocation> CalculateUSBAllocation(const std::vector<SourceSelectionInfo>& channels);
-    void ApplyUSBAllocationAsAlt(const std::vector<USBAllocation>& allocations, 
-                                  const std::vector<SourceSelectionInfo>& channels,
-                                  const std::string& output_mode = "USB",
-                                  bool setup_soundcheck = true);
+    // Playback allocation utilities shared by USB and CARD routing.
+    std::vector<PlaybackAllocation> CalculatePlaybackAllocation(const std::vector<SourceSelectionInfo>& channels);
+    void ApplyPlaybackAllocationAsAlt(const std::vector<PlaybackAllocation>& allocations,
+                                      const std::vector<SourceSelectionInfo>& channels,
+                                      const std::string& output_mode = "USB",
+                                      bool setup_soundcheck = true);
+    std::vector<PlaybackAllocation> CalculateUSBAllocation(const std::vector<SourceSelectionInfo>& channels);
+    void ApplyUSBAllocationAsAlt(const std::vector<PlaybackAllocation>& allocations,
+                                 const std::vector<SourceSelectionInfo>& channels,
+                                 const std::string& output_mode = "USB",
+                                 bool setup_soundcheck = true);
     
     // User Signal input routing (for resolving indirection through USR inputs)
     void QueryUserSignalInputs(int count);  // Query all USR input sources

@@ -108,6 +108,63 @@ void TestBootstrapDoesNotTrigger() {
     Expect(decision.changed_channels.empty(), "bootstrap snapshot should not report changes");
 }
 
+void TestUnreadablePollIsMaskedBeforeThreshold() {
+    const std::map<int, ManagedChannelInputState> previous{{7, MakeState(7, "A", 7, false)}};
+    const std::map<int, ManagedChannelInputState> current{{7, MakeState(7, "", 0, false, false)}};
+    const auto filtered = WingConnector::ManagedSourceMonitor::ApplyTransientReadabilityFilter(
+        previous,
+        current,
+        {},
+        0,
+        3,
+        2);
+    auto filtered_it = filtered.snapshot.find(7);
+    Expect(filtered_it != filtered.snapshot.end(), "filtered snapshot should keep the channel");
+    Expect(filtered_it->second.readable, "first unreadable poll should keep the previous readable state");
+    Expect(filtered.unreadable_counts.at(7) == 1, "first unreadable poll should increment the failure count");
+    Expect(filtered.cycle_degraded, "single managed channel miss should count as a degraded cycle");
+}
+
+void TestUnreadablePollWarnsAfterThreshold() {
+    const std::map<int, ManagedChannelInputState> previous{{8, MakeState(8, "A", 8, false)}};
+    const std::map<int, ManagedChannelInputState> current{{8, MakeState(8, "", 0, false, false)}};
+    const auto filtered = WingConnector::ManagedSourceMonitor::ApplyTransientReadabilityFilter(
+        previous,
+        current,
+        {{8, 2}},
+        2,
+        3,
+        2);
+    auto filtered_it = filtered.snapshot.find(8);
+    Expect(filtered_it != filtered.snapshot.end(), "threshold snapshot should still contain the channel");
+    Expect(!filtered_it->second.readable, "third unreadable poll should stop masking the failure");
+    const auto decision = ClassifyChange(previous, filtered.snapshot);
+    Expect(decision.action == Action::WarnInvalidSource, "failure threshold should re-expose the invalid-source warning");
+    ExpectChannels(decision.changed_channels, {8}, "threshold warning should identify the affected channel");
+}
+
+void TestFullCycleGlitchUsesCycleGrace() {
+    const std::map<int, ManagedChannelInputState> previous{
+        {9, MakeState(9, "A", 9, false)},
+        {10, MakeState(10, "A", 10, false)},
+    };
+    const std::map<int, ManagedChannelInputState> current{
+        {9, MakeState(9, "", 0, false, false)},
+        {10, MakeState(10, "", 0, false, false)},
+    };
+    const auto filtered = WingConnector::ManagedSourceMonitor::ApplyTransientReadabilityFilter(
+        previous,
+        current,
+        {},
+        0,
+        3,
+        2);
+    Expect(filtered.cycle_degraded, "all-unreadable cycle should be treated as degraded");
+    Expect(filtered.degraded_cycle_count == 1, "first degraded cycle should stay within the grace window");
+    Expect(filtered.snapshot.at(9).readable && filtered.snapshot.at(10).readable,
+           "first degraded cycle should keep the previous readable snapshot");
+}
+
 } // namespace
 
 int main() {
@@ -119,6 +176,9 @@ int main() {
     TestUnreadableSourceWarns();
     TestMixedChangesPreferWarning();
     TestBootstrapDoesNotTrigger();
+    TestUnreadablePollIsMaskedBeforeThreshold();
+    TestUnreadablePollWarnsAfterThreshold();
+    TestFullCycleGlitchUsesCycleGrace();
 
     std::cout << "source_monitor_tests: OK\n";
     return 0;

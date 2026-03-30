@@ -4,6 +4,7 @@
 
 #include <cstring>
 
+#include "internal/adoption_plan.h"
 #include "internal/dialog_bridge.h"
 #include "wingconnector/reaper_extension.h"
 #ifdef __APPLE__
@@ -15,8 +16,10 @@
 #include <cctype>
 #include <cstdio>
 #include <functional>
+#include <map>
 #include <sstream>
 #include <string>
+#include <set>
 #include <vector>
 
 namespace WingConnector {
@@ -102,6 +105,797 @@ std::string BuildMappingSpec(const std::vector<BridgeMapping>& mappings) {
         first = false;
     }
     return out.str();
+}
+
+std::string NormalizeToken(std::string value) {
+    std::string normalized;
+    normalized.reserve(value.size());
+    for (unsigned char c : value) {
+        if (std::isalnum(c)) {
+            normalized.push_back(static_cast<char>(std::tolower(c)));
+        }
+    }
+    return normalized;
+}
+
+bool LooksLikeStereoName(const std::string& name) {
+    const std::string normalized = NormalizeToken(name);
+    return normalized.find("stereo") != std::string::npos ||
+           normalized.find("pair") != std::string::npos ||
+           normalized.find("lr") != std::string::npos;
+}
+
+bool TrackHasStereoMedia(MediaTrack* track) {
+    if (!track) {
+        return false;
+    }
+
+    const int item_count = CountTrackMediaItems(track);
+    for (int item_index = 0; item_index < item_count; ++item_index) {
+        MediaItem* item = GetTrackMediaItem(track, item_index);
+        if (!item) {
+            continue;
+        }
+
+        MediaItem_Take* take = GetActiveTake(item);
+        if (!take) {
+            take = GetMediaItemTake(item, 0);
+        }
+        if (!take) {
+            continue;
+        }
+
+        PCM_source* source = GetMediaItemTake_Source(take);
+        if (!source) {
+            continue;
+        }
+
+        if (GetMediaSourceNumChannels(source) >= 2) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+struct AdoptionTrackInfo {
+    int track_index = 0;  // 1-based
+    std::string name;
+    bool managed = false;
+    bool adopted_in_place = false;
+    bool has_items = false;
+    bool stereo_like = false;
+    std::string source_id;
+    int managed_channel_number = 0;
+    int current_slot_start = 0;
+    int current_slot_end = 0;
+};
+
+struct AdoptionSuggestion {
+    AdoptionTrackInfo track;
+    SourceSelectionInfo source;
+    std::string reason;
+};
+
+struct AdoptionDialogPlanRow {
+    AdoptionSuggestion suggestion;
+    WingConnector::AdoptionPlan::Row plan_row;
+};
+
+struct AdoptionDialogPlan {
+    std::string output_mode = "USB";
+    std::vector<AdoptionDialogPlanRow> rows;
+};
+
+struct ExistingManagedRoute {
+    int track_index = 0;
+    std::string source_id;
+    int slot_start = 0;
+    int slot_end = 0;
+};
+
+std::string NormalizeUpper(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    return value;
+}
+
+std::string NormalizeOutputMode(std::string value) {
+    return AdoptionPlan::NormalizeOutputMode(NormalizeUpper(TrimCopy(value)));
+}
+
+bool ParseTrackKey(const std::string& token, int& track_index_out) {
+    std::string upper = NormalizeUpper(TrimCopy(token));
+    if (upper.rfind("TRACK", 0) == 0) {
+        upper.erase(0, 5);
+    } else if (upper.rfind("TR", 0) == 0) {
+        upper.erase(0, 2);
+    } else if (upper.rfind("T", 0) == 0) {
+        upper.erase(0, 1);
+    }
+    try {
+        track_index_out = std::stoi(upper);
+        return track_index_out > 0;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool DecodeTrackInput(MediaTrack* track, int& slot_start_out, int& slot_end_out) {
+    if (!track) {
+        return false;
+    }
+    const int rec_input = static_cast<int>(GetMediaTrackInfo_Value(track, "I_RECINPUT"));
+    if (rec_input < 0) {
+        return false;
+    }
+    const int input_index = rec_input & 0x3FF;
+    const bool stereo = ((rec_input >> 10) & 0x1) != 0;
+    slot_start_out = input_index + 1;
+    slot_end_out = slot_start_out + (stereo ? 1 : 0);
+    return true;
+}
+
+std::vector<ExistingManagedRoute> CollectExistingManagedRoutes() {
+    std::vector<ExistingManagedRoute> routes;
+    ReaProject* proj = EnumProjects(-1, nullptr, 0);
+    if (!proj) {
+        return routes;
+    }
+
+    const int track_count = CountTracks(proj);
+    for (int i = 0; i < track_count; ++i) {
+        MediaTrack* track = GetTrack(proj, i);
+        if (!track) {
+            continue;
+        }
+
+        char source_id_buf[256]{};
+        if (!GetSetMediaTrackInfo_String(track, "P_EXT:WINGCONNECTOR_SOURCE_ID", source_id_buf, false) ||
+            source_id_buf[0] == '\0') {
+            continue;
+        }
+
+        ExistingManagedRoute route;
+        route.track_index = i + 1;
+        route.source_id = source_id_buf;
+        if (!DecodeTrackInput(track, route.slot_start, route.slot_end)) {
+            continue;
+        }
+        routes.push_back(route);
+    }
+    return routes;
+}
+
+std::set<int> CollectManagedChannelNumbers() {
+    std::set<int> managed_channels;
+    ReaProject* proj = EnumProjects(-1, nullptr, 0);
+    if (!proj) {
+        return managed_channels;
+    }
+
+    const int track_count = CountTracks(proj);
+    for (int i = 0; i < track_count; ++i) {
+        MediaTrack* track = GetTrack(proj, i);
+        if (!track) {
+            continue;
+        }
+
+        char source_id_buf[256]{};
+        if (!GetSetMediaTrackInfo_String(track, "P_EXT:WINGCONNECTOR_SOURCE_ID", source_id_buf, false) ||
+            source_id_buf[0] == '\0') {
+            continue;
+        }
+
+        const std::string source_id = source_id_buf;
+        if (source_id.rfind("CH:", 0) != 0) {
+            continue;
+        }
+        try {
+            managed_channels.insert(std::stoi(source_id.substr(3)));
+        } catch (...) {
+        }
+    }
+
+    return managed_channels;
+}
+
+bool ParseManagedChannelSourceId(const std::string& source_id, int& channel_number_out) {
+    if (source_id.rfind("CH:", 0) != 0) {
+        return false;
+    }
+    try {
+        channel_number_out = std::stoi(source_id.substr(3));
+        return channel_number_out > 0;
+    } catch (...) {
+        return false;
+    }
+}
+
+std::vector<AdoptionTrackInfo> ScanProjectTracks() {
+    std::vector<AdoptionTrackInfo> tracks;
+    ReaProject* proj = EnumProjects(-1, nullptr, 0);
+    if (!proj) {
+        return tracks;
+    }
+
+    const int track_count = CountTracks(proj);
+    tracks.reserve(track_count);
+    for (int i = 0; i < track_count; ++i) {
+        MediaTrack* track = GetTrack(proj, i);
+        if (!track) {
+            continue;
+        }
+
+        AdoptionTrackInfo info;
+        info.track_index = i + 1;
+        char name_buf[512]{};
+        if (GetSetMediaTrackInfo_String(track, "P_NAME", name_buf, false) && name_buf[0] != '\0') {
+            info.name = name_buf;
+        } else {
+            info.name = "Track " + std::to_string(i + 1);
+        }
+
+        char source_id_buf[256]{};
+        info.managed = GetSetMediaTrackInfo_String(track, "P_EXT:WINGCONNECTOR_SOURCE_ID", source_id_buf, false) &&
+                       source_id_buf[0] != '\0';
+        if (info.managed) {
+            info.source_id = source_id_buf;
+            info.adopted_in_place =
+                GetSetMediaTrackInfo_String(track, "P_EXT:WINGCONNECTOR_ADOPTED_IN_PLACE", source_id_buf, false) &&
+                source_id_buf[0] == '1';
+            ParseManagedChannelSourceId(info.source_id, info.managed_channel_number);
+        }
+        info.has_items = CountTrackMediaItems(track) > 0;
+        info.stereo_like = TrackHasStereoMedia(track) || LooksLikeStereoName(info.name);
+        DecodeTrackInput(track, info.current_slot_start, info.current_slot_end);
+        tracks.push_back(info);
+    }
+
+    return tracks;
+}
+
+std::vector<SourceSelectionInfo> FilterChannelSources(const std::vector<SourceSelectionInfo>& sources) {
+    std::vector<SourceSelectionInfo> channels;
+    const auto tracks = ScanProjectTracks();
+    std::set<int> reusable_adopted_channels;
+    for (const auto& track : tracks) {
+        if (track.adopted_in_place && track.managed_channel_number > 0) {
+            reusable_adopted_channels.insert(track.managed_channel_number);
+        }
+    }
+    const std::set<int> managed_channels = CollectManagedChannelNumbers();
+    for (const auto& source : sources) {
+        if (source.kind == SourceKind::Channel &&
+            (managed_channels.count(source.source_number) == 0 ||
+             reusable_adopted_channels.count(source.source_number) > 0)) {
+            channels.push_back(source);
+        }
+    }
+    return channels;
+}
+
+bool CanAssignTrackToSource(const AdoptionTrackInfo& track,
+                            const SourceSelectionInfo& source,
+                            const std::set<int>& blocked_channels) {
+    (void)track;
+    if (blocked_channels.count(source.source_number) > 0) {
+        return false;
+    }
+    return true;
+}
+
+void ReserveAssignedChannels(const AdoptionTrackInfo& track,
+                             const SourceSelectionInfo& source,
+                             std::set<int>& blocked_channels) {
+    (void)track;
+    blocked_channels.insert(source.source_number);
+}
+
+int MatchScore(const AdoptionTrackInfo& track, const SourceSelectionInfo& source) {
+    const std::string track_name = NormalizeToken(track.name);
+    const std::string source_name = NormalizeToken(source.name);
+    const std::string channel_token = "ch" + std::to_string(source.source_number);
+
+    int score = 0;
+    if (source.kind == SourceKind::Channel && track.track_index == source.source_number) {
+        score += 80;
+    }
+    if (!track_name.empty() && !source_name.empty()) {
+        if (track_name == source_name) {
+            score += 100;
+        } else if (track_name.find(source_name) != std::string::npos || source_name.find(track_name) != std::string::npos) {
+            score += 55;
+        }
+    }
+    if (track_name.find(channel_token) != std::string::npos) {
+        score += 40;
+    }
+    if (track.has_items) {
+        score += 5;
+    }
+    return score;
+}
+
+std::vector<AdoptionSuggestion> BuildAdoptionSuggestions(const std::vector<AdoptionTrackInfo>& tracks,
+                                                         const std::vector<SourceSelectionInfo>& channel_sources) {
+    std::vector<AdoptionSuggestion> suggestions;
+    std::set<int> blocked_channels;
+    for (const auto& track : tracks) {
+        if (!track.managed || track.adopted_in_place) {
+            continue;
+        }
+        if (track.managed_channel_number > 0) {
+            blocked_channels.insert(track.managed_channel_number);
+        }
+    }
+    std::set<int> matched_tracks;
+
+    for (const auto& track : tracks) {
+        if ((track.managed && !track.adopted_in_place) || !track.has_items) {
+            continue;
+        }
+
+        int best_score = 0;
+        const SourceSelectionInfo* best_source = nullptr;
+        for (const auto& source : channel_sources) {
+            if (!CanAssignTrackToSource(track, source, blocked_channels)) {
+                continue;
+            }
+            const int score = MatchScore(track, source);
+            if (score > best_score) {
+                best_score = score;
+                best_source = &source;
+            }
+        }
+
+        if (!best_source || best_score < 40) {
+            continue;
+        }
+
+        ReserveAssignedChannels(track, *best_source, blocked_channels);
+        matched_tracks.insert(track.track_index);
+        AdoptionSuggestion suggestion;
+        suggestion.track = track;
+        suggestion.source = *best_source;
+        if (NormalizeToken(track.name) == NormalizeToken(best_source->name)) {
+            suggestion.reason = "name match";
+        } else if (NormalizeToken(track.name).find("ch" + std::to_string(best_source->source_number)) != std::string::npos) {
+            suggestion.reason = "channel-number match";
+        } else {
+            suggestion.reason = "loose name match";
+        }
+        suggestions.push_back(suggestion);
+    }
+
+    size_t channel_index = 0;
+    for (const auto& track : tracks) {
+        if ((track.managed && !track.adopted_in_place) || !track.has_items || matched_tracks.count(track.track_index) > 0) {
+            continue;
+        }
+
+        while (channel_index < channel_sources.size() &&
+               !CanAssignTrackToSource(track, channel_sources[channel_index], blocked_channels)) {
+            ++channel_index;
+        }
+        if (channel_index >= channel_sources.size()) {
+            break;
+        }
+
+        AdoptionSuggestion suggestion;
+        suggestion.track = track;
+        suggestion.source = channel_sources[channel_index];
+        suggestion.reason = "sequential fallback";
+        suggestions.push_back(suggestion);
+        ReserveAssignedChannels(track, channel_sources[channel_index], blocked_channels);
+        ++channel_index;
+    }
+
+    std::stable_sort(suggestions.begin(), suggestions.end(), [](const AdoptionSuggestion& lhs,
+                                                                const AdoptionSuggestion& rhs) {
+        return lhs.track.track_index < rhs.track.track_index;
+    });
+
+    return suggestions;
+}
+
+std::string BuildAdoptionReviewSummary(const std::vector<AdoptionTrackInfo>& tracks,
+                                       const std::vector<SourceSelectionInfo>& channel_sources,
+                                       const std::vector<AdoptionSuggestion>& suggestions) {
+    int managed_tracks = 0;
+    int import_like_tracks = 0;
+    int ignored_tracks = 0;
+    for (const auto& track : tracks) {
+        if (track.managed) {
+            managed_tracks++;
+        } else if (track.has_items) {
+            import_like_tracks++;
+        } else {
+            ignored_tracks++;
+        }
+    }
+
+    std::ostringstream out;
+    out << "Existing Project Adoption Review\n\n"
+        << "This is a review-first flow. WINGuard will not write any track metadata or routing unless you confirm Adopt In Place after this summary.\n\n"
+        << "Project scan:\n"
+        << "- Total REAPER tracks: " << tracks.size() << "\n"
+        << "- Already managed: " << managed_tracks << "\n"
+        << "- Candidate imported tracks with media: " << import_like_tracks << "\n"
+        << "- Ignored for now (no media items or managed already): " << ignored_tracks << "\n\n"
+        << "WING scan:\n"
+        << "- Available channel sources: " << channel_sources.size() << "\n\n"
+        << "Suggested channel mappings: " << suggestions.size() << "\n";
+
+    const size_t preview_count = std::min<size_t>(6, suggestions.size());
+    for (size_t i = 0; i < preview_count; ++i) {
+        const auto& suggestion = suggestions[i];
+        out << "- Track " << suggestion.track.track_index << " (" << suggestion.track.name << ") -> "
+            << "CH" << suggestion.source.source_number;
+        if (!suggestion.source.name.empty()) {
+            out << " (" << suggestion.source.name << ")";
+        }
+        out << " [" << suggestion.reason << "]\n";
+    }
+    if (suggestions.size() > preview_count) {
+        out << "- ...\n";
+    }
+
+    out << "\nPlanned v1 behavior:\n"
+        << "- separate adoption action\n"
+        << "- review mappings before any write\n"
+        << "- Adopt In Place marks the matched imported tracks as managed and rewrites their WINGuard routing\n"
+        << "- channels only in v1\n"
+        << "- preserve imported track names, order, and FX\n";
+
+    if (suggestions.empty()) {
+        out << "\nNo channel mappings were suggested from the current project. This usually means there were no remaining unmanaged WING channels or no imported tracks with media items to adopt.\n";
+    }
+
+    return out.str();
+}
+
+AdoptionDialogPlan BuildDefaultAdoptionPlan(const std::vector<AdoptionSuggestion>& suggestions, const std::string& output_mode) {
+    AdoptionDialogPlan plan;
+    plan.output_mode = NormalizeOutputMode(output_mode);
+    plan.rows.reserve(suggestions.size());
+    for (const auto& suggestion : suggestions) {
+        AdoptionDialogPlanRow row;
+        row.suggestion = suggestion;
+        row.plan_row.track.track_index = suggestion.track.track_index;
+        row.plan_row.track.name = suggestion.track.name;
+        row.plan_row.track.stereo_like = suggestion.track.stereo_like;
+        row.plan_row.assigned_source = suggestion.source;
+        row.plan_row.assigned_source.selected = true;
+        row.plan_row.assigned_source.stereo_linked = suggestion.track.stereo_like;
+        row.plan_row.assigned_source.stereo_intent_override = suggestion.track.stereo_like;
+        plan.rows.push_back(row);
+    }
+    return plan;
+}
+
+bool ParseAssignedChannelValue(const std::string& token, int& channel_number_out) {
+    std::string upper = NormalizeUpper(TrimCopy(token));
+    if (upper.rfind("CH", 0) == 0) {
+        upper.erase(0, 2);
+    }
+    try {
+        channel_number_out = std::stoi(upper);
+        return channel_number_out > 0;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool ParseSlotValue(const std::string& token,
+                    const std::string& output_mode,
+                    bool stereo,
+                    int& slot_start_out,
+                    int& slot_end_out,
+                    std::string& error_out) {
+    std::string upper = NormalizeUpper(TrimCopy(token));
+    if (upper.empty()) {
+        error_out = "Playback slot override cannot be empty.";
+        return false;
+    }
+    const std::string mode = NormalizeOutputMode(output_mode);
+    if (upper.rfind("USB", 0) == 0) {
+        if (mode != "USB") {
+            error_out = "Playback slot override uses USB while the plan mode is CARD.";
+            return false;
+        }
+        upper.erase(0, 3);
+    } else if (upper.rfind("CARD", 0) == 0) {
+        if (mode != "CARD") {
+            error_out = "Playback slot override uses CARD while the plan mode is USB.";
+            return false;
+        }
+        upper.erase(0, 4);
+    }
+
+    upper = TrimCopy(upper);
+    const size_t dash = upper.find('-');
+    try {
+        if (dash == std::string::npos) {
+            slot_start_out = std::stoi(upper);
+            slot_end_out = stereo ? (slot_start_out + 1) : slot_start_out;
+        } else {
+            slot_start_out = std::stoi(upper.substr(0, dash));
+            slot_end_out = std::stoi(upper.substr(dash + 1));
+        }
+    } catch (...) {
+        error_out = "Playback slot overrides must look like 9, 9-10, USB9, or CARD9-10.";
+        return false;
+    }
+
+    if (slot_start_out <= 0 || slot_end_out < slot_start_out) {
+        error_out = "Playback slot override range is invalid.";
+        return false;
+    }
+    if (stereo) {
+        if (slot_end_out != slot_start_out + 1) {
+            error_out = "Stereo rows must use a contiguous slot pair such as 9-10.";
+            return false;
+        }
+        if ((slot_start_out % 2) == 0) {
+            error_out = "Stereo rows must start on an odd playback slot.";
+            return false;
+        }
+    } else if (slot_end_out != slot_start_out) {
+        error_out = "Mono rows can only use a single playback slot.";
+        return false;
+    }
+    return true;
+}
+
+bool ParseAdoptionChannelAssignments(const std::string& spec,
+                                     const std::map<int, SourceSelectionInfo>& available_channels,
+                                     AdoptionDialogPlan& plan,
+                                     std::string& error_out) {
+    if (TrimCopy(spec).empty()) {
+        return true;
+    }
+
+    std::map<int, size_t> row_by_track;
+    for (size_t i = 0; i < plan.rows.size(); ++i) {
+        row_by_track[plan.rows[i].suggestion.track.track_index] = i;
+    }
+
+    for (const auto& token : SplitDelimited(spec, ';')) {
+        if (token.empty()) {
+            continue;
+        }
+        const size_t equals_pos = token.find('=');
+        if (equals_pos == std::string::npos) {
+            error_out = "Channel assignments must look like 2=CH8 or TRACK4=12.";
+            return false;
+        }
+
+        int track_index = 0;
+        if (!ParseTrackKey(token.substr(0, equals_pos), track_index)) {
+            error_out = "Channel assignment keys must reference a REAPER track index.";
+            return false;
+        }
+        auto row_it = row_by_track.find(track_index);
+        if (row_it == row_by_track.end()) {
+            error_out = "Channel assignment references a track that is not part of this adoption plan.";
+            return false;
+        }
+
+        int channel_number = 0;
+        if (!ParseAssignedChannelValue(token.substr(equals_pos + 1), channel_number)) {
+            error_out = "Channel assignment targets must look like CH8 or 8.";
+            return false;
+        }
+        auto channel_it = available_channels.find(channel_number);
+        if (channel_it == available_channels.end()) {
+            error_out = "Requested WING channel CH" + std::to_string(channel_number) +
+                        " is not available for adoption in this project.";
+            return false;
+        }
+
+        auto& row = plan.rows[row_it->second];
+        row.plan_row.assigned_source = channel_it->second;
+        row.plan_row.assigned_source.selected = true;
+        row.plan_row.assigned_source.stereo_linked = row.suggestion.track.stereo_like;
+        row.plan_row.assigned_source.stereo_intent_override = row.suggestion.track.stereo_like;
+    }
+    return true;
+}
+
+bool ParseAdoptionSlotOverrides(const std::string& spec,
+                                AdoptionDialogPlan& plan,
+                                std::string& error_out) {
+    if (TrimCopy(spec).empty()) {
+        return true;
+    }
+
+    std::map<int, size_t> row_by_track;
+    for (size_t i = 0; i < plan.rows.size(); ++i) {
+        row_by_track[plan.rows[i].suggestion.track.track_index] = i;
+    }
+
+    for (const auto& token : SplitDelimited(spec, ';')) {
+        if (token.empty()) {
+            continue;
+        }
+        const size_t equals_pos = token.find('=');
+        if (equals_pos == std::string::npos) {
+            error_out = "Playback slot overrides must look like 2=9-10 or TRACK3=4.";
+            return false;
+        }
+
+        int track_index = 0;
+        if (!ParseTrackKey(token.substr(0, equals_pos), track_index)) {
+            error_out = "Playback slot override keys must reference a REAPER track index.";
+            return false;
+        }
+        auto row_it = row_by_track.find(track_index);
+        if (row_it == row_by_track.end()) {
+            error_out = "Playback slot override references a track that is not part of this adoption plan.";
+            return false;
+        }
+
+        auto& row = plan.rows[row_it->second];
+        int slot_start = 0;
+        int slot_end = 0;
+        if (!ParseSlotValue(token.substr(equals_pos + 1),
+                            plan.output_mode,
+                            row.suggestion.track.stereo_like,
+                            slot_start,
+                            slot_end,
+                            error_out)) {
+            return false;
+        }
+
+        row.plan_row.slot_overridden = true;
+        row.plan_row.slot_start = slot_start;
+        row.plan_row.slot_end = slot_end;
+    }
+    return true;
+}
+
+bool ValidateAdoptionAssignments(const AdoptionDialogPlan& plan,
+                                 const std::vector<ExistingManagedRoute>& existing_routes,
+                                 std::string& error_out) {
+    std::vector<WingConnector::AdoptionPlan::Row> rows;
+    rows.reserve(plan.rows.size());
+    for (const auto& row : plan.rows) {
+        rows.push_back(row.plan_row);
+    }
+    std::vector<WingConnector::AdoptionPlan::ExistingRoute> existing;
+    existing.reserve(existing_routes.size());
+    for (const auto& route : existing_routes) {
+        existing.push_back({route.source_id, route.slot_start, route.slot_end});
+    }
+    return WingConnector::AdoptionPlan::ValidateAssignments(rows, existing, plan.output_mode, error_out);
+}
+
+bool BuildAdoptionRequestedAllocations(const AdoptionDialogPlan& plan,
+                                       const std::vector<ExistingManagedRoute>& existing_routes,
+                                       std::vector<USBAllocation>& allocations_out,
+                                       std::string& error_out) {
+    std::vector<WingConnector::AdoptionPlan::Row> rows;
+    rows.reserve(plan.rows.size());
+    for (const auto& row : plan.rows) {
+        rows.push_back(row.plan_row);
+    }
+    std::vector<WingConnector::AdoptionPlan::ExistingRoute> existing;
+    existing.reserve(existing_routes.size());
+    for (const auto& route : existing_routes) {
+        existing.push_back({route.source_id, route.slot_start, route.slot_end});
+    }
+    return WingConnector::AdoptionPlan::BuildRequestedAllocations(rows, existing, plan.output_mode, allocations_out, error_out);
+}
+
+std::vector<SourceSelectionInfo> BuildSelectedSourcesFromPlan(const AdoptionDialogPlan& plan) {
+    std::vector<WingConnector::AdoptionPlan::Row> rows;
+    rows.reserve(plan.rows.size());
+    for (const auto& row : plan.rows) {
+        rows.push_back(row.plan_row);
+    }
+    return WingConnector::AdoptionPlan::BuildSelectedSources(rows);
+}
+
+void MarkTracksAdoptedInPlace(const AdoptionDialogPlan& plan) {
+    ReaProject* proj = EnumProjects(-1, nullptr, 0);
+    if (!proj) {
+        return;
+    }
+
+    for (const auto& row : plan.rows) {
+        MediaTrack* track = GetTrack(proj, row.suggestion.track.track_index - 1);
+        if (!track) {
+            continue;
+        }
+
+        const std::string source_id = WingConnector::AdoptionPlan::SourcePersistentId(row.plan_row.assigned_source);
+        GetSetMediaTrackInfo_String(track, "P_EXT:WINGCONNECTOR_SOURCE_ID", const_cast<char*>(source_id.c_str()), true);
+        GetSetMediaTrackInfo_String(track, "P_EXT:WINGCONNECTOR_ADOPTED_IN_PLACE", const_cast<char*>("1"), true);
+    }
+}
+
+struct AdoptionTrackMetadataSnapshot {
+    int track_index = 0;
+    std::string source_id;
+    std::string adopted_in_place;
+};
+
+std::vector<AdoptionTrackMetadataSnapshot> CaptureAdoptionTrackMetadata(const AdoptionDialogPlan& plan) {
+    std::vector<AdoptionTrackMetadataSnapshot> snapshots;
+    ReaProject* proj = EnumProjects(-1, nullptr, 0);
+    if (!proj) {
+        return snapshots;
+    }
+
+    snapshots.reserve(plan.rows.size());
+    for (const auto& row : plan.rows) {
+        MediaTrack* track = GetTrack(proj, row.suggestion.track.track_index - 1);
+        if (!track) {
+            continue;
+        }
+
+        AdoptionTrackMetadataSnapshot snapshot;
+        snapshot.track_index = row.suggestion.track.track_index;
+
+        char source_id_buf[256]{};
+        if (GetSetMediaTrackInfo_String(track, "P_EXT:WINGCONNECTOR_SOURCE_ID", source_id_buf, false) &&
+            source_id_buf[0] != '\0') {
+            snapshot.source_id = source_id_buf;
+        }
+
+        char adopted_buf[32]{};
+        if (GetSetMediaTrackInfo_String(track, "P_EXT:WINGCONNECTOR_ADOPTED_IN_PLACE", adopted_buf, false) &&
+            adopted_buf[0] != '\0') {
+            snapshot.adopted_in_place = adopted_buf;
+        }
+
+        snapshots.push_back(snapshot);
+    }
+    return snapshots;
+}
+
+void RestoreAdoptionTrackMetadata(const std::vector<AdoptionTrackMetadataSnapshot>& snapshots) {
+    ReaProject* proj = EnumProjects(-1, nullptr, 0);
+    if (!proj) {
+        return;
+    }
+
+    for (const auto& snapshot : snapshots) {
+        MediaTrack* track = GetTrack(proj, snapshot.track_index - 1);
+        if (!track) {
+            continue;
+        }
+
+        if (snapshot.source_id.empty()) {
+            GetSetMediaTrackInfo_String(track, "P_EXT:WINGCONNECTOR_SOURCE_ID", const_cast<char*>(""), true);
+        } else {
+            GetSetMediaTrackInfo_String(track, "P_EXT:WINGCONNECTOR_SOURCE_ID", const_cast<char*>(snapshot.source_id.c_str()), true);
+        }
+
+        if (snapshot.adopted_in_place.empty()) {
+            GetSetMediaTrackInfo_String(track, "P_EXT:WINGCONNECTOR_ADOPTED_IN_PLACE", const_cast<char*>(""), true);
+        } else {
+            GetSetMediaTrackInfo_String(track, "P_EXT:WINGCONNECTOR_ADOPTED_IN_PLACE", const_cast<char*>(snapshot.adopted_in_place.c_str()), true);
+        }
+    }
+}
+
+bool ParseSimpleOnOffFlag(const std::string& value, bool& enabled_out) {
+    std::string upper = TrimCopy(value);
+    std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    if (upper == "1" || upper == "ON" || upper == "YES" || upper == "TRUE") {
+        enabled_out = true;
+        return true;
+    }
+    if (upper == "0" || upper == "OFF" || upper == "NO" || upper == "FALSE") {
+        enabled_out = false;
+        return true;
+    }
+    return false;
 }
 
 bool ParseMappingSpec(const std::string& spec, std::vector<BridgeMapping>& mappings_out, std::string& error_out) {
@@ -207,11 +1001,8 @@ std::string BuildDefaultSelectionSpec(const std::vector<SourceSelectionInfo>& so
         any_selected = true;
         selected_only_channels = selected_only_channels && source.kind == SourceKind::Channel;
     }
-    if (any_selected && selected_only_channels) {
-        return "ALL_CH";
-    }
     if (any_selected) {
-        return "ALL";
+        return "CURRENT";
     }
     return "ALL_CH";
 }
@@ -227,7 +1018,7 @@ bool ParseSelectionSpec(const std::string& spec,
 
     const std::string trimmed = TrimCopy(spec);
     if (trimmed.empty()) {
-        error_out = "Enter ALL_CH, ALL, or a comma-separated list such as CH1-8,BUS1.";
+        error_out = "Enter CURRENT, ALL_CH, ALL, or a comma-separated list such as CH1-8,BUS1.";
         return false;
     }
 
@@ -255,6 +1046,12 @@ bool ParseSelectionSpec(const std::string& spec,
         if (token == "ALL_CH") {
             select_if([](const SourceSelectionInfo& source) {
                 return source.kind == SourceKind::Channel;
+            });
+            continue;
+        }
+        if (token == "CURRENT" || token == "MANAGED") {
+            select_if([](const SourceSelectionInfo& source) {
+                return source.selected;
             });
             continue;
         }
@@ -344,6 +1141,7 @@ std::string BuildSourceCatalog(const std::vector<SourceSelectionInfo>& sources) 
         out << "- " << SourceDisplayName(source) << "\n";
     }
     out << "\nSelection shortcuts:\n"
+        << "- CURRENT = rebuild the current managed selection\n"
         << "- ALL_CH = all channels\n"
         << "- ALL = every discovered source\n"
         << "- ALL_SC = all soundcheck-capable sources\n"
@@ -481,7 +1279,7 @@ void RunCrossPlatformDialog() {
 
     if (!GetUserInputs("WINGuard Setup Review",
                        3,
-                       "Source selection (ALL_CH/ALL/ALL_SC or ranges),Mode (SOUNDCHECK/RECORD),Replace managed tracks (1/0)",
+                       "Source selection (CURRENT/ALL_CH/ALL/ALL_SC or ranges),Mode (SOUNDCHECK/RECORD),Replace managed tracks (1/0)",
                        values,
                        sizeof(values))) {
         return;
@@ -529,12 +1327,12 @@ void RunCrossPlatformDialog() {
     }
 
     ShowMessageBox(BuildSelectionSummary(selected_sources, setup_soundcheck, replace_existing).c_str(),
-                   "WINGuard: Review Pending Setup",
+                   "WINGuard: Review or Rebuild Setup",
                    0);
 
     char confirm_values[32];
     std::snprintf(confirm_values, sizeof(confirm_values), "%d", 0);
-    if (!GetUserInputs("Apply WINGuard Setup",
+    if (!GetUserInputs("Apply or Rebuild WINGuard Setup",
                        1,
                        "Type 1 to apply this setup now, or 0 to cancel",
                        confirm_values,
@@ -687,6 +1485,219 @@ void ShowMainDialog() {
 
 void ShowSelectedChannelBridgeDialog() {
     ShowBridgeSetupWizard();
+}
+
+void ShowExistingProjectAdoptionDialog() {
+    auto& extension = ReaperExtension::Instance();
+    auto& config = extension.GetConfig();
+
+    if (!extension.IsConnected()) {
+        if (config.wing_ip.empty()) {
+            ShowMessageBox("Connect WINGuard to a WING first, or set a manual WING IP before running adoption review.",
+                           "WINGuard: Existing Project Adoption",
+                           0);
+            return;
+        }
+        const bool connected = extension.ConnectToWing();
+        if (!connected) {
+            ShowMessageBox("WINGuard could not connect to the configured WING. Adoption review needs a live WING connection for channel metadata.",
+                           "WINGuard: Existing Project Adoption",
+                           0);
+            return;
+        }
+    }
+
+    const auto available_sources = extension.GetAvailableSources();
+    const auto channel_sources = FilterChannelSources(available_sources);
+    if (channel_sources.empty()) {
+        ShowMessageBox("No WING channel sources were discovered. Adoption review cannot continue without live channel metadata.",
+                       "WINGuard: Existing Project Adoption",
+                       0);
+        return;
+    }
+
+    const auto tracks = ScanProjectTracks();
+    if (tracks.empty()) {
+        ShowMessageBox("The current REAPER project has no tracks to review for adoption.",
+                       "WINGuard: Existing Project Adoption",
+                       0);
+        return;
+    }
+
+    const auto suggestions = BuildAdoptionSuggestions(tracks, channel_sources);
+
+    if (suggestions.empty()) {
+        const std::string summary = BuildAdoptionReviewSummary(tracks, channel_sources, suggestions);
+        ShowMessageBox(summary.c_str(), "WINGuard: Existing Project Adoption", 0);
+        return;
+    }
+
+    std::map<int, SourceSelectionInfo> available_channel_map;
+    for (const auto& source : channel_sources) {
+        available_channel_map[source.source_number] = source;
+    }
+    const auto existing_routes = CollectExistingManagedRoutes();
+    const std::string current_mode = (config.soundcheck_output_mode == "CARD") ? "CARD" : "USB";
+
+#ifdef __APPLE__
+    AdoptionDialogPlan preview_plan = BuildDefaultAdoptionPlan(suggestions, current_mode);
+    std::string preview_error;
+    std::vector<PlaybackAllocation> preview_allocations;
+    BuildAdoptionRequestedAllocations(preview_plan, existing_routes, preview_allocations, preview_error);
+    std::map<std::string, PlaybackAllocation> preview_by_source_id;
+    for (const auto& allocation : preview_allocations) {
+        SourceSelectionInfo source;
+        source.kind = allocation.source_kind;
+        source.source_number = allocation.source_number;
+        preview_by_source_id[WingConnector::AdoptionPlan::SourcePersistentId(source)] = allocation;
+    }
+    std::vector<AdoptionEditorRow> editor_rows;
+    editor_rows.reserve(suggestions.size());
+    std::vector<int> available_channels;
+    available_channels.reserve(channel_sources.size());
+    for (const auto& source : channel_sources) {
+        available_channels.push_back(source.source_number);
+    }
+    for (const auto& suggestion : suggestions) {
+        AdoptionEditorRow row;
+        row.track_index = suggestion.track.track_index;
+        row.track_name = suggestion.track.name;
+        row.stereo_like = suggestion.track.stereo_like;
+        row.suggested_channel = suggestion.source.source_number;
+        row.assigned_channel = suggestion.source.source_number;
+        const std::string preview_source_id = WingConnector::AdoptionPlan::SourcePersistentId(suggestion.source);
+        auto preview_it = preview_by_source_id.find(preview_source_id);
+        if (preview_it != preview_by_source_id.end()) {
+            row.suggested_slot_start = preview_it->second.usb_start;
+            row.suggested_slot_end = preview_it->second.usb_end;
+        }
+        editor_rows.push_back(row);
+    }
+    std::string output_mode_value;
+    std::string channel_overrides_value;
+    std::string slot_overrides_value;
+    bool apply_now = false;
+    if (!ShowExistingProjectAdoptionEditor(editor_rows,
+                                           available_channels,
+                                           current_mode.c_str(),
+                                           output_mode_value,
+                                           channel_overrides_value,
+                                           slot_overrides_value,
+                                           apply_now)) {
+        return;
+    }
+
+    AdoptionDialogPlan plan = BuildDefaultAdoptionPlan(suggestions, output_mode_value);
+    std::string parse_error;
+    if (!ParseAdoptionChannelAssignments(channel_overrides_value, available_channel_map, plan, parse_error)) {
+        ShowMessageBox(parse_error.c_str(), "WINGuard: Existing Project Adoption", 0);
+        return;
+    }
+    if (!ParseAdoptionSlotOverrides(slot_overrides_value, plan, parse_error)) {
+        ShowMessageBox(parse_error.c_str(), "WINGuard: Existing Project Adoption", 0);
+        return;
+    }
+    if (!ValidateAdoptionAssignments(plan, existing_routes, parse_error)) {
+        ShowMessageBox(parse_error.c_str(), "WINGuard: Existing Project Adoption", 0);
+        return;
+    }
+    if (!apply_now) {
+        ShowMessageBox("In-place adoption cancelled before any routing or metadata changes were applied.",
+                       "WINGuard: Existing Project Adoption",
+                       0);
+        return;
+    }
+#else
+    char values[4096];
+    std::snprintf(values,
+                  sizeof(values),
+                  "%s,%s,%s,%d",
+                  current_mode.c_str(),
+                  "",
+                  "",
+                  0);
+
+    if (!GetUserInputs("Editable Existing Project Adoption",
+                       4,
+                       "Mode (USB/CARD),Channel overrides (2=CH8;3=CH2),Slot overrides (2=9-10;3=4),Apply now (1/0)",
+                       values,
+                       sizeof(values))) {
+        return;
+    }
+
+    const auto parts = SplitDelimited(values, ',');
+    if (parts.size() != 4) {
+        ShowMessageBox("Expected 4 values: mode, channel overrides, slot overrides, and apply flag.",
+                       "WINGuard: Existing Project Adoption",
+                       0);
+        return;
+    }
+
+    AdoptionDialogPlan plan = BuildDefaultAdoptionPlan(suggestions, parts[0]);
+    std::string parse_error;
+    if (!ParseAdoptionChannelAssignments(parts[1], available_channel_map, plan, parse_error)) {
+        ShowMessageBox(parse_error.c_str(), "WINGuard: Existing Project Adoption", 0);
+        return;
+    }
+    if (!ParseAdoptionSlotOverrides(parts[2], plan, parse_error)) {
+        ShowMessageBox(parse_error.c_str(), "WINGuard: Existing Project Adoption", 0);
+        return;
+    }
+    if (!ValidateAdoptionAssignments(plan, existing_routes, parse_error)) {
+        ShowMessageBox(parse_error.c_str(), "WINGuard: Existing Project Adoption", 0);
+        return;
+    }
+
+    bool apply_now = false;
+    if (!ParseSimpleOnOffFlag(parts[3], apply_now) || !apply_now) {
+        ShowMessageBox("In-place adoption cancelled before any routing or metadata changes were applied.",
+                       "WINGuard: Existing Project Adoption",
+                       0);
+        return;
+    }
+#endif
+
+    std::vector<PlaybackAllocation> requested_allocations;
+    if (!BuildAdoptionRequestedAllocations(plan, existing_routes, requested_allocations, parse_error)) {
+        ShowMessageBox(parse_error.c_str(), "WINGuard: Existing Project Adoption", 0);
+        return;
+    }
+
+    auto selected_sources = BuildSelectedSourcesFromPlan(plan);
+    const auto metadata_snapshots = CaptureAdoptionTrackMetadata(plan);
+    MarkTracksAdoptedInPlace(plan);
+    const bool applied = extension.SetupSoundcheckFromPlan(selected_sources,
+                                                           requested_allocations,
+                                                           plan.output_mode,
+                                                           true,
+                                                           false);
+    if (!applied) {
+        RestoreAdoptionTrackMetadata(metadata_snapshots);
+        ShowMessageBox("Adoption apply did not complete. Existing imported tracks were left unmanaged.",
+                       "WINGuard: Existing Project Adoption",
+                       0);
+        return;
+    }
+
+    std::string validation_details;
+    const ValidationState validation_state = extension.ValidateLiveRecordingSetup(validation_details);
+    std::ostringstream result;
+    result << "In-place adoption completed for " << selected_sources.size() << " channel mappings.\n\n"
+           << "Mode: " << plan.output_mode << "\n"
+           << "Behavior: imported tracks were marked as managed and their routing was rewritten in place.\n\n";
+
+    if (validation_state == ValidationState::Ready) {
+        result << "Validation: ready.\n";
+    } else if (validation_state == ValidationState::Warning) {
+        result << "Validation: warning.\n";
+    } else {
+        result << "Validation: not ready.\n";
+    }
+    if (!validation_details.empty()) {
+        result << validation_details << "\n\n";
+    }
+    result << "Use the main WINGuard action to switch Live/Soundcheck mode once the setup is ready.";
+    ShowMessageBox(result.str().c_str(), "WINGuard: Existing Project Adoption", 0);
 }
 
 } // namespace WingConnector

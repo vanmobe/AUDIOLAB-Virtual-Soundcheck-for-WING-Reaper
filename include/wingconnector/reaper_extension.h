@@ -43,7 +43,12 @@ public:
     // Channel operations (called by dialog)
     std::vector<SourceSelectionInfo> GetAvailableSources();
     void CreateTracksFromSelection(const std::vector<SourceSelectionInfo>& channels);
-    void SetupSoundcheckFromSelection(const std::vector<SourceSelectionInfo>& channels, bool setup_soundcheck = true, bool replace_existing = true);
+    bool SetupSoundcheckFromSelection(const std::vector<SourceSelectionInfo>& channels, bool setup_soundcheck = true, bool replace_existing = true);
+    bool SetupSoundcheckFromPlan(const std::vector<SourceSelectionInfo>& channels,
+                                 const std::vector<PlaybackAllocation>& requested_allocations,
+                                 const std::string& output_mode,
+                                 bool setup_soundcheck = true,
+                                 bool replace_existing = true);
     bool CheckOutputModeAvailability(const std::string& output_mode, std::string& details) const;
     ValidationState ValidateLiveRecordingSetup(std::string& details);
     ValidationState ValidateMidiActionSetup(std::string& details);
@@ -142,6 +147,7 @@ private:
     // MIDI input handling  
     void ProcessMidiInput(const unsigned char* data, int len);
     void MonitorAutoRecordLoop();
+    bool RefreshSoundcheckModeFromWing();
     void StartAutoRecordMonitor();
     void StopAutoRecordMonitor();
     void QueueManagedSourceMonitorWarning(const std::string& warning);
@@ -170,7 +176,7 @@ private:
     bool ReapplyManagedChannelRouting(const std::map<int, ManagedChannelInputState>& latest_states, const std::string& reason);
     void ApplyManagedTrackMetadataUpdate(const std::map<int, ManagedChannelDisplayState>& latest_display_states);
     void ApplyManagedTrackRoutingUpdate(const std::vector<SourceSelectionInfo>& selected_sources,
-                                        const std::vector<USBAllocation>& allocations);
+                                        const std::vector<PlaybackAllocation>& allocations);
     void StartSelectedChannelBridge();
     void StopSelectedChannelBridge();
     void SelectedChannelBridgeLoop();
@@ -180,6 +186,11 @@ private:
     bool FindBridgeMapping(SourceKind kind, int source_number, BridgeMapping& mapping_out) const;
     void SendBridgeMidiMessage(int status, int data1, int data2) const;
     bool BridgeMessageNeedsRelease() const;
+    bool SetupSoundcheckInternal(const std::vector<SourceSelectionInfo>& channels,
+                                 const std::vector<PlaybackAllocation>* requested_allocations,
+                                 const std::string* output_mode_override,
+                                 bool setup_soundcheck,
+                                 bool replace_existing);
     
     // Callbacks
     void OnChannelDataReceived(const ChannelInfo& channel);
@@ -213,6 +224,8 @@ private:
     std::vector<int> managed_monitor_channel_numbers_;
     std::map<int, ManagedChannelInputState> managed_monitor_snapshot_;
     std::map<int, ManagedChannelDisplayState> managed_monitor_display_snapshot_;
+    std::map<int, int> managed_monitor_unreadable_counts_;
+    int managed_monitor_degraded_cycle_count_{0};
     std::unique_ptr<std::thread> manual_transport_flash_thread_;
     std::mutex manual_transport_flash_mutex_;
     std::atomic<long long> transport_guard_until_ms_{0};

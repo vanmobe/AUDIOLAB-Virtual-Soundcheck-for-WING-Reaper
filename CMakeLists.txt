@@ -215,6 +215,10 @@ install(FILES config.json OPTIONAL
     DESTINATION .
 )
 
+install(FILES assets/wingguard-logo.png
+    DESTINATION .
+)
+
 # Print build info
 message(STATUS "AUDIOLAB.wing.reaper.virtualsoundcheck ${PROJECT_VERSION}")
 message(STATUS "Building for: ${CMAKE_SYSTEM_NAME}")

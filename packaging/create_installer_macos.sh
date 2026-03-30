@@ -7,6 +7,7 @@ OUT_DIR="${3:-releases}"
 
 PLUGIN_NAME="reaper_wingconnector.dylib"
 CONFIG_NAME="config.json"
+LOGO_NAME="wingguard-logo.png"
 PKG_ID="com.audiolab.wing.reaper.virtualsoundcheck"
 INSTALL_TARGET="/Library/Application Support/REAPER/UserPlugins"
 
@@ -23,6 +24,10 @@ HAS_CONFIG=0
 if [[ -f "$STAGE_DIR/$CONFIG_NAME" ]]; then
   HAS_CONFIG=1
 fi
+HAS_LOGO=0
+if [[ -f "$STAGE_DIR/$LOGO_NAME" ]]; then
+  HAS_LOGO=1
+fi
 
 mkdir -p "$OUT_DIR"
 TMP_ROOT="$(mktemp -d)"
@@ -33,6 +38,9 @@ mkdir -p "$PKG_ROOT" "$PKG_SCRIPTS"
 cp "$STAGE_DIR/$PLUGIN_NAME" "$PKG_ROOT/$PLUGIN_NAME"
 if [[ "$HAS_CONFIG" -eq 1 ]]; then
   cp "$STAGE_DIR/$CONFIG_NAME" "$PKG_ROOT/$CONFIG_NAME"
+fi
+if [[ "$HAS_LOGO" -eq 1 ]]; then
+  cp "$STAGE_DIR/$LOGO_NAME" "$PKG_ROOT/$LOGO_NAME"
 fi
 
 cat > "$PKG_SCRIPTS/postinstall" << 'POSTINSTALL'
@@ -46,6 +54,7 @@ if [[ -d "$HOME/Library/Application Support/REAPER" ]]; then
   mkdir -p "$USER_PLUGINS_DIR"
   cp -f "$SYSTEM_PLUGINS_DIR/reaper_wingconnector.dylib" "$USER_PLUGINS_DIR/"
   cp -f "$SYSTEM_PLUGINS_DIR/config.json" "$USER_PLUGINS_DIR/" || true
+  cp -f "$SYSTEM_PLUGINS_DIR/wingguard-logo.png" "$USER_PLUGINS_DIR/" || true
   chmod 755 "$USER_PLUGINS_DIR/reaper_wingconnector.dylib"
 fi
 

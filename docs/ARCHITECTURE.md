@@ -42,7 +42,8 @@ Headers are split between:
 7. Track manager creates/updates REAPER tracks.
 8. Optional auto-trigger and virtual soundcheck actions operate from dialog controls.
 9. Optional MIDI CC transport/marker control is handled directly by plugin MIDI hooks/capture (with WING custom-button command syncing).
-10. After a channel-based setup is applied, a managed-source watcher polls only the managed WING channels and reapplies routing when compatible source changes are detected.
+10. After a channel-based setup is applied, a managed-source watcher polls only the managed WING channels, tolerates brief all-channel or per-channel read glitches, and reapplies routing when compatible source changes are detected.
+11. The main-thread timer also polls managed channels for ALT-source state so Soundcheck Mode stays synchronized when it is changed directly on WING.
 
 ## UI Strategy
 

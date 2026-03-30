@@ -54,6 +54,7 @@ static reaper_plugin_info_t* g_rec = nullptr;
 // Command IDs
 static int g_cmd_main_dialog = 0;
 static int g_cmd_selected_channel_bridge = 0;
+static int g_cmd_project_adoption = 0;
 
 // ===== COMMAND HOOK (hookcommand2) =====
 /**
@@ -79,8 +80,8 @@ static bool OnAction(KbdSectionInfo* sec, int cmd, int val, int valhw, int relmo
     (void)relmode;
     (void)hwnd;
 
-    Logger::Debug("OnAction() called with cmd=%d, g_cmd_main_dialog=%d, g_cmd_selected_channel_bridge=%d",
-                  cmd, g_cmd_main_dialog, g_cmd_selected_channel_bridge);
+    Logger::Debug("OnAction() called with cmd=%d, g_cmd_main_dialog=%d, g_cmd_selected_channel_bridge=%d, g_cmd_project_adoption=%d",
+                  cmd, g_cmd_main_dialog, g_cmd_selected_channel_bridge, g_cmd_project_adoption);
 
     if (cmd == g_cmd_main_dialog) {
         Logger::Debug("Main dialog command triggered!");
@@ -91,6 +92,11 @@ static bool OnAction(KbdSectionInfo* sec, int cmd, int val, int valhw, int relmo
     if (cmd == g_cmd_selected_channel_bridge) {
         Logger::Debug("Selected channel bridge command triggered!");
         ShowSelectedChannelBridgeDialog();
+        return true;
+    }
+    if (cmd == g_cmd_project_adoption) {
+        Logger::Debug("Existing project adoption command triggered!");
+        ShowExistingProjectAdoptionDialog();
         return true;
     }
 
@@ -104,8 +110,7 @@ static bool OnAction(KbdSectionInfo* sec, int cmd, int val, int valhw, int relmo
  * Register with REAPER:
  * 1. hookcommand2 callback to intercept user commands
  * 2. Custom action "Behringer Wing: Open Wing Connector"
- * 3. Separate custom action for selected-channel bridge setup notes
- * 3. Optional keyboard shortcut Ctrl+Shift+W
+ * 3. Optional keyboard shortcuts for key WINGuard actions
  *
  * REAPER will:
  * - expose the custom action in the action system
@@ -137,14 +142,14 @@ static void RegisterCommands() {
     
     Logger::Debug("Main dialog action registered with ID: %d", g_cmd_main_dialog);
 
-    custom_action_register_t bridge_action;
-    memset(&bridge_action, 0, sizeof(bridge_action));
-    bridge_action.uniqueSectionId = 0;
-    bridge_action.idStr = "_AUDIOLAB_WING_SELECTED_CHANNEL_BRIDGE";
-    bridge_action.name = "WINGuard: Selected Channel Bridge Setup";
-    g_cmd_selected_channel_bridge = g_rec->Register("custom_action", &bridge_action);
+    custom_action_register_t adoption_action;
+    memset(&adoption_action, 0, sizeof(adoption_action));
+    adoption_action.uniqueSectionId = 0;
+    adoption_action.idStr = "_AUDIOLAB_WING_PROJECT_ADOPTION";
+    adoption_action.name = "WINGuard: Adopt Existing Reaper Project for Virtual Soundcheck";
+    g_cmd_project_adoption = g_rec->Register("custom_action", &adoption_action);
 
-    Logger::Debug("Selected channel bridge action registered with ID: %d", g_cmd_selected_channel_bridge);
+    Logger::Debug("Existing project adoption action registered with ID: %d", g_cmd_project_adoption);
     
     // Register keyboard shortcut Ctrl+Shift+W for quick access
     if (g_cmd_main_dialog > 0) {
@@ -157,6 +162,7 @@ static void RegisterCommands() {
         g_rec->Register("gaccel", &accel);
 #ifdef FCOMMAND
         gaccel_register_t accel_cmd;
+        memset(&accel_cmd, 0, sizeof(accel_cmd));
         accel_cmd.accel.cmd = g_cmd_main_dialog;
         accel_cmd.accel.key = 'W';
         accel_cmd.accel.fVirt = FVIRTKEY | FCOMMAND | FSHIFT;  // Cmd+Shift on macOS
@@ -164,8 +170,37 @@ static void RegisterCommands() {
         g_rec->Register("gaccel", &accel_cmd);
 
         gaccel_register_t accel_cmd_lower;
+        memset(&accel_cmd_lower, 0, sizeof(accel_cmd_lower));
         accel_cmd_lower.accel.cmd = g_cmd_main_dialog;
         accel_cmd_lower.accel.key = 'w';
+        accel_cmd_lower.accel.fVirt = FVIRTKEY | FCOMMAND | FSHIFT;
+        accel_cmd_lower.desc = "";
+        g_rec->Register("gaccel", &accel_cmd_lower);
+#endif
+    }
+
+    if (g_cmd_project_adoption > 0) {
+        Logger::Debug("Registering keyboard shortcut Ctrl+Shift+I");
+        gaccel_register_t accel;
+        memset(&accel, 0, sizeof(accel));
+        accel.accel.cmd = g_cmd_project_adoption;
+        accel.accel.key = 'I';
+        accel.accel.fVirt = FVIRTKEY | FCONTROL | FSHIFT;
+        accel.desc = "";
+        g_rec->Register("gaccel", &accel);
+#ifdef FCOMMAND
+        gaccel_register_t accel_cmd;
+        memset(&accel_cmd, 0, sizeof(accel_cmd));
+        accel_cmd.accel.cmd = g_cmd_project_adoption;
+        accel_cmd.accel.key = 'I';
+        accel_cmd.accel.fVirt = FVIRTKEY | FCOMMAND | FSHIFT;
+        accel_cmd.desc = "";
+        g_rec->Register("gaccel", &accel_cmd);
+
+        gaccel_register_t accel_cmd_lower;
+        memset(&accel_cmd_lower, 0, sizeof(accel_cmd_lower));
+        accel_cmd_lower.accel.cmd = g_cmd_project_adoption;
+        accel_cmd_lower.accel.key = 'i';
         accel_cmd_lower.accel.fVirt = FVIRTKEY | FCOMMAND | FSHIFT;
         accel_cmd_lower.desc = "";
         g_rec->Register("gaccel", &accel_cmd_lower);

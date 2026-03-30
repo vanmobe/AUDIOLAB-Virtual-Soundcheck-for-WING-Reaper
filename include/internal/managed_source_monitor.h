@@ -23,8 +23,68 @@ struct Decision {
     std::vector<int> changed_channels;
 };
 
+struct FilterResult {
+    std::map<int, ManagedChannelInputState> snapshot;
+    std::map<int, int> unreadable_counts;
+    int degraded_cycle_count = 0;
+    bool cycle_degraded = false;
+};
+
 inline bool IsValidState(const ManagedChannelInputState& state) {
     return state.readable && !state.source_group.empty() && state.source_group != "OFF" && state.source_input > 0;
+}
+
+inline size_t CountReadableStates(const std::map<int, ManagedChannelInputState>& states) {
+    size_t readable = 0;
+    for (const auto& [channel_number, state] : states) {
+        (void)channel_number;
+        if (state.readable) {
+            readable++;
+        }
+    }
+    return readable;
+}
+
+inline FilterResult ApplyTransientReadabilityFilter(
+    const std::map<int, ManagedChannelInputState>& previous,
+    const std::map<int, ManagedChannelInputState>& current,
+    const std::map<int, int>& previous_unreadable_counts,
+    int previous_degraded_cycle_count,
+    int per_channel_threshold,
+    int degraded_cycle_threshold) {
+    FilterResult result;
+    result.snapshot = current;
+    result.unreadable_counts = previous_unreadable_counts;
+
+    result.cycle_degraded = !previous.empty() && CountReadableStates(current) == 0;
+    if (result.cycle_degraded) {
+        result.degraded_cycle_count = previous_degraded_cycle_count + 1;
+    } else {
+        result.degraded_cycle_count = 0;
+    }
+
+    for (const auto& [channel_number, current_state] : current) {
+        if (current_state.readable) {
+            result.unreadable_counts[channel_number] = 0;
+            continue;
+        }
+
+        auto previous_it = previous.find(channel_number);
+        if (previous_it == previous.end() || !IsValidState(previous_it->second)) {
+            result.unreadable_counts[channel_number] = 0;
+            continue;
+        }
+
+        const int consecutive_failures = result.unreadable_counts[channel_number] + 1;
+        result.unreadable_counts[channel_number] = consecutive_failures;
+        const bool within_cycle_grace =
+            result.cycle_degraded && result.degraded_cycle_count < degraded_cycle_threshold;
+        if (within_cycle_grace || consecutive_failures < per_channel_threshold) {
+            result.snapshot[channel_number] = previous_it->second;
+        }
+    }
+
+    return result;
 }
 
 inline Decision ClassifyChange(const std::map<int, ManagedChannelInputState>& previous,

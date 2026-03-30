@@ -15,12 +15,37 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <dlfcn.h>
 
 using namespace WingConnector;
 
 namespace {
 
 constexpr bool kShowBridgeTabInMainUI = false;
+
+NSImage* LoadWingGuardHeaderImage() {
+    static NSImage* image = nil;
+    static bool attempted = false;
+    if (attempted) {
+        return image;
+    }
+    attempted = true;
+
+    Dl_info info;
+    if (dladdr((const void*)&LoadWingGuardHeaderImage, &info) != 0 && info.dli_fname) {
+        NSString* dylibPath = [NSString stringWithUTF8String:info.dli_fname];
+        NSString* iconPath = [[[dylibPath stringByDeletingLastPathComponent]
+            stringByAppendingPathComponent:@"wingguard-logo.png"] copy];
+        image = [[NSImage alloc] initWithContentsOfFile:iconPath];
+        [iconPath release];
+    }
+
+    if (!image) {
+        image = [[NSImage alloc] initWithContentsOfFile:@"assets/wingguard-logo.png"];
+    }
+
+    return image;
+}
 
 std::vector<WingConnector::ChannelSelectionInfo> SelectedSourcesOnly(
     const std::vector<WingConnector::ChannelSelectionInfo>& all_sources) {
@@ -34,6 +59,144 @@ std::vector<WingConnector::ChannelSelectionInfo> SelectedSourcesOnly(
 }
 
 }  // namespace
+
+@interface AdoptionEditorCoordinator : NSObject <NSWindowDelegate>
+{
+@public
+    std::vector<AdoptionEditorRow> rows;
+    NSWindow* window;
+    NSSegmentedControl* modeControl;
+    NSTextField* warningLabel;
+    NSButton* applyButton;
+    NSMutableArray* channelPopups;
+    NSMutableArray* slotPopups;
+}
+- (void)rebuildSlotChoices;
+- (void)selectionChanged:(id)sender;
+- (void)applyPressed:(id)sender;
+- (void)cancelPressed:(id)sender;
+- (void)windowWillClose:(NSNotification*)notification;
+@end
+
+@implementation AdoptionEditorCoordinator
+
+- (NSString*)slotLabelForStart:(int)slotStart stereo:(BOOL)stereo {
+    if (stereo) {
+        return [NSString stringWithFormat:@"%d-%d", slotStart, slotStart + 1];
+    }
+    return [NSString stringWithFormat:@"%d", slotStart];
+}
+
+- (void)rebuildSlotChoices {
+    const bool cardMode = [modeControl selectedSegment] == 1;
+    const int slotLimit = cardMode ? 32 : 48;
+
+    for (NSInteger i = 0; i < (NSInteger)[slotPopups count]; ++i) {
+        NSPopUpButton* popup = [slotPopups objectAtIndex:i];
+        const auto& row = rows[(size_t)i];
+        const NSInteger previousTag = [[popup selectedItem] tag];
+        [popup removeAllItems];
+
+        NSString* autoLabel = @"Auto";
+        if (row.suggested_slot_start > 0) {
+            autoLabel = [NSString stringWithFormat:@"Auto (%@)",
+                         [self slotLabelForStart:row.suggested_slot_start stereo:row.stereo_like]];
+        }
+        [popup addItemWithTitle:autoLabel];
+        [[popup lastItem] setTag:0];
+
+        if (row.stereo_like) {
+            for (int slot = 1; slot + 1 <= slotLimit; slot += 2) {
+                [popup addItemWithTitle:[self slotLabelForStart:slot stereo:YES]];
+                [[popup lastItem] setTag:slot];
+            }
+        } else {
+            for (int slot = 1; slot <= slotLimit; ++slot) {
+                [popup addItemWithTitle:[self slotLabelForStart:slot stereo:NO]];
+                [[popup lastItem] setTag:slot];
+            }
+        }
+
+        const NSInteger matchingIndex = [popup indexOfItemWithTag:previousTag];
+        if (previousTag > 0 && matchingIndex >= 0) {
+            [popup selectItemAtIndex:matchingIndex];
+        } else {
+            [popup selectItemAtIndex:0];
+        }
+    }
+
+    [self selectionChanged:nil];
+}
+
+- (void)selectionChanged:(id)sender {
+    (void)sender;
+    std::set<int> chosenChannels;
+    std::set<int> chosenSlots;
+    std::string warning;
+
+    for (NSInteger i = 0; i < (NSInteger)[channelPopups count]; ++i) {
+        NSPopUpButton* channelPopup = [channelPopups objectAtIndex:i];
+        NSPopUpButton* slotPopup = [slotPopups objectAtIndex:i];
+        const auto& row = rows[(size_t)i];
+
+        const int channel = (int)[[channelPopup selectedItem] tag];
+        if (!chosenChannels.insert(channel).second) {
+            warning = "Duplicate WING channel selected. Each channel can only be assigned once.";
+            break;
+        }
+
+        const int slotStart = (int)[[slotPopup selectedItem] tag];
+        if (slotStart <= 0) {
+            continue;
+        }
+
+        if (row.stereo_like && (slotStart % 2) == 0) {
+            warning = "Stereo rows must start on an odd playback slot.";
+            break;
+        }
+
+        const int slotEnd = row.stereo_like ? (slotStart + 1) : slotStart;
+        for (int slot = slotStart; slot <= slotEnd; ++slot) {
+            if (!chosenSlots.insert(slot).second) {
+                warning = "Duplicate playback slot selected. Resolve slot conflicts before applying.";
+                break;
+            }
+        }
+        if (!warning.empty()) {
+            break;
+        }
+    }
+
+    if (warning.empty()) {
+        [warningLabel setStringValue:@"No conflicts detected."];
+        [warningLabel setTextColor:[NSColor secondaryLabelColor]];
+        [applyButton setEnabled:YES];
+    } else {
+        [warningLabel setStringValue:[NSString stringWithUTF8String:warning.c_str()]];
+        [warningLabel setTextColor:[NSColor systemRedColor]];
+        [applyButton setEnabled:NO];
+    }
+}
+
+- (void)applyPressed:(id)sender {
+    (void)sender;
+    [NSApp stopModalWithCode:NSModalResponseOK];
+    [window orderOut:nil];
+}
+
+- (void)cancelPressed:(id)sender {
+    (void)sender;
+    [NSApp stopModalWithCode:NSModalResponseCancel];
+    [window orderOut:nil];
+}
+
+- (void)windowWillClose:(NSNotification*)notification {
+    if ([notification object] == window) {
+        [NSApp stopModalWithCode:NSModalResponseCancel];
+    }
+}
+
+@end
 
 // ===== CHANNEL SELECTION DIALOG =====
 
@@ -171,6 +334,356 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     }
 }
 
+bool ShowExistingProjectAdoptionEditor(const std::vector<AdoptionEditorRow>& rows,
+                                       const std::vector<int>& available_channels,
+                                       const char* initial_output_mode,
+                                       std::string& output_mode_out,
+                                       std::string& channel_overrides_spec_out,
+                                       std::string& slot_overrides_spec_out,
+                                       bool& apply_now_out) {
+    @autoreleasepool {
+        if (rows.empty()) {
+            return false;
+        }
+
+        while (true) {
+            const CGFloat outerPadding = 20.0;
+            const CGFloat rowHeight = 26.0;
+            const CGFloat headerHeight = 26.0;
+            const CGFloat footerHeight = 96.0;
+            const CGFloat width = 780.0;
+            const CGFloat tableTopGap = 16.0;
+            const CGFloat infoHeight = 72.0;
+            const CGFloat heroHeight = 152.0;
+            const CGFloat scrollHeight = std::min<CGFloat>(360.0, headerHeight + rows.size() * rowHeight + 12.0);
+            const CGFloat tableY = footerHeight;
+            const CGFloat infoY = tableY + scrollHeight + tableTopGap;
+            const CGFloat heroY = infoY + infoHeight;
+            const CGFloat bannerIconSize = 120.0;
+            const CGFloat bannerIconX = outerPadding + 4.0;
+            const CGFloat bannerIconY = heroY + ((heroHeight - bannerIconSize) * 0.5);
+            const CGFloat bannerTitleX = bannerIconX + bannerIconSize + 18.0;
+            const CGFloat bannerTitleBaselineY = heroY + 86.0;
+            const CGFloat bannerSubtitleY = heroY + 58.0;
+            const CGFloat infoBoxX = outerPadding;
+            const CGFloat infoBoxY = infoY + 6.0;
+            const CGFloat infoBoxWidth = width - (outerPadding * 2.0);
+            const CGFloat infoBoxHeight = infoHeight - 10.0;
+            const CGFloat infoTitleY = infoBoxY + 32.0;
+            const CGFloat infoSubtitleY = infoBoxY + 6.0;
+
+            NSRect panelFrame = NSMakeRect(0, 0, width, heroHeight + infoHeight + scrollHeight + footerHeight + tableTopGap);
+            NSWindow* panel = [[NSPanel alloc] initWithContentRect:panelFrame
+                                                         styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
+                                                           backing:NSBackingStoreBuffered
+                                                             defer:NO];
+            [panel setTitle:@"WINGuard"];
+            [panel center];
+            [panel setReleasedWhenClosed:NO];
+            [panel setMovableByWindowBackground:NO];
+
+            NSView* containerView = [[NSView alloc] initWithFrame:panelFrame];
+            [panel setContentView:containerView];
+
+            NSBox* headerBox = [[NSBox alloc] initWithFrame:NSMakeRect(0, heroY, width, heroHeight)];
+            [headerBox setBoxType:NSBoxCustom];
+            [headerBox setFillColor:[NSColor colorWithWhite:0.95 alpha:1.0]];
+            [headerBox setBorderWidth:0];
+            [containerView addSubview:headerBox];
+
+            NSBox* infoBox = [[NSBox alloc] initWithFrame:NSMakeRect(infoBoxX, infoBoxY, infoBoxWidth, infoBoxHeight)];
+            [infoBox setBoxType:NSBoxCustom];
+            [infoBox setCornerRadius:10.0];
+            [infoBox setFillColor:[NSColor colorWithWhite:0.985 alpha:1.0]];
+            [infoBox setBorderWidth:1.0];
+            [infoBox setBorderColor:[NSColor colorWithWhite:0.88 alpha:1.0]];
+            [containerView addSubview:infoBox];
+
+            NSImageView* iconView = [[NSImageView alloc] initWithFrame:NSMakeRect(bannerIconX, bannerIconY, bannerIconSize, bannerIconSize)];
+            [iconView setImage:LoadWingGuardHeaderImage()];
+            [iconView setImageScaling:NSImageScaleProportionallyUpOrDown];
+            [containerView addSubview:iconView];
+
+            NSTextField* titleLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(bannerTitleX, bannerTitleBaselineY, 260.0, 24.0)];
+            [titleLabel setStringValue:@"WINGuard"];
+            [titleLabel setFont:[NSFont systemFontOfSize:18 weight:NSFontWeightMedium]];
+            [titleLabel setBezeled:NO];
+            [titleLabel setEditable:NO];
+            [titleLabel setSelectable:NO];
+            [titleLabel setBackgroundColor:[NSColor clearColor]];
+            [titleLabel setTextColor:[NSColor labelColor]];
+            [containerView addSubview:titleLabel];
+
+            NSTextField* subtitleLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(bannerTitleX, bannerSubtitleY, 380.0, 18.0)];
+            [subtitleLabel setStringValue:@"Guard every take. Faster setup, safer record(w)ing!"];
+            [subtitleLabel setFont:[NSFont systemFontOfSize:12]];
+            [subtitleLabel setBezeled:NO];
+            [subtitleLabel setEditable:NO];
+            [subtitleLabel setSelectable:NO];
+            [subtitleLabel setBackgroundColor:[NSColor clearColor]];
+            [subtitleLabel setTextColor:[NSColor secondaryLabelColor]];
+            [containerView addSubview:subtitleLabel];
+
+            NSTextField* flowTitleLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(outerPadding + 12.0, infoTitleY, width - ((outerPadding + 12.0) * 2.0), 20.0)];
+            [flowTitleLabel setStringValue:@"Adopt Existing Reaper Project For Virtual Soundcheck"];
+            [flowTitleLabel setFont:[NSFont systemFontOfSize:15 weight:NSFontWeightSemibold]];
+            [flowTitleLabel setBezeled:NO];
+            [flowTitleLabel setEditable:NO];
+            [flowTitleLabel setSelectable:NO];
+            [flowTitleLabel setBackgroundColor:[NSColor clearColor]];
+            [flowTitleLabel setTextColor:[NSColor labelColor]];
+            [flowTitleLabel setAlignment:NSTextAlignmentLeft];
+            [containerView addSubview:flowTitleLabel];
+
+            NSTextField* flowSubtitleLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(outerPadding + 12.0, infoSubtitleY, width - ((outerPadding + 12.0) * 2.0), 24.0)];
+            [flowSubtitleLabel setStringValue:@"Review or override the proposed channel mapping before applying. Slot overrides default to Auto and only show valid choices."];
+            [flowSubtitleLabel setFont:[NSFont systemFontOfSize:12]];
+            [flowSubtitleLabel setBezeled:NO];
+            [flowSubtitleLabel setEditable:NO];
+            [flowSubtitleLabel setSelectable:NO];
+            [flowSubtitleLabel setBackgroundColor:[NSColor clearColor]];
+            [flowSubtitleLabel setTextColor:[NSColor secondaryLabelColor]];
+            [flowSubtitleLabel setLineBreakMode:NSLineBreakByWordWrapping];
+            [flowSubtitleLabel setUsesSingleLineMode:NO];
+            [flowSubtitleLabel setAlignment:NSTextAlignmentLeft];
+            [containerView addSubview:flowSubtitleLabel];
+
+            NSSegmentedControl* modeControl = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(outerPadding, 14.0, 172.0, 24.0)];
+            [modeControl setSegmentCount:2];
+            [modeControl setLabel:@"USB" forSegment:0];
+            [modeControl setLabel:@"CARD" forSegment:1];
+            const std::string initial_mode = initial_output_mode ? initial_output_mode : "USB";
+            [modeControl setSelectedSegment:(initial_mode == "CARD") ? 1 : 0];
+            [containerView addSubview:modeControl];
+
+            NSTextField* hintLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(outerPadding + 194.0, 14.0, width - (outerPadding * 2.0) - 194.0 - 220.0, 24.0)];
+            [hintLabel setEditable:NO];
+            [hintLabel setBordered:NO];
+            [hintLabel setDrawsBackground:NO];
+            [hintLabel setStringValue:@"Channel changes are required only when you want a different WING channel than the suggestion."];
+            [hintLabel setLineBreakMode:NSLineBreakByTruncatingTail];
+            [containerView addSubview:hintLabel];
+
+            NSTextField* warningLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(outerPadding, 58.0, width - (outerPadding * 2.0), 18.0)];
+            [warningLabel setEditable:NO];
+            [warningLabel setBordered:NO];
+            [warningLabel setDrawsBackground:NO];
+            [warningLabel setStringValue:@"No conflicts detected."];
+            [warningLabel setTextColor:[NSColor secondaryLabelColor]];
+            [containerView addSubview:warningLabel];
+
+            NSScrollView* scrollView = [[NSScrollView alloc] initWithFrame:NSMakeRect(outerPadding, tableY, width - (outerPadding * 2.0), scrollHeight)];
+            [scrollView setHasVerticalScroller:YES];
+            [scrollView setBorderType:NSBezelBorder];
+
+            const CGFloat contentWidth = width - (outerPadding * 2.0) - 18.0;
+            const CGFloat contentHeight = headerHeight + rows.size() * rowHeight;
+            NSView* documentView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, contentWidth, contentHeight)];
+
+            NSArray<NSString*>* headerTitles = @[@"Track", @"Stereo", @"Suggested", @"WING Channel", @"Suggested Slot", @"Slot Override"];
+            NSArray<NSNumber*>* headerXs = @[@12.0, @236.0, @306.0, @404.0, @516.0, @622.0];
+            for (NSInteger i = 0; i < (NSInteger)[headerTitles count]; ++i) {
+                NSTextField* label = [[NSTextField alloc] initWithFrame:NSMakeRect([[headerXs objectAtIndex:i] doubleValue],
+                                                                                    contentHeight - headerHeight + 4.0,
+                                                                                    (i == 0 ? 210.0 : 96.0),
+                                                                                    20.0)];
+                [label setEditable:NO];
+                [label setBordered:NO];
+                [label setDrawsBackground:NO];
+                [label setFont:[NSFont boldSystemFontOfSize:12.0]];
+                [label setStringValue:[headerTitles objectAtIndex:i]];
+                [documentView addSubview:label];
+            }
+
+            NSMutableArray* channelControls = [NSMutableArray arrayWithCapacity:rows.size()];
+            NSMutableArray* slotPopups = [NSMutableArray arrayWithCapacity:rows.size()];
+
+            CGFloat y = contentHeight - headerHeight - rowHeight;
+            for (const auto& row : rows) {
+                NSTextField* trackLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(12, y + 3.0, 220.0, 20.0)];
+                [trackLabel setEditable:NO];
+                [trackLabel setBordered:NO];
+                [trackLabel setDrawsBackground:NO];
+                [trackLabel setStringValue:[NSString stringWithFormat:@"%d. %s", row.track_index, row.track_name.c_str()]];
+                [documentView addSubview:trackLabel];
+
+                NSTextField* stereoLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(236, y + 3.0, 60.0, 20.0)];
+                [stereoLabel setEditable:NO];
+                [stereoLabel setBordered:NO];
+                [stereoLabel setDrawsBackground:NO];
+                [stereoLabel setStringValue:row.stereo_like ? @"Stereo" : @"Mono"];
+                [documentView addSubview:stereoLabel];
+
+                NSTextField* suggestedLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(306, y + 3.0, 80.0, 20.0)];
+                [suggestedLabel setEditable:NO];
+                [suggestedLabel setBordered:NO];
+                [suggestedLabel setDrawsBackground:NO];
+                [suggestedLabel setStringValue:[NSString stringWithFormat:@"CH%d", row.suggested_channel]];
+                [documentView addSubview:suggestedLabel];
+
+                NSPopUpButton* channelPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(404, y, 96.0, 26.0) pullsDown:NO];
+                for (int channel_number : available_channels) {
+                    NSString* title = [NSString stringWithFormat:@"CH%d", channel_number];
+                    [channelPopup addItemWithTitle:title];
+                    [[channelPopup lastItem] setTag:channel_number];
+                }
+                [channelPopup selectItemWithTag:row.assigned_channel];
+                [documentView addSubview:channelPopup];
+                [channelControls addObject:channelPopup];
+
+                NSTextField* suggestedSlotLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(516, y + 3.0, 90.0, 20.0)];
+                [suggestedSlotLabel setEditable:NO];
+                [suggestedSlotLabel setBordered:NO];
+                [suggestedSlotLabel setDrawsBackground:NO];
+                if (row.suggested_slot_start > 0) {
+                    if (row.suggested_slot_end > row.suggested_slot_start) {
+                        [suggestedSlotLabel setStringValue:[NSString stringWithFormat:@"%d-%d", row.suggested_slot_start, row.suggested_slot_end]];
+                    } else {
+                        [suggestedSlotLabel setStringValue:[NSString stringWithFormat:@"%d", row.suggested_slot_start]];
+                    }
+                } else {
+                    [suggestedSlotLabel setStringValue:@"-"];
+                }
+                [documentView addSubview:suggestedSlotLabel];
+
+                NSPopUpButton* slotPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(622, y, 110.0, 26.0) pullsDown:NO];
+                [documentView addSubview:slotPopup];
+                [slotPopups addObject:slotPopup];
+
+                y -= rowHeight;
+            }
+
+            [scrollView setDocumentView:documentView];
+            [scrollView setFrameOrigin:NSMakePoint(outerPadding, tableY)];
+            [containerView addSubview:scrollView];
+
+            NSButton* cancelButton = [[NSButton alloc] initWithFrame:NSMakeRect(width - outerPadding - 208.0, 18.0, 96.0, 28.0)];
+            [cancelButton setTitle:@"Cancel"];
+            [cancelButton setBezelStyle:NSBezelStyleRounded];
+            [containerView addSubview:cancelButton];
+
+            NSButton* applyButton = [[NSButton alloc] initWithFrame:NSMakeRect(width - outerPadding - 104.0, 18.0, 88.0, 28.0)];
+            [applyButton setTitle:@"Apply"];
+            [applyButton setBezelStyle:NSBezelStyleRounded];
+            [applyButton setKeyEquivalent:@"\r"];
+            [containerView addSubview:applyButton];
+
+            AdoptionEditorCoordinator* coordinator = [[AdoptionEditorCoordinator alloc] init];
+            coordinator->rows = rows;
+            coordinator->window = panel;
+            coordinator->modeControl = modeControl;
+            coordinator->warningLabel = warningLabel;
+            coordinator->applyButton = applyButton;
+            coordinator->channelPopups = channelControls;
+            coordinator->slotPopups = slotPopups;
+            [panel setDelegate:coordinator];
+
+            [modeControl setTarget:coordinator];
+            [modeControl setAction:@selector(rebuildSlotChoices)];
+            for (NSPopUpButton* popup in channelControls) {
+                [popup setTarget:coordinator];
+                [popup setAction:@selector(selectionChanged:)];
+            }
+            for (NSPopUpButton* popup in slotPopups) {
+                [popup setTarget:coordinator];
+                [popup setAction:@selector(selectionChanged:)];
+            }
+            [applyButton setTarget:coordinator];
+            [applyButton setAction:@selector(applyPressed:)];
+            [cancelButton setTarget:coordinator];
+            [cancelButton setAction:@selector(cancelPressed:)];
+            [coordinator rebuildSlotChoices];
+
+            [panel makeKeyAndOrderFront:nil];
+            const NSInteger result = [NSApp runModalForWindow:panel];
+            [panel setDelegate:nil];
+            if (result != NSModalResponseOK) {
+                apply_now_out = false;
+                [panel close];
+                return false;
+            }
+
+            std::set<int> chosen_channels;
+            std::set<int> overridden_slots;
+            std::ostringstream channel_spec;
+            std::ostringstream slot_spec;
+            bool first_channel_override = true;
+            bool first_slot_override = true;
+            bool has_conflict = false;
+            std::string conflict_message;
+
+            for (NSInteger i = 0; i < (NSInteger)rows.size(); ++i) {
+                NSPopUpButton* channelPopup = [channelControls objectAtIndex:i];
+                NSPopUpButton* slotPopup = [slotPopups objectAtIndex:i];
+                const auto& row = rows[(size_t)i];
+                const int chosen_channel = (int)[[channelPopup selectedItem] tag];
+                if (!chosen_channels.insert(chosen_channel).second) {
+                    has_conflict = true;
+                    conflict_message = "Each WING channel can only be assigned once. Resolve duplicate channel selections before applying.";
+                    break;
+                }
+                if (chosen_channel != row.suggested_channel) {
+                    if (!first_channel_override) {
+                        channel_spec << ";";
+                    }
+                    channel_spec << row.track_index << "=CH" << chosen_channel;
+                    first_channel_override = false;
+                }
+
+                const int chosen_slot = (int)[[slotPopup selectedItem] tag];
+                if (chosen_slot <= 0) {
+                    continue;
+                }
+
+                const std::string slot_value = row.stereo_like
+                    ? (std::to_string(chosen_slot) + "-" + std::to_string(chosen_slot + 1))
+                    : std::to_string(chosen_slot);
+                if (!first_slot_override) {
+                    slot_spec << ";";
+                }
+                slot_spec << row.track_index << "=" << slot_value;
+                first_slot_override = false;
+
+                const size_t dash = slot_value.find('-');
+                try {
+                    const int slot_start = std::stoi(slot_value.substr(0, dash));
+                    const int slot_end = (dash == std::string::npos) ? slot_start : std::stoi(slot_value.substr(dash + 1));
+                    for (int slot = slot_start; slot <= slot_end; ++slot) {
+                        if (!overridden_slots.insert(slot).second) {
+                            has_conflict = true;
+                            conflict_message = "A playback slot override is used more than once. Resolve duplicate slot overrides before applying.";
+                            break;
+                        }
+                    }
+                    if (has_conflict) {
+                        break;
+                    }
+                } catch (...) {
+                    has_conflict = true;
+                    conflict_message = "Playback slot overrides must look like 9 or 9-10.";
+                    break;
+                }
+            }
+
+            if (has_conflict) {
+                NSAlert* conflictAlert = [[NSAlert alloc] init];
+                [conflictAlert setMessageText:@"Fix Adoption Conflicts"];
+                [conflictAlert setInformativeText:[NSString stringWithUTF8String:conflict_message.c_str()]];
+                [conflictAlert addButtonWithTitle:@"OK"];
+                [conflictAlert runModal];
+                continue;
+            }
+
+            output_mode_out = ([modeControl selectedSegment] == 1) ? "CARD" : "USB";
+            channel_overrides_spec_out = channel_spec.str();
+            slot_overrides_spec_out = slot_spec.str();
+            apply_now_out = true;
+            [panel close];
+            return true;
+        }
+    }
+}
+
 } // extern "C"
 
 // ===== MAIN WING CONNECTOR WINDOW =====
@@ -292,6 +805,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 - (void)updateConnectionStatus;
 - (void)updateToggleSoundcheckButtonLabel;
 - (void)updateSetupSoundcheckButtonLabel;
+- (void)updateApplyPendingSetupButtonLabel;
 - (void)updateAutoTriggerControlsEnabled;
 - (void)updateValidationStatusLabel;
 - (void)updatePendingSetupUI;
@@ -402,7 +916,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     midiActionsDirty = NO;
     pendingMidiActionsEnabled = ReaperExtension::Instance().IsMidiActionsEnabled();
     latestLiveSetupValidationState = ValidationState::NotReady;
-    latestLiveSetupValidationDetails = "Connect to a Wing and apply a source setup to prepare recording and virtual soundcheck.";
+    latestLiveSetupValidationDetails = "Connect to a Wing to validate the current managed setup, then rebuild it only when routing or recording mode needs to change.";
     latestMidiValidationState = ReaperExtension::Instance().IsMidiActionsEnabled() ? ValidationState::Warning : ValidationState::NotReady;
     latestMidiValidationDetails = ReaperExtension::Instance().IsMidiActionsEnabled()
         ? "MIDI shortcuts are enabled, but their WING button mapping has not been checked yet."
@@ -535,22 +1049,24 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     int yPos = (int)expandedContentHeight - 80;
     
     // ===== HEADER WITH LOGO =====
-    NSBox* headerBox = [[NSBox alloc] initWithFrame:NSMakeRect(0, yPos - 54, contentWidth, 152)];
-    [headerBox setBoxType:NSBoxCustom];
-    [headerBox setFillColor:[NSColor colorWithWhite:0.95 alpha:1.0]];
-    [headerBox setBorderWidth:0];
-    [headerBox setAutoresizingMask:(NSViewWidthSizable | NSViewMinYMargin)];
-    [contentView addSubview:headerBox];
-    
+    const CGFloat headerHeight = 170.0;
+    const CGFloat headerY = yPos - 66.0;
+
+    NSView* headerBannerView = [[NSView alloc] initWithFrame:NSMakeRect(0, headerY, contentWidth, headerHeight)];
+    [headerBannerView setWantsLayer:YES];
+    [[headerBannerView layer] setBackgroundColor:[[NSColor colorWithWhite:0.95 alpha:1.0] CGColor]];
+    [headerBannerView setAutoresizingMask:(NSViewWidthSizable | NSViewMinYMargin)];
+    [contentView addSubview:headerBannerView];
+
     // App Icon
-    NSImageView* iconView = [[NSImageView alloc] initWithFrame:NSMakeRect(20, yPos, 40, 40)];
-    NSImage* appIcon = [NSImage imageNamed:NSImageNameApplicationIcon];
+    NSImageView* iconView = [[NSImageView alloc] initWithFrame:NSMakeRect(20, 15, 120, 120)];
+    NSImage* appIcon = LoadWingGuardHeaderImage();
     [iconView setImage:appIcon];
     [iconView setAutoresizingMask:NSViewMinYMargin];
-    [contentView addSubview:iconView];
+    [headerBannerView addSubview:iconView];
     
     // Title
-    NSTextField* titleLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(70, yPos + 20, 400, 24)];
+    NSTextField* titleLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(154, 66, 400, 24)];
     [titleLabel setStringValue:@"WINGuard"];
     [titleLabel setFont:[NSFont systemFontOfSize:18 weight:NSFontWeightMedium]];
     [titleLabel setBezeled:NO];
@@ -559,10 +1075,10 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [titleLabel setBackgroundColor:[NSColor clearColor]];
     [titleLabel setTextColor:[NSColor labelColor]];
     [titleLabel setAutoresizingMask:NSViewMinYMargin];
-    [contentView addSubview:titleLabel];
+    [headerBannerView addSubview:titleLabel];
     
     // Subtitle
-    NSTextField* subtitleLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(70, yPos, 400, 18)];
+    NSTextField* subtitleLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(154, 38, 400, 18)];
     [subtitleLabel setStringValue:@"Guard every take. Faster setup, safer record(w)ing!"];
     [subtitleLabel setFont:[NSFont systemFontOfSize:12]];
     [subtitleLabel setBezeled:NO];
@@ -571,9 +1087,9 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [subtitleLabel setBackgroundColor:[NSColor clearColor]];
     [subtitleLabel setTextColor:[NSColor secondaryLabelColor]];
     [subtitleLabel setAutoresizingMask:NSViewMinYMargin];
-    [contentView addSubview:subtitleLabel];
+    [headerBannerView addSubview:subtitleLabel];
 
-    NSBox* statusPanel = [[NSBox alloc] initWithFrame:NSMakeRect(contentWidth - 370, yPos - 42, 340, 108)];
+    NSBox* statusPanel = [[NSBox alloc] initWithFrame:NSMakeRect(contentWidth - 370, yPos - 50, 340, 108)];
     [statusPanel setBoxType:NSBoxCustom];
     [statusPanel setCornerRadius:10.0];
     [statusPanel setBorderWidth:1.0];
@@ -582,12 +1098,12 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [statusPanel setAutoresizingMask:(NSViewMinXMargin | NSViewMinYMargin)];
     [contentView addSubview:statusPanel];
 
-    statusIconView = [[NSImageView alloc] initWithFrame:NSMakeRect(contentWidth - 352, yPos + 38, 18, 18)];
+    statusIconView = [[NSImageView alloc] initWithFrame:NSMakeRect(contentWidth - 352, yPos + 30, 18, 18)];
     [statusIconView setImageScaling:NSImageScaleProportionallyUpOrDown];
     [statusIconView setAutoresizingMask:(NSViewMinXMargin | NSViewMinYMargin)];
     [contentView addSubview:statusIconView];
 
-    statusLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(contentWidth - 330, yPos + 37, 290, 20)];
+    statusLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(contentWidth - 330, yPos + 29, 290, 20)];
     [statusLabel setStringValue:@"Console: Not Connected"];
     [statusLabel setFont:[NSFont systemFontOfSize:12]];
     [statusLabel setBezeled:NO];
@@ -599,12 +1115,12 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [statusLabel setAutoresizingMask:(NSViewMinXMargin | NSViewMinYMargin)];
     [contentView addSubview:statusLabel];
 
-    validationIconView = [[NSImageView alloc] initWithFrame:NSMakeRect(contentWidth - 352, yPos + 14, 18, 18)];
+    validationIconView = [[NSImageView alloc] initWithFrame:NSMakeRect(contentWidth - 352, yPos + 6, 18, 18)];
     [validationIconView setImageScaling:NSImageScaleProportionallyUpOrDown];
     [validationIconView setAutoresizingMask:(NSViewMinXMargin | NSViewMinYMargin)];
     [contentView addSubview:validationIconView];
 
-    validationStatusLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(contentWidth - 330, yPos + 13, 290, 20)];
+    validationStatusLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(contentWidth - 330, yPos + 5, 290, 20)];
     [validationStatusLabel setStringValue:@"Reaper Recorder: Not Ready"];
     [validationStatusLabel setFont:[NSFont systemFontOfSize:12]];
     [validationStatusLabel setBezeled:NO];
@@ -616,12 +1132,12 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [validationStatusLabel setAutoresizingMask:(NSViewMinXMargin | NSViewMinYMargin)];
     [contentView addSubview:validationStatusLabel];
 
-    recorderStatusIconView = [[NSImageView alloc] initWithFrame:NSMakeRect(contentWidth - 352, yPos - 10, 18, 18)];
+    recorderStatusIconView = [[NSImageView alloc] initWithFrame:NSMakeRect(contentWidth - 352, yPos - 18, 18, 18)];
     [recorderStatusIconView setImageScaling:NSImageScaleProportionallyUpOrDown];
     [recorderStatusIconView setAutoresizingMask:(NSViewMinXMargin | NSViewMinYMargin)];
     [contentView addSubview:recorderStatusIconView];
 
-    recorderStatusLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(contentWidth - 330, yPos - 11, 290, 20)];
+    recorderStatusLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(contentWidth - 330, yPos - 19, 290, 20)];
     [recorderStatusLabel setStringValue:@"Wing Recorder: Disabled"];
     [recorderStatusLabel setFont:[NSFont systemFontOfSize:12]];
     [recorderStatusLabel setBezeled:NO];
@@ -633,12 +1149,12 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [recorderStatusLabel setAutoresizingMask:(NSViewMinXMargin | NSViewMinYMargin)];
     [contentView addSubview:recorderStatusLabel];
 
-    midiStatusIconView = [[NSImageView alloc] initWithFrame:NSMakeRect(contentWidth - 352, yPos - 34, 18, 18)];
+    midiStatusIconView = [[NSImageView alloc] initWithFrame:NSMakeRect(contentWidth - 352, yPos - 42, 18, 18)];
     [midiStatusIconView setImageScaling:NSImageScaleProportionallyUpOrDown];
     [midiStatusIconView setAutoresizingMask:(NSViewMinXMargin | NSViewMinYMargin)];
     [contentView addSubview:midiStatusIconView];
 
-    midiStatusLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(contentWidth - 330, yPos - 35, 290, 20)];
+    midiStatusLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(contentWidth - 330, yPos - 43, 290, 20)];
     [midiStatusLabel setStringValue:@"Wing control integration: Disabled"];
     [midiStatusLabel setFont:[NSFont systemFontOfSize:12]];
     [midiStatusLabel setBezeled:NO];
@@ -701,7 +1217,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
         [box addSubview:label];
     };
 
-    settingsTabView = [[NSTabView alloc] initWithFrame:NSMakeRect(20, 20, contentWidth - 40, 620)];
+    settingsTabView = [[NSTabView alloc] initWithFrame:NSMakeRect(20, 8, contentWidth - 40, 620)];
     [settingsTabView setTabViewType:NSTopTabsBezelBorder];
     [settingsTabView setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
     [settingsTabView setDelegate:self];
@@ -923,7 +1439,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     reaperY -= 40;
 
     pendingSetupSummaryLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(controlX, reaperY, 540, 36)];
-    [pendingSetupSummaryLabel setStringValue:@"No pending setup changes. Choose sources or change recording mode to stage updates."];
+    [pendingSetupSummaryLabel setStringValue:@"No pending setup changes. Choose sources for a new setup, or change recording mode to stage a rebuild of the current managed setup."];
     [pendingSetupSummaryLabel setFont:[NSFont systemFontOfSize:11]];
     [pendingSetupSummaryLabel setBezeled:NO];
     [pendingSetupSummaryLabel setEditable:NO];
@@ -936,7 +1452,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     reaperY -= 46;
 
     setupReadinessDetailLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(controlX, reaperY, 540, 56)];
-    [setupReadinessDetailLabel setStringValue:@"Connect to a Wing and apply a source setup to prepare recording and virtual soundcheck."];
+    [setupReadinessDetailLabel setStringValue:@"Connect to a Wing to validate the current managed setup, then rebuild it only when routing or recording mode needs to change."];
     [setupReadinessDetailLabel setFont:[NSFont systemFontOfSize:10.5]];
     [setupReadinessDetailLabel setBezeled:NO];
     [setupReadinessDetailLabel setEditable:NO];
@@ -957,7 +1473,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 
     applyPendingSetupButton = [[NSButton alloc] initWithFrame:NSMakeRect(controlX + 180, reaperY, 180, 32)];
     [applyPendingSetupButton setBezelStyle:NSBezelStyleRounded];
-    [applyPendingSetupButton setTitle:@"Apply Pending Setup"];
+    [applyPendingSetupButton setTitle:@"Apply Setup"];
     [applyPendingSetupButton setTarget:self];
     [applyPendingSetupButton setAction:@selector(onApplyPendingSetupClicked:)];
     [applyPendingSetupButton setEnabled:NO];
@@ -1856,7 +2372,8 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     } else if ([resolvedText containsString:@"Pending"] || [resolvedText containsString:@"Checking"]) {
         symbolName = @"arrow.triangle.2.circlepath.circle.fill";
         fallbackName = NSImageNameRefreshTemplate;
-    } else if ([resolvedText containsString:@"Needs Attention"]) {
+    } else if ([resolvedText containsString:@"Needs Attention"] ||
+               [resolvedText containsString:@"Review / Rebuild"]) {
         symbolName = @"exclamationmark.triangle.fill";
         fallbackName = NSImageNameCaution;
     }
@@ -1958,7 +2475,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
         return;
     }
     if (isConnected) {
-        [self setValidationStatusText:@"Reaper Recorder: Needs Attention" color:[NSColor systemOrangeColor]];
+        [self setValidationStatusText:@"Reaper Recorder: Review / Rebuild" color:[NSColor systemOrangeColor]];
     } else {
         [self setValidationStatusText:@"Reaper Recorder: Not Ready" color:[NSColor secondaryLabelColor]];
     }
@@ -1967,20 +2484,20 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 
 - (void)updatePendingSetupUI {
     if (pendingSetupSummaryLabel) {
-        NSString* summary = @"No pending setup changes. Choose sources or change recording mode to stage updates.";
+        NSString* summary = @"No pending setup changes. Choose sources for a new setup, or change recording mode to stage a rebuild of the current managed setup.";
         NSColor* summaryColor = [NSColor secondaryLabelColor];
         if (hasPendingSetupDraft || pendingOutputMode != ReaperExtension::Instance().GetConfig().soundcheck_output_mode) {
             const auto selected_sources = SelectedSourcesOnly(pendingSetupChannels);
             if (selected_sources.empty()) {
-                summary = [NSString stringWithFormat:@"Changes staged. Apply Pending Setup to rebuild the current applied selection for %s mode.", pendingOutputMode.c_str()];
+                summary = [NSString stringWithFormat:@"Current managed setup staged for rebuild in %s mode. Click Rebuild Current Setup to reuse the saved selection and rewrite routing.", pendingOutputMode.c_str()];
             } else {
-                summary = [NSString stringWithFormat:@"Changes staged for %lu sources in %s mode. Review if needed, then click Apply Pending Setup.", static_cast<unsigned long>(selected_sources.size()), pendingOutputMode.c_str()];
+                summary = [NSString stringWithFormat:@"Changes staged for %lu sources in %s mode. Review if needed, then click Apply Setup.", static_cast<unsigned long>(selected_sources.size()), pendingOutputMode.c_str()];
             }
             if (pendingOutputMode != ReaperExtension::Instance().GetConfig().soundcheck_output_mode && !hasPendingSetupDraft) {
-                summary = [NSString stringWithFormat:@"Recording I/O mode change staged. Apply Pending Setup to rebuild the current selection for %s mode.", pendingOutputMode.c_str()];
+                summary = [NSString stringWithFormat:@"Recording I/O mode change staged. Click Rebuild Current Setup to reuse the current managed selection in %s mode.", pendingOutputMode.c_str()];
             }
             if (pendingSetupUsesExistingSelection && !hasPendingSetupDraft) {
-                summary = [NSString stringWithFormat:@"Existing source selection staged for %s mode. Click Apply Pending Setup to rebuild routing.", pendingOutputMode.c_str()];
+                summary = [NSString stringWithFormat:@"Current managed selection staged for %s mode. Click Rebuild Current Setup to rebuild routing without reopening source selection.", pendingOutputMode.c_str()];
             } else {
                 summary = [summary stringByAppendingString:@" Use Edit Pending Sources… to adjust the draft, or Discard to abandon it."];
             }
@@ -1997,6 +2514,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
              (!hasPendingSetupDraft && pendingOutputMode != ReaperExtension::Instance().GetConfig().soundcheck_output_mode));
         [applyPendingSetupButton setEnabled:canApply];
     }
+    [self updateApplyPendingSetupButtonLabel];
     if (discardPendingSetupButton) {
         [discardPendingSetupButton setEnabled:(hasPendingSetupDraft || pendingOutputMode != ReaperExtension::Instance().GetConfig().soundcheck_output_mode) && !isWorking];
     }
@@ -2006,24 +2524,32 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     if (!setupReadinessDetailLabel) {
         return;
     }
-    NSString* detail = @"Connect to a Wing and apply a source setup to prepare recording and virtual soundcheck.";
-    NSString* nextStep = @"Next step: connect to a WING, then choose sources to prepare recording and soundcheck.";
+    const BOOL rebuildingCurrentManagedSetup =
+        (!hasPendingSetupDraft && pendingOutputMode != ReaperExtension::Instance().GetConfig().soundcheck_output_mode) ||
+        (pendingSetupUsesExistingSelection && !hasPendingSetupDraft);
+    NSString* detail = @"Connect to a Wing to validate the current managed setup, then rebuild it only when routing or recording mode needs to change.";
+    NSString* nextStep = @"Next step: connect to a WING, validate the managed setup, then use Choose Sources only when you need a different selection.";
     NSColor* detailColor = [NSColor secondaryLabelColor];
 
     if (isWorking) {
         detail = @"Working on the current request.";
         nextStep = @"Next step: wait for the current operation to finish before staging another setup change.";
     } else if (hasPendingSetupDraft || pendingOutputMode != ReaperExtension::Instance().GetConfig().soundcheck_output_mode) {
-        detail = @"Pending setup changes are staged. Apply them to rebuild WING routing, REAPER tracks, and virtual soundcheck inputs.";
-        nextStep = @"Next step: review the staged source draft, then click Apply Pending Setup.";
+        if (rebuildingCurrentManagedSetup) {
+            detail = @"A rebuild of the current managed setup is staged. Rebuilding will reuse the managed source selection and update WING routing, REAPER tracks, and playback inputs for the selected mode.";
+            nextStep = @"Next step: click Rebuild Current Setup if you want to keep the current managed selection, or use Choose Sources to stage a different setup.";
+        } else {
+            detail = @"Pending setup changes are staged. Applying them will update WING routing, REAPER tracks, and playback inputs for the selected sources.";
+            nextStep = @"Next step: review the staged source draft, then click Apply Setup.";
+        }
         detailColor = [NSColor systemOrangeColor];
     } else if (!latestLiveSetupValidationDetails.empty()) {
         detail = [NSString stringWithUTF8String:latestLiveSetupValidationDetails.c_str()];
         if (latestLiveSetupValidationState == ValidationState::Ready) {
-            nextStep = @"Setup is ready. Choose Sources stages changes; Live/Soundcheck switches the already validated setup.";
+            nextStep = @"Setup is ready. Use Live/Soundcheck to switch the validated setup now, or change recording mode to stage a rebuild of the current managed setup.";
             detailColor = [NSColor systemGreenColor];
         } else if (latestLiveSetupValidationState == ValidationState::Warning) {
-            nextStep = @"Next step: finish validating the current setup, then use Choose Sources if you need to stage changes.";
+            nextStep = @"Next step: review the validation warning. Rebuild the current managed setup if routing changed, or use Choose Sources only if you want a different selection.";
             detailColor = [NSColor systemOrangeColor];
         }
     }
@@ -2031,6 +2557,16 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     NSString* combined = [NSString stringWithFormat:@"%@\n%@", detail, nextStep];
     [setupReadinessDetailLabel setStringValue:combined];
     [setupReadinessDetailLabel setTextColor:detailColor];
+}
+
+- (void)updateApplyPendingSetupButtonLabel {
+    if (!applyPendingSetupButton) {
+        return;
+    }
+    const BOOL rebuildingCurrentManagedSetup =
+        (!hasPendingSetupDraft && pendingOutputMode != ReaperExtension::Instance().GetConfig().soundcheck_output_mode) ||
+        (pendingSetupUsesExistingSelection && !hasPendingSetupDraft);
+    [applyPendingSetupButton setTitle:(rebuildingCurrentManagedSetup ? @"Rebuild Current Setup" : @"Apply Setup")];
 }
 
 - (void)updateMidiActionsUI {
@@ -2110,12 +2646,15 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
         detail = @"Auto Trigger settings changed. Next step: click Apply Auto Trigger Settings to resume trigger monitoring with the staged threshold, hold time, recorder, and CC layer.";
         detailColor = [NSColor systemOrangeColor];
     } else if (hasPendingSetupDraft || pendingOutputMode != ReaperExtension::Instance().GetConfig().soundcheck_output_mode) {
-        detail = @"Auto Trigger is blocked by pending setup changes. Next step: click Apply Pending Setup in the Reaper tab.";
+        detail = @"Auto Trigger is blocked by pending setup changes. Next step: apply the staged setup or rebuild the current managed setup in the Reaper tab.";
         detailColor = [NSColor systemOrangeColor];
     } else if (!liveSetupValidated) {
         detail = [NSString stringWithFormat:@"Auto Trigger is blocked until recording setup validates. Next step: %s",
                   latestLiveSetupValidationDetails.empty() ? "prepare sources and routing in the Reaper tab." : latestLiveSetupValidationDetails.c_str()];
         detailColor = isConnected ? [NSColor systemOrangeColor] : [NSColor secondaryLabelColor];
+    } else if (ReaperExtension::Instance().IsSoundcheckModeEnabled()) {
+        detail = @"Auto Trigger is paused because Soundcheck Mode is active on the managed channels. Next step: switch back to Live Mode on WING or in the plugin before relying on signal-triggered starts.";
+        detailColor = [NSColor systemOrangeColor];
     } else if (!ReaperExtension::Instance().GetConfig().auto_record_enabled) {
         detail = @"Auto Trigger is currently off. The recorder setup is configured, but trigger monitoring will stay idle until you turn it on and apply the change.";
         detailColor = [NSColor systemOrangeColor];
@@ -2726,7 +3265,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     hasPendingSetupDraft = YES;
     pendingSetupUsesExistingSelection = pendingSetupChannels.empty() ? YES : NO;
     latestLiveSetupValidationState = ValidationState::Warning;
-    latestLiveSetupValidationDetails = "Pending setup changes are staged and must be applied before recording readiness can be confirmed.";
+    latestLiveSetupValidationDetails = "Pending setup changes are staged and must be applied before recording readiness can be confirmed for the current managed setup.";
     [self updateValidationStatusLabel];
     [self updatePendingSetupUI];
     [self updateSetupReadinessDetails];
@@ -2734,7 +3273,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
     [self updateToggleSoundcheckButtonLabel];
     [self updateAutoTriggerControlsEnabled];
     [self updateAutomationDetails];
-    [self appendToLog:@"Recording I/O mode change staged. Review the pending setup and apply when ready.\n"];
+    [self appendToLog:@"Recording I/O mode change staged. Review the pending setup and rebuild the current managed setup when ready.\n"];
 
     if (pendingSetupChannels.empty() && extension.IsConnected()) {
         WingConnectorWindowController* blockSelf = self;
@@ -3472,7 +4011,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
             blockSelf->pendingReplaceExisting = overwrite_existing ? YES : NO;
             blockSelf->pendingSetupUsesExistingSelection = NO;
             blockSelf->liveSetupValidated = NO;
-            [blockSelf appendToLog:[NSString stringWithFormat:@"Staged live setup for %d selected sources. Review the summary and click Apply Pending Setup when ready.\n",
+            [blockSelf appendToLog:[NSString stringWithFormat:@"Staged live setup for %d selected sources. Review the summary and click Apply Setup when ready.\n",
                                     selectedCount]];
             [blockSelf setWorkingState:NO];
             [blockSelf updatePendingSetupUI];
@@ -3528,12 +4067,12 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
 
         if (blockSelf->pendingSetupUsesExistingSelection && blockSelf->pendingSetupChannels.empty()) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                [blockSelf appendToLog:@"No staged source draft found. Reusing the last selected sources for this apply.\n"];
+                [blockSelf appendToLog:@"No staged source draft found. Reusing the current managed selection for this rebuild.\n"];
             });
             channels_to_apply = extension.GetAvailableSources();
             if (channels_to_apply.empty()) {
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    [blockSelf appendToLog:@"✗ Could not reload the last selected sources for apply.\n"];
+                    [blockSelf appendToLog:@"✗ Could not reload the current managed selection for rebuild.\n"];
                     [blockSelf setWorkingState:NO];
                 });
                 return;
@@ -3542,12 +4081,12 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
             channels_to_apply = blockSelf->pendingSetupChannels;
         } else {
             dispatch_async(dispatch_get_main_queue(), ^{
-                [blockSelf appendToLog:@"No staged source draft found. Reusing the last selected sources for this apply.\n"];
+                [blockSelf appendToLog:@"No staged source draft found. Reusing the current managed selection for this rebuild.\n"];
             });
             channels_to_apply = extension.GetAvailableSources();
             if (channels_to_apply.empty()) {
                 dispatch_async(dispatch_get_main_queue(), ^{
-                    [blockSelf appendToLog:@"✗ Could not reload the last selected sources for apply.\n"];
+                    [blockSelf appendToLog:@"✗ Could not reload the current managed selection for rebuild.\n"];
                     [blockSelf setWorkingState:NO];
                 });
                 return;

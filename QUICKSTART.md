@@ -41,11 +41,15 @@ Inside the WINGuard dialog:
 1. Configure soundcheck output mode (`USB` or `CARD`).
 2. Run recording setup for the sources you want to capture.
 3. Use soundcheck mode toggle (ALT source switching) when needed.
+4. If you reopen an existing WINGuard-managed project later, connect first and look at the Reaper tab status:
+   - if the setup validates, you can switch `Live Mode` / `Soundcheck Mode` directly
+   - if you changed `USB` or `CARD` mode, use `Rebuild Current Setup` to reuse the current managed selection
 
 Notes:
 
 - Channel strips support full soundcheck setup, including ALT source switching.
 - Buses and matrices can be selected for recording setup, but they remain record-only and are not affected by the soundcheck toggle.
+- If you open a REAPER project that was not prepared by WINGuard, use `Adopt Existing Reaper Project for Virtual Soundcheck` to review likely channel matches first. This action now lets you keep or override the proposed channel mapping, choose global `USB` or `CARD` routing, optionally override playback slots, and then adopt the imported tracks in place without creating duplicate tracks.
 
 ## 5. Automatic Wing CC Button Setup
 

@@ -46,7 +46,8 @@ See [QUICKSTART.md](QUICKSTART.md) for the 5-minute flow.
 - Channel metadata sync (name, color, source-related info)
 - Optional real-time monitoring for updates
 - Virtual soundcheck setup for channels (USB/CARD routing + staged apply flow + validation status)
-- Automatic managed-channel source monitoring after apply, with warning-only mono/stereo topology changes
+- Auto-trigger safety gate that stays suppressed while managed channels are in virtual soundcheck mode, including desk-side toggles on WING
+- Automatic managed-channel source monitoring after apply, with retry tolerance for brief polling glitches and warning-only mono/stereo topology changes
 - Record-source selection for channels, buses, and matrices
 - Optional WING MIDI CC control (Play/Record/Stop/Markers/Virtual Soundcheck) with automatic button command assignment
 - Separate selected-channel bridge action and planning path for SuperRack-style integration work

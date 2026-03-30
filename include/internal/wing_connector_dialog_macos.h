@@ -45,6 +45,26 @@ extern "C" {
                                    bool& overwrite_existing);
 }
 
+struct AdoptionEditorRow {
+    int track_index = 0;
+    std::string track_name;
+    bool stereo_like = false;
+    int suggested_channel = 0;
+    int assigned_channel = 0;
+    int suggested_slot_start = 0;
+    int suggested_slot_end = 0;
+};
+
+extern "C" {
+    bool ShowExistingProjectAdoptionEditor(const std::vector<AdoptionEditorRow>& rows,
+                                           const std::vector<int>& available_channels,
+                                           const char* initial_output_mode,
+                                           std::string& output_mode_out,
+                                           std::string& channel_overrides_spec_out,
+                                           std::string& slot_overrides_spec_out,
+                                           bool& apply_now_out);
+}
+
 #endif // __APPLE__
 
 #endif // WING_CONNECTOR_DIALOG_MACOS_H
