@@ -249,6 +249,7 @@ public:
 
     // Wing metadata collected during handshake
     const WingInfo& GetWingInfo() const { return wing_info_; }
+    const std::string& GetLastConnectionDiagnostic() const { return last_connection_diagnostic_; }
 
     // Network discovery: broadcast "WING?" and collect all responding consoles.
     // Returns a list of WingInfo structs (one per responding device).
@@ -280,6 +281,7 @@ private:
     ChannelDataCallback channel_callback_;
     WingInfo wing_info_{};
     bool handshake_complete_ = false;
+    std::string last_connection_diagnostic_;
     mutable std::mutex log_mutex_;
     std::string last_meter_address_;
     std::vector<double> last_meter_values_;

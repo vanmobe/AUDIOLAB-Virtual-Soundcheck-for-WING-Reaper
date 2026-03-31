@@ -1318,9 +1318,13 @@ bool EnsureCrossPlatformWingConnection(const char* dialog_title,
         configured_ip = candidate_ip;
         const bool connected = extension.ConnectToWing();
         if (!connected) {
-            ShowMessageBox(("WINGuard could not connect to " + candidate_ip +
-                            ".\n\nCheck the WING IP, OSC settings, and local network path, then rescan or enter another IP.")
-                               .c_str(),
+            const std::string detail = extension.GetLastConnectionFailureDetail();
+            std::string message = "WINGuard could not connect to " + candidate_ip + ".";
+            if (!detail.empty()) {
+                message += "\n\nFailure detail:\n" + detail;
+            }
+            message += "\n\nCheck the WING IP, OSC settings, and local network path, then rescan or enter another IP.";
+            ShowMessageBox(message.c_str(),
                            dialog_title,
                            0);
             continue;

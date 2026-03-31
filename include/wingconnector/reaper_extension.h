@@ -83,6 +83,7 @@ public:
     // Status
     bool IsConnected() const { return connected_; }
     std::string GetStatusMessage() const { return status_message_; }
+    std::string GetLastConnectionFailureDetail() const { return last_connection_failure_detail_; }
     
     // Configuration
     WingConfig& GetConfig() { return config_; }
@@ -118,6 +119,7 @@ private:
     std::atomic<bool> soundcheck_mode_enabled_;
     std::atomic<bool> midi_actions_enabled_;
     std::string status_message_;
+    std::string last_connection_failure_detail_;
     LogCallback log_callback_;
     
     // Static REAPER plugin context (set in Initialize)

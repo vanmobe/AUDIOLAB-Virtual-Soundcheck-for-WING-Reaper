@@ -786,6 +786,7 @@ bool ReaperExtension::ConnectToWing() {
     
     Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Connecting to Wing...\n");
     status_message_ = "Connecting...";
+    last_connection_failure_detail_.clear();
     
     // Wing OSC is fixed to 2223.
     config_.wing_port = 2223;
@@ -807,7 +808,11 @@ bool ReaperExtension::ConnectToWing() {
     
     // Start OSC server
     if (!osc_handler_->Start()) {
-        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Failed to start OSC server. Port may be in use.\n");
+        last_connection_failure_detail_ = osc_handler_->GetLastConnectionDiagnostic();
+        if (last_connection_failure_detail_.empty()) {
+            last_connection_failure_detail_ = "Failed to start the local OSC listener on port 2223.";
+        }
+        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: " + last_connection_failure_detail_ + "\n");
         osc_handler_.reset();
         status_message_ = "Failed to start";
         return false;
@@ -815,7 +820,11 @@ bool ReaperExtension::ConnectToWing() {
     
     // Test connection
     if (!osc_handler_->TestConnection()) {
-        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Could not connect to Wing console. Check IP and OSC settings.\n");
+        last_connection_failure_detail_ = osc_handler_->GetLastConnectionDiagnostic();
+        if (last_connection_failure_detail_.empty()) {
+            last_connection_failure_detail_ = "Could not connect to the Wing console. Check the IP, OSC settings, and local network path.";
+        }
+        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: " + last_connection_failure_detail_ + "\n");
         osc_handler_->Stop();
         osc_handler_.reset();
         status_message_ = "Connection failed";
@@ -825,6 +834,7 @@ bool ReaperExtension::ConnectToWing() {
     Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Connected!\n");
     connected_ = true;
     status_message_ = "Connected";
+    last_connection_failure_detail_.clear();
     StartAutoRecordMonitor();
     
     // Query console info

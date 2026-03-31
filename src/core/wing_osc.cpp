@@ -512,6 +512,7 @@ bool WingOSC::Start() {
     }
     
     try {
+        last_connection_diagnostic_.clear();
         // Create UDP socket for listening
         IpEndpointName endpoint(IpEndpointName::ANY_ADDRESS, listen_port_);
         osc_listener_ = new WingOscListener(this);
@@ -525,6 +526,9 @@ bool WingOSC::Start() {
         return true;
     }
     catch (std::exception& e) {
+        last_connection_diagnostic_ =
+            "Failed to start OSC listener on local port " + std::to_string(listen_port_) +
+            " (" + std::string(e.what()) + ").";
         Log(std::string("Failed to start OSC server: ") + e.what());
         return false;
     }
@@ -573,7 +577,11 @@ void WingOSC::ListenerThread() {
 
 bool WingOSC::TestConnection() {
     try {
+        last_connection_diagnostic_.clear();
         if (!PerformHandshake()) {
+            if (last_connection_diagnostic_.empty()) {
+                last_connection_diagnostic_ = "Wing handshake failed before OSC queries could start.";
+            }
             Log("Wing handshake failed");
             return false;
         }
@@ -586,14 +594,19 @@ bool WingOSC::TestConnection() {
           << MakeOscEndToken();
 
         if (!SendRawPacket(p.Data(), p.Size())) {
+            last_connection_diagnostic_ =
+                "Wing handshake succeeded, but sending the first OSC info probe to " + wing_ip_ +
+                ":" + std::to_string(wing_port_) + " failed.";
             Log("Failed to send Wing info probe");
             return false;
         }
         
+        last_connection_diagnostic_.clear();
         Log("Wing OSC info probe sent to " + wing_ip_ + ":" + std::to_string(wing_port_));
         return true;
     }
     catch (std::exception& e) {
+        last_connection_diagnostic_ = "Connection test failed while preparing the first OSC probe (" + std::string(e.what()) + ").";
         Log(std::string("Connection test failed: ") + e.what());
         return false;
     }
@@ -609,16 +622,19 @@ bool WingOSC::PerformHandshake() {
         return true;
     }
 
+    last_connection_diagnostic_.clear();
     Log("Wing handshake: probing " + wing_ip_ + ":" + std::to_string(kWingHandshakePort));
 
 #if defined(_WIN32)
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        last_connection_diagnostic_ = "Windows socket initialization failed before the Wing handshake started.";
         Log("WSAStartup failed for Wing handshake");
         return false;
     }
     SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock == INVALID_SOCKET) {
+        last_connection_diagnostic_ = "Failed to open the UDP socket used for the Wing handshake probe.";
         Log("Failed to open Wing handshake socket");
         WSACleanup();
         return false;
@@ -626,6 +642,7 @@ bool WingOSC::PerformHandshake() {
 #else
     int sock = ::socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
+        last_connection_diagnostic_ = "Failed to open the UDP socket used for the Wing handshake probe.";
         Log("Failed to open Wing handshake socket");
         return false;
     }
@@ -661,6 +678,7 @@ bool WingOSC::PerformHandshake() {
     dest.sin_family = AF_INET;
     dest.sin_port = htons(kWingHandshakePort);
     if (inet_pton(AF_INET, wing_ip_.c_str(), &dest.sin_addr) != 1) {
+        last_connection_diagnostic_ = "The configured Wing IP address is invalid: " + wing_ip_ + ".";
         Log("Invalid Wing IP address");
         closeSocket();
         return false;
@@ -671,12 +689,16 @@ bool WingOSC::PerformHandshake() {
                              reinterpret_cast<sockaddr*>(&dest), sizeof(dest));
 #if defined(_WIN32)
     if (bytes_sent == SOCKET_ERROR) {
+        last_connection_diagnostic_ =
+            "Failed to send the UDP handshake probe to " + wing_ip_ + ":" + std::to_string(kWingHandshakePort) + ".";
         Log("Failed to send Wing handshake probe");
         closeSocket();
         return false;
     }
 #else
     if (bytes_sent < 0) {
+        last_connection_diagnostic_ =
+            "Failed to send the UDP handshake probe to " + wing_ip_ + ":" + std::to_string(kWingHandshakePort) + ".";
         Log("Failed to send Wing handshake probe");
         closeSocket();
         return false;
@@ -690,6 +712,8 @@ bool WingOSC::PerformHandshake() {
     int received = recvfrom(sock, buffer, sizeof(buffer) - 1, 0,
                             reinterpret_cast<sockaddr*>(&from), &from_len);
     if (received == SOCKET_ERROR) {
+        last_connection_diagnostic_ =
+            "Timed out waiting for the Wing handshake reply on UDP port " + std::to_string(kWingHandshakePort) + ".";
         Log("Wing handshake timed out");
         closeSocket();
         return false;
@@ -698,6 +722,8 @@ bool WingOSC::PerformHandshake() {
     ssize_t received = recvfrom(sock, buffer, sizeof(buffer) - 1, 0,
                                 reinterpret_cast<sockaddr*>(&from), &from_len);
     if (received <= 0) {
+        last_connection_diagnostic_ =
+            "Timed out waiting for the Wing handshake reply on UDP port " + std::to_string(kWingHandshakePort) + ".";
         Log("Wing handshake timed out");
         closeSocket();
         return false;
@@ -711,6 +737,7 @@ bool WingOSC::PerformHandshake() {
     response.erase(std::remove(response.begin(), response.end(), '\n'), response.end());
 
     if (response.rfind("WING", 0) != 0) {
+        last_connection_diagnostic_ = "Received an unexpected handshake reply from " + wing_ip_ + ": " + response;
         Log("Unexpected Wing handshake response: " + response);
         closeSocket();
         return false;
@@ -740,6 +767,7 @@ bool WingOSC::PerformHandshake() {
     }
 
     handshake_complete_ = true;
+    last_connection_diagnostic_.clear();
     std::string log_msg = "Wing handshake OK";
     if (!wing_info_.model.empty()) {
         log_msg += ": " + wing_info_.model;
