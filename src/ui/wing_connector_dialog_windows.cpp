@@ -250,7 +250,12 @@ HFONT CreateUiFont(int height, int weight = FW_NORMAL, bool monospace = false) {
                        monospace ? L"Consolas" : L"Segoe UI");
 }
 
-HICON LoadSmallStockIcon(LPCWSTR resource_id) {
+struct HeaderStatusVisual {
+    COLORREF color = RGB(110, 110, 110);
+    std::wstring text;
+};
+
+HICON LoadSmallStockIcon(LPCTSTR resource_id) {
     return static_cast<HICON>(LoadImageW(nullptr, resource_id, IMAGE_ICON, 16, 16, LR_SHARED));
 }
 
@@ -270,11 +275,6 @@ void SaveConfigIfPossible(ReaperExtension& extension) {
         Logger::Error("Failed to save WINGuard config to %s", path.c_str());
     }
 }
-
-struct HeaderStatusVisual {
-    COLORREF color = RGB(110, 110, 110);
-    std::wstring text;
-};
 
 struct SourcePickerResult {
     bool confirmed = false;
