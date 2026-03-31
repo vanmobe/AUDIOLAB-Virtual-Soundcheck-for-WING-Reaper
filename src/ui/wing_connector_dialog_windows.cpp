@@ -325,8 +325,8 @@ private:
             }
             std::string name = source.name.empty() ? (kind + " " + std::to_string(source.source_number)) : source.name;
             std::string line = kind + " " + std::to_string(source.source_number) + "  |  " + name;
-            if (!source.primary_source_group.empty() && source.primary_source_input > 0) {
-                line += "  |  " + source.primary_source_group + ":" + std::to_string(source.primary_source_input);
+            if (!source.source_group.empty() && source.source_input > 0) {
+                line += "  |  " + source.source_group + ":" + std::to_string(source.source_input);
             }
             if (!source.soundcheck_capable) {
                 line += "  |  Record only";
@@ -460,7 +460,7 @@ private:
         wc.lpfnWndProc = &WingConnectorWindowsDialog::WndProc;
         wc.hInstance = g_hInst;
         wc.lpszClassName = kDialogClassName;
-        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(OCR_NORMAL));
         wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
         RegisterClassW(&wc);
 
@@ -468,7 +468,7 @@ private:
         page_wc.lpfnWndProc = &WingConnectorWindowsDialog::PageWndProc;
         page_wc.hInstance = g_hInst;
         page_wc.lpszClassName = kPageClassName;
-        page_wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        page_wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(OCR_NORMAL));
         page_wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
         RegisterClassW(&page_wc);
         registered = true;
