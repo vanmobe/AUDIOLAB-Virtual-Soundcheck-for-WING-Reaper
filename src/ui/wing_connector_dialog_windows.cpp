@@ -21,6 +21,7 @@
 #include <cwchar>
 #include <set>
 #include <string>
+#include <mutex>
 #include <utility>
 #include <vector>
 
@@ -42,7 +43,7 @@ constexpr wchar_t kLogoClassName[] = L"WINGuardWindowsLogo";
 constexpr int kMinWindowWidth = 1180;
 constexpr int kMinWindowHeight = 860;
 constexpr UINT_PTR kRefreshTimerId = 101;
-constexpr UINT kRefreshTimerMs = 1500;
+constexpr UINT kRefreshTimerMs = 500;
 constexpr int kScrollLineStep = 36;
 
 enum ControlId {
@@ -96,6 +97,7 @@ enum ControlId {
     kIdAutoTriggerThresholdEdit,
     kIdAutoTriggerHoldEdit,
     kIdAutoTriggerMonitorTrackCombo,
+    kIdAutoTriggerMeterLabel,
     kIdApplyAutoTriggerButton,
     kIdDiscardAutoTriggerButton,
     kIdConsoleSectionIcon,
@@ -123,6 +125,9 @@ enum ControlId {
     kIdWarningLayerCombo,
     kIdApplyMidiButton,
     kIdDiscardMidiButton,
+    kIdOpenDebugLogButton,
+    kIdClearDebugLogButton,
+    kIdDebugLogView,
     kIdSourceList,
     kIdSourceSelectAll,
     kIdSourceSelectChannels,
@@ -312,6 +317,46 @@ int ButtonWidthForLabel(HWND control, int min_width, int padding = 34) {
     return std::max(min_width, MeasureTextWidth(control, ReadWindowText(control)) + padding);
 }
 
+int MultiLineTextHeight(HWND control, int width, const std::wstring& text) {
+    if (!control) {
+        return 0;
+    }
+    HDC hdc = GetDC(control);
+    if (!hdc) {
+        return 0;
+    }
+    HFONT font = reinterpret_cast<HFONT>(SendMessageW(control, WM_GETFONT, 0, 0));
+    HFONT old_font = font ? static_cast<HFONT>(SelectObject(hdc, font)) : nullptr;
+    RECT rect{0, 0, width, 0};
+    DrawTextW(hdc,
+              text.c_str(),
+              static_cast<int>(text.size()),
+              &rect,
+              DT_CALCRECT | DT_WORDBREAK | DT_EDITCONTROL);
+    if (old_font) {
+        SelectObject(hdc, old_font);
+    }
+    ReleaseDC(control, hdc);
+    return rect.bottom - rect.top;
+}
+
+std::wstring CleanLogMessage(const std::string& message) {
+    std::wstring cleaned = ToWide(message);
+    const std::array<std::wstring, 4> prefixes = {
+        L"AUDIOLAB.wing.reaper.virtualsoundcheck: ",
+        L"AUDIOLAB.wing.reaper.virtualsoundcheck:",
+        L"WINGuard: ",
+        L"WINGuard:"
+    };
+    for (const auto& prefix : prefixes) {
+        size_t pos = std::wstring::npos;
+        while ((pos = cleaned.find(prefix)) != std::wstring::npos) {
+            cleaned.erase(pos, prefix.size());
+        }
+    }
+    return cleaned;
+}
+
 struct SourcePickerResult {
     bool confirmed = false;
     bool setup_soundcheck = true;
@@ -441,7 +486,7 @@ private:
                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceClear)), g_hInst, nullptr);
 
         count_label_ = CreateWindowW(L"STATIC", L"0 sources selected", WS_CHILD | WS_VISIBLE,
-                                     500, 582, 340, 28, hwnd_,
+                                     500, 582, 400, 32, hwnd_,
                                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceCount)), g_hInst, nullptr);
 
         CreateWindowW(L"BUTTON", L"Soundcheck", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
@@ -455,7 +500,7 @@ private:
                                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceReplace)), g_hInst, nullptr);
 
         HWND apply_draft = CreateWindowW(L"BUTTON", L"Apply Draft", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-                      624, 664, 150, 40, hwnd_,
+                      624, 664, 180, 40, hwnd_,
                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceOk)), g_hInst, nullptr);
         HWND cancel_button = CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                       788, 664, 116, 40, hwnd_,
@@ -467,8 +512,8 @@ private:
         MoveWindow(select_all, 24, 576, ButtonWidthForLabel(select_all, 148), 38, TRUE);
         MoveWindow(channels_only, 24 + ButtonWidthForLabel(select_all, 148) + 14, 576, ButtonWidthForLabel(channels_only, 170), 38, TRUE);
         MoveWindow(clear_button, 24 + ButtonWidthForLabel(select_all, 148) + ButtonWidthForLabel(channels_only, 170) + 28, 576, ButtonWidthForLabel(clear_button, 106), 38, TRUE);
-        MoveWindow(apply_draft, 624, 664, ButtonWidthForLabel(apply_draft, 150), 40, TRUE);
-        MoveWindow(cancel_button, 624 + ButtonWidthForLabel(apply_draft, 150) + 14, 664, ButtonWidthForLabel(cancel_button, 116), 40, TRUE);
+        MoveWindow(apply_draft, 624, 664, ButtonWidthForLabel(apply_draft, 180), 40, TRUE);
+        MoveWindow(cancel_button, 624 + ButtonWidthForLabel(apply_draft, 180) + 14, 664, ButtonWidthForLabel(cancel_button, 132), 40, TRUE);
         CheckRadioButton(hwnd_,
                          kIdSourceModeSoundcheck,
                          kIdSourceModeRecord,
@@ -525,7 +570,7 @@ private:
 
     void UpdateSelectionCount() {
         const LRESULT selected = SendMessageW(listbox_, LB_GETSELCOUNT, 0, 0);
-        wchar_t buffer[64];
+        wchar_t buffer[96];
         std::swprintf(buffer, sizeof(buffer) / sizeof(wchar_t), L"%ld sources selected", static_cast<long>(selected));
         SetWindowTextW(count_label_, buffer);
     }
@@ -923,6 +968,7 @@ private:
         SendMessageW(auto_trigger_header_, WM_SETFONT, reinterpret_cast<WPARAM>(section_font_), TRUE);
         SendMessageW(wing_section_header_, WM_SETFONT, reinterpret_cast<WPARAM>(section_font_), TRUE);
         SendMessageW(control_section_header_, WM_SETFONT, reinterpret_cast<WPARAM>(section_font_), TRUE);
+        SendMessageW(support_section_header_, WM_SETFONT, reinterpret_cast<WPARAM>(section_font_), TRUE);
         SendMessageW(tab_status_console_, WM_SETFONT, reinterpret_cast<WPARAM>(small_bold_font_), TRUE);
         SendMessageW(tab_status_reaper_, WM_SETFONT, reinterpret_cast<WPARAM>(small_bold_font_), TRUE);
         SendMessageW(tab_status_wing_, WM_SETFONT, reinterpret_cast<WPARAM>(small_bold_font_), TRUE);
@@ -934,6 +980,9 @@ private:
         SendMessageW(footer_status_, WM_SETFONT, reinterpret_cast<WPARAM>(subtle_font_), TRUE);
         SendMessageW(wing_placeholder_body_, WM_SETFONT, reinterpret_cast<WPARAM>(subtle_font_), TRUE);
         SendMessageW(control_placeholder_body_, WM_SETFONT, reinterpret_cast<WPARAM>(subtle_font_), TRUE);
+        SendMessageW(support_detail_, WM_SETFONT, reinterpret_cast<WPARAM>(subtle_font_), TRUE);
+        SendMessageW(debug_log_view_, WM_SETFONT, reinterpret_cast<WPARAM>(mono_font_), TRUE);
+        SendMessageW(auto_trigger_meter_label_, WM_SETFONT, reinterpret_cast<WPARAM>(mono_font_), TRUE);
         SetWindowTextW(console_section_icon_, L"\x25CF");
         SetWindowTextW(reaper_section_icon_, L"\x25CF");
         SetWindowTextW(auto_trigger_section_icon_, L"\x25CF");
@@ -948,6 +997,13 @@ private:
         SyncAutoTriggerControlsFromPending();
         SyncWingControlsFromPending();
         SyncControlTabFromPending();
+        ReaperExtension::Instance().SetLogCallback([this](const std::string& message) {
+            std::lock_guard<std::mutex> lock(log_buffer_mutex_);
+            pending_log_buffer_ += CleanLogMessage(message);
+            if (!pending_log_buffer_.empty() && pending_log_buffer_.back() != L'\n') {
+                pending_log_buffer_ += L"\r\n";
+            }
+        });
         pending_output_mode_ = CurrentOutputMode();
         SetTimer(hwnd_, kRefreshTimerId, kRefreshTimerMs, nullptr);
         RECT client_rect{};
@@ -1133,16 +1189,19 @@ private:
                                                   WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
                                                   456, 736, 100, 30, page_reaper_,
                                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutoTriggerHoldEdit)), g_hInst, nullptr);
+        auto_trigger_meter_label_ = CreateWindowW(L"STATIC", L"Trigger level: -- dBFS", WS_CHILD | WS_VISIBLE,
+                                                  200, 776, 260, 24, page_reaper_,
+                                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutoTriggerMeterLabel)), g_hInst, nullptr);
         apply_auto_trigger_button_ = CreateWindowW(L"BUTTON", L"Apply Auto Trigger Settings", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                                   200, 790, 250, 40, page_reaper_,
+                                                   200, 816, 250, 40, page_reaper_,
                                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdApplyAutoTriggerButton)), g_hInst, nullptr);
         discard_auto_trigger_button_ = CreateWindowW(L"BUTTON", L"Discard", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                                     464, 790, 140, 40, page_reaper_,
+                                                     464, 816, 140, 40, page_reaper_,
                                                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdDiscardAutoTriggerButton)), g_hInst, nullptr);
         auto_trigger_hint_ = CreateWindowW(L"STATIC",
                                            L"Pending Auto Trigger changes stay parked until you apply them.",
                                            WS_CHILD | WS_VISIBLE,
-                                           200, 846, 540, 52, page_reaper_,
+                                           200, 872, 540, 52, page_reaper_,
                                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutoTriggerHint)), g_hInst, nullptr);
     }
 
@@ -1256,6 +1315,22 @@ private:
         discard_midi_button_ = CreateWindowW(L"BUTTON", L"Discard", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                                              434, 454, 140, 38, page_control_,
                                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdDiscardMidiButton)), g_hInst, nullptr);
+        support_section_header_ = CreateWindowW(L"STATIC", L"Support and Diagnostics", WS_CHILD | WS_VISIBLE,
+                                                48, 526, 340, 26, page_control_, nullptr, g_hInst, nullptr);
+        support_detail_ = CreateWindowW(L"STATIC",
+                                        L"Use the debug log when things get weird, or when you want receipts for discovery, routing, validation, and recorder activity.",
+                                        WS_CHILD | WS_VISIBLE,
+                                        220, 564, 620, 42, page_control_, nullptr, g_hInst, nullptr);
+        open_debug_log_button_ = CreateWindowW(L"BUTTON", L"Open Debug Log", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                               220, 620, 170, 38, page_control_,
+                                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdOpenDebugLogButton)), g_hInst, nullptr);
+        clear_debug_log_button_ = CreateWindowW(L"BUTTON", L"Clear Log", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                                404, 620, 130, 38, page_control_,
+                                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdClearDebugLogButton)), g_hInst, nullptr);
+        debug_log_view_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                          WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
+                                          220, 676, 620, 220, page_control_,
+                                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdDebugLogView)), g_hInst, nullptr);
     }
 
     LRESULT OnGetMinMaxInfo(MINMAXINFO* info) {
@@ -1428,9 +1503,9 @@ private:
         const int viewport_height = page_height;
 
         console_page_state_.content_height = 660;
-        reaper_page_state_.content_height = 1460;
+        reaper_page_state_.content_height = 1520;
         wing_page_state_.content_height = 620;
-        control_page_state_.content_height = 620;
+        control_page_state_.content_height = 1040;
         UpdatePageScroll(console_page_state_, viewport_height);
         UpdatePageScroll(reaper_page_state_, viewport_height);
         UpdatePageScroll(wing_page_state_, viewport_height);
@@ -1484,11 +1559,12 @@ private:
         MoveWindow(auto_trigger_threshold_edit_, control_x, PageY(reaper_page_state_, 1114), 110, 32, TRUE);
         MoveWindow(auto_trigger_hold_label_, control_x + 142, PageY(reaper_page_state_, 1118), 120, 28, TRUE);
         MoveWindow(auto_trigger_hold_edit_, control_x + 272, PageY(reaper_page_state_, 1114), 110, 32, TRUE);
+        MoveWindow(auto_trigger_meter_label_, control_x, PageY(reaper_page_state_, 1160), 320, 28, TRUE);
         const int apply_auto_width = ButtonWidthForLabel(apply_auto_trigger_button_, 250);
         const int discard_auto_width = ButtonWidthForLabel(discard_auto_trigger_button_, 150);
-        MoveWindow(apply_auto_trigger_button_, control_x, PageY(reaper_page_state_, 1176), apply_auto_width, 42, TRUE);
-        MoveWindow(discard_auto_trigger_button_, control_x + apply_auto_width + 14, PageY(reaper_page_state_, 1176), discard_auto_width, 42, TRUE);
-        MoveWindow(auto_trigger_hint_, control_x, PageY(reaper_page_state_, 1234), page_width - control_x - 40, 92, TRUE);
+        MoveWindow(apply_auto_trigger_button_, control_x, PageY(reaper_page_state_, 1200), apply_auto_width, 42, TRUE);
+        MoveWindow(discard_auto_trigger_button_, control_x + apply_auto_width + 14, PageY(reaper_page_state_, 1200), discard_auto_width, 42, TRUE);
+        MoveWindow(auto_trigger_hint_, control_x, PageY(reaper_page_state_, 1258), page_width - control_x - 40, 92, TRUE);
 
         MoveWindow(wing_intro_, page_margin, PageY(wing_page_state_, 28), content_w - 10, 74, TRUE);
         MoveWindow(wing_section_icon_, page_margin, PageY(wing_page_state_, 128), 22, 22, TRUE);
@@ -1530,6 +1606,13 @@ private:
         const int discard_midi_width = ButtonWidthForLabel(discard_midi_button_, 150);
         MoveWindow(apply_midi_button_, control_x, PageY(control_page_state_, 568), apply_midi_width, 42, TRUE);
         MoveWindow(discard_midi_button_, control_x + apply_midi_width + 14, PageY(control_page_state_, 568), discard_midi_width, 42, TRUE);
+        MoveWindow(support_section_header_, page_margin + 26, PageY(control_page_state_, 668), 360, 34, TRUE);
+        MoveWindow(support_detail_, control_x, PageY(control_page_state_, 720), page_width - control_x - 40, 58, TRUE);
+        const int open_log_width = ButtonWidthForLabel(open_debug_log_button_, 180);
+        const int clear_log_width = ButtonWidthForLabel(clear_debug_log_button_, 136);
+        MoveWindow(open_debug_log_button_, control_x, PageY(control_page_state_, 792), open_log_width, 42, TRUE);
+        MoveWindow(clear_debug_log_button_, control_x + open_log_width + 14, PageY(control_page_state_, 792), clear_log_width, 42, TRUE);
+        MoveWindow(debug_log_view_, control_x, PageY(control_page_state_, 854), page_width - control_x - 40, 150, TRUE);
     }
 
     void ShowActivePage(int tab_index) {
@@ -1661,6 +1744,12 @@ private:
             case kIdDiscardMidiButton:
                 OnDiscardMidiActions();
                 return 0;
+            case kIdOpenDebugLogButton:
+                OnOpenDebugLog();
+                return 0;
+            case kIdClearDebugLogButton:
+                OnClearDebugLog();
+                return 0;
             default:
                 return 0;
         }
@@ -1726,6 +1815,10 @@ private:
             text_color = RGB(92, 98, 104);
         } else if (control == auto_trigger_hint_) {
             text_color = RGB(28, 114, 184);
+        } else if (control == auto_trigger_meter_label_) {
+            text_color = RGB(80, 80, 80);
+        } else if (control == support_detail_) {
+            text_color = RGB(92, 98, 104);
         }
         SetTextColor(hdc, text_color);
         if (control == title_ ||
@@ -1913,6 +2006,50 @@ private:
         EnableWindow(discard_midi_button_, midi_actions_dirty_ ? TRUE : FALSE);
     }
 
+    void FlushPendingLogBuffer() {
+        if (!debug_log_view_) {
+            return;
+        }
+        std::wstring chunk;
+        {
+            std::lock_guard<std::mutex> lock(log_buffer_mutex_);
+            if (pending_log_buffer_.empty()) {
+                return;
+            }
+            chunk.swap(pending_log_buffer_);
+        }
+
+        const std::wstring current = ReadWindowText(debug_log_view_);
+        std::wstring combined = current + chunk;
+        constexpr size_t kMaxLogChars = 32000;
+        if (combined.size() > kMaxLogChars) {
+            combined = combined.substr(combined.size() - kMaxLogChars);
+        }
+        SetWindowTextW(debug_log_view_, combined.c_str());
+        const int length = GetWindowTextLengthW(debug_log_view_);
+        SendMessageW(debug_log_view_, EM_SETSEL, length, length);
+        SendMessageW(debug_log_view_, EM_SCROLLCARET, 0, 0);
+    }
+
+    void UpdateAutoTriggerMeterPreview() {
+        if (!auto_trigger_meter_label_) {
+            return;
+        }
+        const double lin = ReaperExtension::Instance().ReadCurrentTriggerLevel();
+        std::wstring text;
+        if (lin <= 0.0000001 || !std::isfinite(lin)) {
+            text = L"Trigger level: -inf dBFS";
+        } else {
+            const double db = 20.0 * std::log10(lin);
+            wchar_t buffer[64];
+            std::swprintf(buffer, sizeof(buffer) / sizeof(wchar_t), L"Trigger level: %.1f dBFS", db);
+            text = buffer;
+        }
+        if (ReadWindowText(auto_trigger_meter_label_) != text) {
+            SetWindowTextW(auto_trigger_meter_label_, text.c_str());
+        }
+    }
+
     void RefreshAll() {
         if (!hwnd_) {
             return;
@@ -1944,6 +2081,8 @@ private:
         update_text(footer_status_, snapshot.footer);
         update_text(apply_setup_button_, snapshot.apply_label);
         update_text(toggle_soundcheck_button_, snapshot.toggle_label);
+        UpdateAutoTriggerMeterPreview();
+        FlushPendingLogBuffer();
         RefreshMonitorTrackDropdown();
         UpdateAutoTriggerUI();
         UpdateWingTabUI();
@@ -2530,6 +2669,30 @@ private:
         RefreshAll();
     }
 
+    void OnOpenDebugLog() {
+        if (!debug_log_view_) {
+            return;
+        }
+        SetFocus(debug_log_view_);
+        const int length = GetWindowTextLengthW(debug_log_view_);
+        SendMessageW(debug_log_view_, EM_SETSEL, length, length);
+        SendMessageW(debug_log_view_, EM_SCROLLCARET, 0, 0);
+        footer_message_ = L"Focused the diagnostics log.";
+        RefreshAll();
+    }
+
+    void OnClearDebugLog() {
+        {
+            std::lock_guard<std::mutex> lock(log_buffer_mutex_);
+            pending_log_buffer_.clear();
+        }
+        if (debug_log_view_) {
+            SetWindowTextW(debug_log_view_, L"");
+        }
+        footer_message_ = L"Diagnostics log cleared.";
+        RefreshAll();
+    }
+
     HWND hwnd_ = nullptr;
     HWND banner_group_ = nullptr;
     HWND status_group_ = nullptr;
@@ -2588,6 +2751,7 @@ private:
     HWND auto_trigger_threshold_edit_ = nullptr;
     HWND auto_trigger_hold_label_ = nullptr;
     HWND auto_trigger_hold_edit_ = nullptr;
+    HWND auto_trigger_meter_label_ = nullptr;
     HWND apply_auto_trigger_button_ = nullptr;
     HWND discard_auto_trigger_button_ = nullptr;
     HWND wing_intro_ = nullptr;
@@ -2621,6 +2785,11 @@ private:
     HWND warning_layer_combo_ = nullptr;
     HWND apply_midi_button_ = nullptr;
     HWND discard_midi_button_ = nullptr;
+    HWND support_section_header_ = nullptr;
+    HWND support_detail_ = nullptr;
+    HWND open_debug_log_button_ = nullptr;
+    HWND clear_debug_log_button_ = nullptr;
+    HWND debug_log_view_ = nullptr;
     HWND wing_placeholder_body_ = nullptr;
     HWND control_placeholder_body_ = nullptr;
     HWND wing_combo_ = nullptr;
@@ -2680,6 +2849,8 @@ private:
     bool pending_midi_actions_enabled_ = false;
     int pending_warning_layer_ = 1;
     bool midi_actions_dirty_ = false;
+    std::mutex log_buffer_mutex_;
+    std::wstring pending_log_buffer_;
 };
 
 WingConnectorWindowsDialog* WingConnectorWindowsDialog::instance_ = nullptr;
