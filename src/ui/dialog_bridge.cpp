@@ -971,7 +971,6 @@ bool ParseMappingSpec(const std::string& spec, std::vector<BridgeMapping>& mappi
     return true;
 }
 
-#ifndef __APPLE__
 const char* SourceKindTag(SourceKind kind) {
     switch (kind) {
         case SourceKind::Channel: return "CH";
@@ -1338,6 +1337,8 @@ bool EnsureCrossPlatformWingConnection(const char* dialog_title,
     }
 }
 
+#ifndef __APPLE__
+
 std::string BuildSelectionSummary(const std::vector<SourceSelectionInfo>& sources, bool setup_soundcheck, bool replace_existing) {
     int selected_count = 0;
     int soundcheck_count = 0;
@@ -1377,6 +1378,7 @@ std::string BuildSelectionSummary(const std::vector<SourceSelectionInfo>& source
     }
     return out.str();
 }
+
 #endif
 
 std::string SelectedChannelBridgeSummary() {
@@ -1657,29 +1659,11 @@ void ShowSelectedChannelBridgeDialog() {
 
 void ShowExistingProjectAdoptionDialog() {
     auto& extension = ReaperExtension::Instance();
-    auto& config = extension.GetConfig();
-
-#ifndef __APPLE__
     if (!EnsureCrossPlatformWingConnection("WINGuard: Existing Project Adoption",
                                            "Review imported REAPER tracks against live WING metadata")) {
         return;
     }
-#else
-    if (!extension.IsConnected()) {
-        if (config.wing_ip.empty()) {
-            ShowMessageBox("Connect WINGuard to a WING first, or set a manual WING IP before running adoption review.",
-                           "WINGuard: Existing Project Adoption",
-                           0);
-            return;
-        }
-        if (!extension.ConnectToWing()) {
-            ShowMessageBox("WINGuard could not connect to the configured WING. Adoption review needs a live WING connection for channel metadata.",
-                           "WINGuard: Existing Project Adoption",
-                           0);
-            return;
-        }
-    }
-#endif
+    auto& config = extension.GetConfig();
 
     const auto available_sources = extension.GetAvailableSources();
     const auto channel_sources = FilterChannelSources(available_sources);
