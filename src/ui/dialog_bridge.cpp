@@ -1165,6 +1165,172 @@ bool ParseOnOffFlag(const std::string& value, bool& enabled_out) {
     return false;
 }
 
+std::string BuildDiscoveredWingLabel(const WingInfo& wing) {
+    std::ostringstream out;
+    if (!wing.name.empty() && !wing.model.empty()) {
+        out << wing.name << " - " << wing.model << " (" << wing.console_ip << ")";
+        return out.str();
+    }
+    if (!wing.name.empty()) {
+        out << wing.name << " (" << wing.console_ip << ")";
+        return out.str();
+    }
+    if (!wing.model.empty()) {
+        out << wing.model << " (" << wing.console_ip << ")";
+        return out.str();
+    }
+    return wing.console_ip;
+}
+
+std::string BuildCrossPlatformConnectionSummary(const std::vector<WingInfo>& wings,
+                                                const std::string& configured_ip,
+                                                const std::string& action_description) {
+    std::ostringstream out;
+    out << "Prepare WING connection before continuing.\n\n"
+        << "Action: " << action_description << "\n";
+    if (!configured_ip.empty()) {
+        out << "Saved/configured IP: " << configured_ip << "\n";
+    } else {
+        out << "Saved/configured IP: (none)\n";
+    }
+    out << "\nDiscovered WING consoles:\n";
+    if (wings.empty()) {
+        out << "- none found on this scan\n";
+    } else {
+        for (size_t index = 0; index < wings.size(); ++index) {
+            out << (index + 1) << ": " << BuildDiscoveredWingLabel(wings[index]) << "\n";
+        }
+    }
+    out << "\nEnter one of these actions:\n"
+        << "- CONNECT = use the selected discovered console or manual IP now\n"
+        << "- SCAN = rescan the network list\n"
+        << "- CANCEL = stop without changing anything\n"
+        << "\nSelection rules:\n"
+        << "- Manual IP overrides the discovered console number\n"
+        << "- Console number is 1-based; use 0 to keep the manual/saved IP\n";
+    return out.str();
+}
+
+bool ParseOptionalPositiveInt(const std::string& value, int& parsed_out) {
+    const std::string trimmed = TrimCopy(value);
+    if (trimmed.empty()) {
+        parsed_out = 0;
+        return true;
+    }
+    try {
+        parsed_out = std::stoi(trimmed);
+        return parsed_out >= 0;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool PersistWingIpIfPossible(WingConfig& config) {
+    const std::string config_path = WingConfig::GetConfigPath();
+    return config.SaveToFile(config_path);
+}
+
+bool EnsureCrossPlatformWingConnection(const char* dialog_title,
+                                       const std::string& action_description) {
+    auto& extension = ReaperExtension::Instance();
+    auto& config = extension.GetConfig();
+    if (extension.IsConnected()) {
+        return true;
+    }
+
+    std::string configured_ip = config.wing_ip;
+    std::vector<WingInfo> discovered_wings = extension.DiscoverWings(1500);
+
+    while (true) {
+        ShowMessageBox(BuildCrossPlatformConnectionSummary(discovered_wings, configured_ip, action_description).c_str(),
+                       dialog_title,
+                       0);
+
+        char values[1024];
+        const int default_index = (!discovered_wings.empty() && configured_ip.empty()) ? 1 : 0;
+        std::snprintf(values,
+                      sizeof(values),
+                      "%s,%d,%s",
+                      "CONNECT",
+                      default_index,
+                      configured_ip.c_str());
+
+        if (!GetUserInputs(dialog_title,
+                           3,
+                           "Action (CONNECT/SCAN/CANCEL),Discovered console number (1..n or 0),Manual IP override",
+                           values,
+                           sizeof(values))) {
+            return false;
+        }
+
+        const auto parts = SplitDelimited(values, ',');
+        if (parts.size() != 3) {
+            ShowMessageBox("Expected 3 values: action, discovered console number, and manual IP.",
+                           dialog_title,
+                           0);
+            continue;
+        }
+
+        const std::string action = NormalizeUpper(parts[0]);
+        if (action == "CANCEL" || action == "0") {
+            return false;
+        }
+        if (action == "SCAN") {
+            discovered_wings = extension.DiscoverWings(1500);
+            continue;
+        }
+        if (action != "CONNECT") {
+            ShowMessageBox("Action must be CONNECT, SCAN, or CANCEL.",
+                           dialog_title,
+                           0);
+            continue;
+        }
+
+        int discovered_index = 0;
+        if (!ParseOptionalPositiveInt(parts[1], discovered_index)) {
+            ShowMessageBox("Discovered console number must be an integer from 0 to the discovered list size.",
+                           dialog_title,
+                           0);
+            continue;
+        }
+
+        std::string candidate_ip = TrimCopy(parts[2]);
+        if (candidate_ip.empty() && discovered_index > 0) {
+            if (discovered_index > static_cast<int>(discovered_wings.size())) {
+                ShowMessageBox("Discovered console number is out of range for the current scan results.",
+                               dialog_title,
+                               0);
+                continue;
+            }
+            candidate_ip = discovered_wings[static_cast<size_t>(discovered_index - 1)].console_ip;
+        }
+        if (candidate_ip.empty()) {
+            candidate_ip = configured_ip;
+        }
+        if (candidate_ip.empty()) {
+            ShowMessageBox("No WING IP selected. Choose a discovered console, or enter a manual IP before connecting.",
+                           dialog_title,
+                           0);
+            continue;
+        }
+
+        config.wing_ip = candidate_ip;
+        configured_ip = candidate_ip;
+        const bool connected = extension.ConnectToWing();
+        if (!connected) {
+            ShowMessageBox(("WINGuard could not connect to " + candidate_ip +
+                            ".\n\nCheck the WING IP, OSC settings, and local network path, then rescan or enter another IP.")
+                               .c_str(),
+                           dialog_title,
+                           0);
+            continue;
+        }
+
+        PersistWingIpIfPossible(config);
+        return true;
+    }
+}
+
 std::string BuildSelectionSummary(const std::vector<SourceSelectionInfo>& sources, bool setup_soundcheck, bool replace_existing) {
     int selected_count = 0;
     int soundcheck_count = 0;
@@ -1245,16 +1411,9 @@ void RunCrossPlatformDialog() {
     auto& extension = ReaperExtension::Instance();
     // Non-macOS fallback path: keep the flow staged even though REAPER only gives
     // us basic dialogs here.
-    if (!extension.IsConnected()) {
-        const bool connected = extension.ConnectToWing();
-        if (!connected) {
-            ShowMessageBox(
-                "WINGuard could not connect.\n\n"
-                "Set wing_ip in config.json and ensure OSC is enabled on the console.",
-                "WINGuard",
-                0);
-            return;
-        }
+    if (!EnsureCrossPlatformWingConnection("WINGuard: Connect to WING",
+                                           "Configure Virtual Soundcheck/Recording")) {
+        return;
     }
 
     auto sources = extension.GetAvailableSources();
@@ -1491,6 +1650,12 @@ void ShowExistingProjectAdoptionDialog() {
     auto& extension = ReaperExtension::Instance();
     auto& config = extension.GetConfig();
 
+#ifndef __APPLE__
+    if (!EnsureCrossPlatformWingConnection("WINGuard: Existing Project Adoption",
+                                           "Review imported REAPER tracks against live WING metadata")) {
+        return;
+    }
+#else
     if (!extension.IsConnected()) {
         if (config.wing_ip.empty()) {
             ShowMessageBox("Connect WINGuard to a WING first, or set a manual WING IP before running adoption review.",
@@ -1498,14 +1663,14 @@ void ShowExistingProjectAdoptionDialog() {
                            0);
             return;
         }
-        const bool connected = extension.ConnectToWing();
-        if (!connected) {
+        if (!extension.ConnectToWing()) {
             ShowMessageBox("WINGuard could not connect to the configured WING. Adoption review needs a live WING connection for channel metadata.",
                            "WINGuard: Existing Project Adoption",
                            0);
             return;
         }
     }
+#endif
 
     const auto available_sources = extension.GetAvailableSources();
     const auto channel_sources = FilterChannelSources(available_sources);

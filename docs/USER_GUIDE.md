@@ -21,6 +21,8 @@ If the menu is missing, verify plugin files are in your REAPER `UserPlugins` fol
 3. Start connect/fetch.
 4. Wait for channel discovery and track creation/update.
 
+This same scan/select/manual-IP/connect workflow is available on macOS, Windows, and Linux.
+
 ![WINGuard dialog](images/wing-connector.png)
 
 Expected result:
@@ -98,7 +100,7 @@ If you receive a REAPER project that was not prepared by WINGuard:
 
 1. Open the project in REAPER.
 2. Run `Extensions -> WINGuard: Adopt Existing Reaper Project for Virtual Soundcheck`.
-3. Let WINGuard connect to the configured WING and fetch channel metadata.
+3. Use the same WING connection step to scan/select a console or enter a manual IP, then connect and fetch live channel metadata.
 4. Review the summary of:
    - already managed tracks
    - imported tracks with media items
