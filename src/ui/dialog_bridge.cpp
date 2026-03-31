@@ -1697,7 +1697,7 @@ void ShowExistingProjectAdoptionDialog() {
     const auto existing_routes = CollectExistingManagedRoutes();
     const std::string current_mode = (config.soundcheck_output_mode == "CARD") ? "CARD" : "USB";
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
     AdoptionDialogPlan preview_plan = BuildDefaultAdoptionPlan(suggestions, current_mode);
     std::string preview_error;
     std::vector<PlaybackAllocation> preview_allocations;

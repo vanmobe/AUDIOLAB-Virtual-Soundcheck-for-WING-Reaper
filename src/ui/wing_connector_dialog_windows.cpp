@@ -39,6 +39,7 @@ namespace {
 constexpr wchar_t kDialogClassName[] = L"WINGuardWindowsDialog";
 constexpr wchar_t kSourceDialogClassName[] = L"WINGuardSourcePickerDialog";
 constexpr wchar_t kDebugLogClassName[] = L"WINGuardDebugLogDialog";
+constexpr wchar_t kAdoptionDialogClassName[] = L"WINGuardAdoptionDialog";
 constexpr wchar_t kPageClassName[] = L"WINGuardWindowsPage";
 constexpr wchar_t kLogoClassName[] = L"WINGuardWindowsLogo";
 constexpr int kMinWindowWidth = 1180;
@@ -766,6 +767,359 @@ private:
     HWND edit_ = nullptr;
     HFONT font_ = nullptr;
     std::wstring latest_text_;
+};
+
+class AdoptionEditorDialog {
+public:
+    AdoptionEditorDialog(const std::vector<AdoptionEditorRow>& rows,
+                         const std::vector<int>& available_channels,
+                         const char* initial_output_mode)
+        : rows_(rows),
+          available_channels_(available_channels),
+          output_mode_(initial_output_mode && std::string(initial_output_mode) == "CARD" ? "CARD" : "USB"),
+          slot_overrides_(rows.size()) {}
+
+    bool Run(std::string& output_mode_out,
+             std::string& channel_overrides_spec_out,
+             std::string& slot_overrides_spec_out,
+             bool& apply_now_out) {
+        RegisterClass();
+        hwnd_ = CreateWindowExW(WS_EX_DLGMODALFRAME,
+                                kAdoptionDialogClassName,
+                                L"WINGuard Adoption Review",
+                                WS_CAPTION | WS_SYSMENU | WS_VISIBLE | WS_THICKFRAME,
+                                CW_USEDEFAULT, CW_USEDEFAULT, 980, 760,
+                                g_hwndParent,
+                                nullptr,
+                                g_hInst,
+                                this);
+        if (!hwnd_) {
+            return false;
+        }
+
+        EnableWindow(g_hwndParent, FALSE);
+        MSG msg{};
+        while (!done_ && GetMessageW(&msg, nullptr, 0, 0) > 0) {
+            if (!IsDialogMessageW(hwnd_, &msg)) {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+        if (g_hwndParent) {
+            EnableWindow(g_hwndParent, TRUE);
+            SetForegroundWindow(g_hwndParent);
+        }
+        if (hwnd_) {
+            DestroyWindow(hwnd_);
+            hwnd_ = nullptr;
+        }
+        if (!apply_now_) {
+            apply_now_out = false;
+            return false;
+        }
+        output_mode_out = output_mode_;
+        channel_overrides_spec_out = BuildChannelOverrides();
+        slot_overrides_spec_out = BuildSlotOverrides();
+        apply_now_out = true;
+        return true;
+    }
+
+private:
+    enum : int {
+        kIdModeUsb = 9001,
+        kIdModeCard,
+        kIdRowList,
+        kIdChannelCombo,
+        kIdSlotEdit,
+        kIdClearSlot,
+        kIdApply,
+        kIdCancel
+    };
+
+    static void RegisterClass() {
+        static bool registered = false;
+        if (registered) {
+            return;
+        }
+        WNDCLASSW wc{};
+        wc.lpfnWndProc = &AdoptionEditorDialog::WndProc;
+        wc.hInstance = g_hInst;
+        wc.lpszClassName = kAdoptionDialogClassName;
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
+        RegisterClassW(&wc);
+        registered = true;
+    }
+
+    static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+        AdoptionEditorDialog* self = reinterpret_cast<AdoptionEditorDialog*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (msg == WM_NCCREATE) {
+            auto* cs = reinterpret_cast<CREATESTRUCTW*>(lparam);
+            self = reinterpret_cast<AdoptionEditorDialog*>(cs->lpCreateParams);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+            self->hwnd_ = hwnd;
+        }
+        if (!self) {
+            return DefWindowProcW(hwnd, msg, wparam, lparam);
+        }
+        switch (msg) {
+            case WM_CREATE: return self->OnCreate();
+            case WM_COMMAND: return self->OnCommand(LOWORD(wparam), HIWORD(wparam));
+            case WM_CLOSE:
+                self->done_ = true;
+                return 0;
+            default:
+                return DefWindowProcW(hwnd, msg, wparam, lparam);
+        }
+    }
+
+    LRESULT OnCreate() {
+        HFONT font = CreateUiFont(-22);
+        HFONT title_font = CreateUiFont(-26, FW_SEMIBOLD);
+        HFONT mono_font = CreateUiFont(-20, FW_NORMAL, true);
+
+        CreateWindowW(L"STATIC", L"Adopt Existing REAPER Project For Virtual Soundcheck", WS_CHILD | WS_VISIBLE,
+                      24, 20, 620, 30, hwnd_, nullptr, g_hInst, nullptr);
+        CreateWindowW(L"STATIC",
+                      L"Review or override the proposed channel mapping before applying. Slot overrides are optional; leave them empty to keep automatic placement.",
+                      WS_CHILD | WS_VISIBLE,
+                      24, 56, 900, 42, hwnd_, nullptr, g_hInst, nullptr);
+        CreateWindowW(L"STATIC", L"Connection", WS_CHILD | WS_VISIBLE,
+                      24, 112, 160, 24, hwnd_, nullptr, g_hInst, nullptr);
+        const std::wstring connection_text = BuildConnectionSummary();
+        connection_status_ = CreateWindowW(L"STATIC", connection_text.c_str(), WS_CHILD | WS_VISIBLE,
+                                           200, 112, 720, 42, hwnd_, nullptr, g_hInst, nullptr);
+        CreateWindowW(L"STATIC", L"Output Mode", WS_CHILD | WS_VISIBLE,
+                      24, 166, 160, 24, hwnd_, nullptr, g_hInst, nullptr);
+        mode_usb_ = CreateWindowW(L"BUTTON", L"USB", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON | WS_GROUP,
+                                  200, 162, 100, 30, hwnd_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdModeUsb)), g_hInst, nullptr);
+        mode_card_ = CreateWindowW(L"BUTTON", L"CARD", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+                                   314, 162, 110, 30, hwnd_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdModeCard)), g_hInst, nullptr);
+        CheckRadioButton(hwnd_, kIdModeUsb, kIdModeCard, output_mode_ == "CARD" ? kIdModeCard : kIdModeUsb);
+
+        CreateWindowW(L"STATIC", L"Tracks To Adopt", WS_CHILD | WS_VISIBLE,
+                      24, 218, 180, 24, hwnd_, nullptr, g_hInst, nullptr);
+        row_list_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", nullptr,
+                                    WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY,
+                                    24, 250, 560, 400, hwnd_,
+                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRowList)), g_hInst, nullptr);
+        CreateWindowW(L"STATIC", L"WING Channel", WS_CHILD | WS_VISIBLE,
+                      612, 250, 140, 24, hwnd_, nullptr, g_hInst, nullptr);
+        channel_combo_ = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
+                                       612, 280, 240, 240, hwnd_,
+                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdChannelCombo)), g_hInst, nullptr);
+        CreateWindowW(L"STATIC", L"Playback Slot Override", WS_CHILD | WS_VISIBLE,
+                      612, 340, 220, 24, hwnd_, nullptr, g_hInst, nullptr);
+        slot_edit_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                     WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+                                     612, 372, 160, 32, hwnd_,
+                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSlotEdit)), g_hInst, nullptr);
+        clear_slot_button_ = CreateWindowW(L"BUTTON", L"Clear Override", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                           782, 372, 160, 32, hwnd_,
+                                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdClearSlot)), g_hInst, nullptr);
+        assignment_hint_ = CreateWindowW(L"STATIC",
+                                         L"Choose a row, then adjust the WING channel or enter a slot like 9 or 9-10. Stereo rows should use an odd-start pair.",
+                                         WS_CHILD | WS_VISIBLE,
+                                         612, 426, 320, 72, hwnd_, nullptr, g_hInst, nullptr);
+        apply_button_ = CreateWindowW(L"BUTTON", L"Apply Adoption", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+                                      700, 674, 150, 42, hwnd_,
+                                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdApply)), g_hInst, nullptr);
+        cancel_button_ = CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                       864, 674, 92, 42, hwnd_,
+                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdCancel)), g_hInst, nullptr);
+
+        SetWindowFontRecursive(hwnd_, font);
+        SendMessageW(connection_status_, WM_SETFONT, reinterpret_cast<WPARAM>(mono_font), TRUE);
+        SendMessageW(row_list_, LB_SETITEMHEIGHT, 0, 28);
+        SendMessageW(apply_button_, WM_SETFONT, reinterpret_cast<WPARAM>(title_font), TRUE);
+
+        for (int channel_number : available_channels_) {
+            const std::wstring label = L"CH" + std::to_wstring(channel_number);
+            SendMessageW(channel_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
+        }
+        PopulateRows();
+        CenterWindow();
+        return 0;
+    }
+
+    void PopulateRows() {
+        SendMessageW(row_list_, LB_RESETCONTENT, 0, 0);
+        for (size_t i = 0; i < rows_.size(); ++i) {
+            SendMessageW(row_list_, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(BuildRowLabel(i).c_str()));
+        }
+        if (!rows_.empty()) {
+            SendMessageW(row_list_, LB_SETCURSEL, 0, 0);
+            selected_index_ = 0;
+            SyncSelectionControls();
+        }
+    }
+
+    std::wstring BuildConnectionSummary() const {
+        auto& extension = ReaperExtension::Instance();
+        const auto& config = extension.GetConfig();
+        if (extension.IsConnected()) {
+            return L"Connected to WING at " + ToWide(config.wing_ip.empty() ? std::string("(unknown)") : config.wing_ip) +
+                   L". Adoption review uses live channel metadata.";
+        }
+        return L"No live WING connection is active. Close this review and reconnect before applying adoption.";
+    }
+
+    std::wstring BuildSuggestedSlotLabel(const AdoptionEditorRow& row) const {
+        if (row.suggested_slot_start <= 0) {
+            return L"Auto";
+        }
+        if (row.suggested_slot_end > row.suggested_slot_start) {
+            return std::to_wstring(row.suggested_slot_start) + L"-" + std::to_wstring(row.suggested_slot_end);
+        }
+        return std::to_wstring(row.suggested_slot_start);
+    }
+
+    std::wstring BuildRowLabel(size_t index) const {
+        const auto& row = rows_[index];
+        std::wstring line = std::to_wstring(row.track_index) + L". " + ToWide(row.track_name);
+        line += row.stereo_like ? L" | Stereo" : L" | Mono";
+        line += L" | Suggest CH" + std::to_wstring(row.suggested_channel);
+        line += L" | Now CH" + std::to_wstring(row.assigned_channel);
+        line += L" | Slot ";
+        line += slot_overrides_[index].empty() ? BuildSuggestedSlotLabel(row) : slot_overrides_[index];
+        return line;
+    }
+
+    void SyncSelectionControls() {
+        if (selected_index_ < 0 || selected_index_ >= static_cast<int>(rows_.size())) {
+            return;
+        }
+        const auto& row = rows_[static_cast<size_t>(selected_index_)];
+        int combo_index = 0;
+        for (size_t i = 0; i < available_channels_.size(); ++i) {
+            if (available_channels_[i] == row.assigned_channel) {
+                combo_index = static_cast<int>(i);
+                break;
+            }
+        }
+        SendMessageW(channel_combo_, CB_SETCURSEL, combo_index, 0);
+        SetWindowTextW(slot_edit_, slot_overrides_[static_cast<size_t>(selected_index_)].c_str());
+    }
+
+    void UpdateSelectedRowLabel() {
+        if (selected_index_ < 0 || selected_index_ >= static_cast<int>(rows_.size())) {
+            return;
+        }
+        SendMessageW(row_list_, LB_DELETESTRING, selected_index_, 0);
+        SendMessageW(row_list_, LB_INSERTSTRING, selected_index_, reinterpret_cast<LPARAM>(BuildRowLabel(static_cast<size_t>(selected_index_)).c_str()));
+        SendMessageW(row_list_, LB_SETCURSEL, selected_index_, 0);
+    }
+
+    std::string BuildChannelOverrides() const {
+        std::ostringstream out;
+        bool first = true;
+        for (const auto& row : rows_) {
+            if (row.assigned_channel == row.suggested_channel) {
+                continue;
+            }
+            if (!first) {
+                out << ";";
+            }
+            out << row.track_index << "=CH" << row.assigned_channel;
+            first = false;
+        }
+        return out.str();
+    }
+
+    std::string BuildSlotOverrides() const {
+        std::ostringstream out;
+        bool first = true;
+        for (size_t i = 0; i < rows_.size(); ++i) {
+            const std::wstring& override_value = slot_overrides_[i];
+            if (override_value.empty()) {
+                continue;
+            }
+            if (!first) {
+                out << ";";
+            }
+            out << rows_[i].track_index << "=" << ToUtf8(override_value);
+            first = false;
+        }
+        return out.str();
+    }
+
+    void CenterWindow() {
+        RECT owner_rect{};
+        RECT dialog_rect{};
+        GetWindowRect(g_hwndParent ? g_hwndParent : GetDesktopWindow(), &owner_rect);
+        GetWindowRect(hwnd_, &dialog_rect);
+        const int x = owner_rect.left + std::max(0, ((owner_rect.right - owner_rect.left) - (dialog_rect.right - dialog_rect.left)) / 2);
+        const int y = owner_rect.top + std::max(0, ((owner_rect.bottom - owner_rect.top) - (dialog_rect.bottom - dialog_rect.top)) / 2);
+        SetWindowPos(hwnd_, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+    }
+
+    LRESULT OnCommand(WORD id, WORD notify_code) {
+        switch (id) {
+            case kIdModeUsb:
+                output_mode_ = "USB";
+                return 0;
+            case kIdModeCard:
+                output_mode_ = "CARD";
+                return 0;
+            case kIdRowList:
+                if (notify_code == LBN_SELCHANGE) {
+                    selected_index_ = static_cast<int>(SendMessageW(row_list_, LB_GETCURSEL, 0, 0));
+                    SyncSelectionControls();
+                }
+                return 0;
+            case kIdChannelCombo:
+                if (notify_code == CBN_SELCHANGE && selected_index_ >= 0) {
+                    const int combo_index = static_cast<int>(SendMessageW(channel_combo_, CB_GETCURSEL, 0, 0));
+                    if (combo_index >= 0 && combo_index < static_cast<int>(available_channels_.size())) {
+                        rows_[static_cast<size_t>(selected_index_)].assigned_channel = available_channels_[static_cast<size_t>(combo_index)];
+                        UpdateSelectedRowLabel();
+                    }
+                }
+                return 0;
+            case kIdSlotEdit:
+                if (notify_code == EN_CHANGE && selected_index_ >= 0) {
+                    slot_overrides_[static_cast<size_t>(selected_index_)] = ReadWindowText(slot_edit_);
+                    UpdateSelectedRowLabel();
+                }
+                return 0;
+            case kIdClearSlot:
+                if (selected_index_ >= 0) {
+                    slot_overrides_[static_cast<size_t>(selected_index_)].clear();
+                    SetWindowTextW(slot_edit_, L"");
+                    UpdateSelectedRowLabel();
+                }
+                return 0;
+            case kIdApply:
+                apply_now_ = true;
+                done_ = true;
+                return 0;
+            case kIdCancel:
+                apply_now_ = false;
+                done_ = true;
+                return 0;
+            default:
+                return 0;
+        }
+    }
+
+    HWND hwnd_ = nullptr;
+    HWND connection_status_ = nullptr;
+    HWND mode_usb_ = nullptr;
+    HWND mode_card_ = nullptr;
+    HWND row_list_ = nullptr;
+    HWND channel_combo_ = nullptr;
+    HWND slot_edit_ = nullptr;
+    HWND clear_slot_button_ = nullptr;
+    HWND assignment_hint_ = nullptr;
+    HWND apply_button_ = nullptr;
+    HWND cancel_button_ = nullptr;
+    std::vector<AdoptionEditorRow> rows_;
+    std::vector<int> available_channels_;
+    std::vector<std::wstring> slot_overrides_;
+    std::string output_mode_;
+    int selected_index_ = -1;
+    bool done_ = false;
+    bool apply_now_ = false;
 };
 
 class WingConnectorWindowsDialog {
@@ -2997,6 +3351,17 @@ WingConnectorWindowsDialog* WingConnectorWindowsDialog::instance_ = nullptr;
 
 extern "C" void ShowWingConnectorDialogWindows() {
     WingConnectorWindowsDialog::Show();
+}
+
+extern "C" bool ShowExistingProjectAdoptionEditor(const std::vector<AdoptionEditorRow>& rows,
+                                                   const std::vector<int>& available_channels,
+                                                   const char* initial_output_mode,
+                                                   std::string& output_mode_out,
+                                                   std::string& channel_overrides_spec_out,
+                                                   std::string& slot_overrides_spec_out,
+                                                   bool& apply_now_out) {
+    AdoptionEditorDialog dialog(rows, available_channels, initial_output_mode);
+    return dialog.Run(output_mode_out, channel_overrides_spec_out, slot_overrides_spec_out, apply_now_out);
 }
 
 #endif
