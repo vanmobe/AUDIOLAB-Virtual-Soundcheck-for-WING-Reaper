@@ -193,7 +193,7 @@ elseif(WIN32)
         SUFFIX ${EXTENSION_SUFFIX}
         PREFIX ""
     )
-    target_link_libraries(reaper_wingconnector PRIVATE ws2_32 winmm comctl32)
+    target_link_libraries(reaper_wingconnector PRIVATE ws2_32 winmm comctl32 gdiplus)
 endif()
 
 # Set output name

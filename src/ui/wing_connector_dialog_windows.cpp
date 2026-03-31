@@ -10,10 +10,12 @@
 
 #include <windows.h>
 #include <commctrl.h>
+#include <gdiplus.h>
 
 #include "internal/wing_connector_dialog_windows.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cwchar>
 #include <set>
@@ -35,16 +37,19 @@ namespace {
 constexpr wchar_t kDialogClassName[] = L"WINGuardWindowsDialog";
 constexpr wchar_t kSourceDialogClassName[] = L"WINGuardSourcePickerDialog";
 constexpr wchar_t kPageClassName[] = L"WINGuardWindowsPage";
-constexpr int kWindowWidth = 1160;
-constexpr int kWindowHeight = 860;
-constexpr int kMinWindowWidth = 980;
-constexpr int kMinWindowHeight = 760;
+constexpr wchar_t kLogoClassName[] = L"WINGuardWindowsLogo";
+constexpr int kWindowWidth = 1380;
+constexpr int kWindowHeight = 1020;
+constexpr int kMinWindowWidth = 1180;
+constexpr int kMinWindowHeight = 860;
 constexpr UINT_PTR kRefreshTimerId = 101;
 constexpr UINT kRefreshTimerMs = 1500;
+constexpr int kScrollLineStep = 36;
 
 enum ControlId {
     kIdTab = 100,
     kIdBannerGroup,
+    kIdLogo,
     kIdTitle,
     kIdSubtitle,
     kIdStatusGroup,
@@ -73,6 +78,9 @@ enum ControlId {
     kIdWingPlaceholder,
     kIdControlPlaceholder,
     kIdFooterStatus,
+    kIdAutoTriggerHeader,
+    kIdAutoTriggerDetail,
+    kIdAutoTriggerHint,
     kIdSourceList,
     kIdSourceSelectAll,
     kIdSourceSelectChannels,
@@ -136,6 +144,66 @@ void SetWindowFontRecursive(HWND hwnd, HFONT font) {
     }
 }
 
+ULONG_PTR EnsureGdiplusToken() {
+    static ULONG_PTR token = 0;
+    static bool started = false;
+    if (started) {
+        return token;
+    }
+    Gdiplus::GdiplusStartupInput startup_input;
+    if (Gdiplus::GdiplusStartup(&token, &startup_input, nullptr) == Gdiplus::Ok) {
+        started = true;
+    }
+    return token;
+}
+
+std::wstring ModuleDirectory() {
+    wchar_t path[MAX_PATH];
+    const DWORD length = GetModuleFileNameW(reinterpret_cast<HMODULE>(g_hInst), path, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) {
+        return L".";
+    }
+    std::wstring full_path(path, path + length);
+    const size_t slash = full_path.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) {
+        return L".";
+    }
+    return full_path.substr(0, slash);
+}
+
+std::wstring ResolveLogoPath() {
+    std::array<std::wstring, 4> candidates = {
+        ModuleDirectory() + L"\\wingguard-logo.png",
+        ModuleDirectory() + L"\\assets\\wingguard-logo.png",
+        L"assets\\wingguard-logo.png",
+        L"wingguard-logo.png"
+    };
+    for (const auto& path : candidates) {
+        const DWORD attributes = GetFileAttributesW(path.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY)) {
+            return path;
+        }
+    }
+    return std::wstring();
+}
+
+HFONT CreateUiFont(int height, int weight = FW_NORMAL, bool monospace = false) {
+    return CreateFontW(height,
+                       0,
+                       0,
+                       0,
+                       weight,
+                       FALSE,
+                       FALSE,
+                       FALSE,
+                       DEFAULT_CHARSET,
+                       OUT_DEFAULT_PRECIS,
+                       CLIP_DEFAULT_PRECIS,
+                       CLEARTYPE_QUALITY,
+                       DEFAULT_PITCH | (monospace ? FF_MODERN : FF_DONTCARE),
+                       monospace ? L"Consolas" : L"Segoe UI");
+}
+
 void SaveConfigIfPossible(ReaperExtension& extension) {
     const std::string path = WingConfig::GetConfigPath();
     if (!extension.GetConfig().SaveToFile(path)) {
@@ -174,7 +242,7 @@ public:
             kSourceDialogClassName,
             L"Review Sources For Live Setup",
             WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-            CW_USEDEFAULT, CW_USEDEFAULT, 760, 620,
+            CW_USEDEFAULT, CW_USEDEFAULT, 920, 760,
             owner_,
             nullptr,
             g_hInst,
@@ -241,12 +309,13 @@ private:
     }
 
     LRESULT OnCreate() {
-        HFONT font = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+        HFONT font = CreateUiFont(-22);
+        HFONT title_font = CreateUiFont(-24, FW_SEMIBOLD);
 
         CreateWindowW(L"STATIC",
                       L"Choose which channels, buses, or matrices should be included in the next apply. No routing changes happen until you confirm.",
                       WS_CHILD | WS_VISIBLE,
-                      20, 18, 700, 32,
+                      24, 18, 860, 54,
                       hwnd_,
                       nullptr,
                       g_hInst,
@@ -256,44 +325,45 @@ private:
                                    L"LISTBOX",
                                    nullptr,
                                    WS_CHILD | WS_VISIBLE | LBS_EXTENDEDSEL | WS_VSCROLL | LBS_NOTIFY,
-                                   20, 60, 700, 380,
+                                   24, 86, 860, 470,
                                    hwnd_,
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceList)),
                                    g_hInst,
                                    nullptr);
 
         CreateWindowW(L"BUTTON", L"Select All", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                      20, 455, 110, 28, hwnd_,
+                      24, 576, 130, 34, hwnd_,
                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceSelectAll)), g_hInst, nullptr);
         CreateWindowW(L"BUTTON", L"Channels Only", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                      140, 455, 120, 28, hwnd_,
+                      166, 576, 150, 34, hwnd_,
                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceSelectChannels)), g_hInst, nullptr);
         CreateWindowW(L"BUTTON", L"Clear", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                      270, 455, 90, 28, hwnd_,
+                      328, 576, 96, 34, hwnd_,
                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceClear)), g_hInst, nullptr);
 
         count_label_ = CreateWindowW(L"STATIC", L"0 sources selected", WS_CHILD | WS_VISIBLE,
-                                     390, 460, 220, 20, hwnd_,
+                                     454, 582, 250, 24, hwnd_,
                                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceCount)), g_hInst, nullptr);
 
         CreateWindowW(L"BUTTON", L"Soundcheck", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                      20, 500, 120, 22, hwnd_,
+                      24, 628, 150, 28, hwnd_,
                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceModeSoundcheck)), g_hInst, nullptr);
         CreateWindowW(L"BUTTON", L"Record", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                      150, 500, 100, 22, hwnd_,
+                      188, 628, 100, 28, hwnd_,
                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceModeRecord)), g_hInst, nullptr);
         replace_checkbox_ = CreateWindowW(L"BUTTON", L"Replace managed REAPER tracks", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                                          20, 530, 220, 22, hwnd_,
+                                          24, 664, 330, 28, hwnd_,
                                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceReplace)), g_hInst, nullptr);
 
         CreateWindowW(L"BUTTON", L"Apply Draft", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-                      500, 530, 110, 30, hwnd_,
+                      648, 664, 116, 36, hwnd_,
                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceOk)), g_hInst, nullptr);
         CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                      620, 530, 100, 30, hwnd_,
+                      778, 664, 106, 36, hwnd_,
                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceCancel)), g_hInst, nullptr);
 
         SetWindowFontRecursive(hwnd_, font);
+        SendMessageW(count_label_, WM_SETFONT, reinterpret_cast<WPARAM>(title_font), TRUE);
         CheckRadioButton(hwnd_,
                          kIdSourceModeSoundcheck,
                          kIdSourceModeRecord,
@@ -425,6 +495,17 @@ public:
     }
 
 private:
+    struct PageLayoutState {
+        HWND hwnd = nullptr;
+        int content_height = 0;
+        int scroll_y = 0;
+    };
+
+    struct PageContext {
+        WingConnectorWindowsDialog* owner = nullptr;
+        PageLayoutState* state = nullptr;
+    };
+
     struct StatusSnapshot {
         HeaderStatusVisual console;
         HeaderStatusVisual validation;
@@ -462,7 +543,7 @@ private:
         wc.lpfnWndProc = &WingConnectorWindowsDialog::WndProc;
         wc.hInstance = g_hInst;
         wc.lpszClassName = kDialogClassName;
-        wc.hCursor = LoadCursorW(nullptr, L"IDC_ARROW");
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
         wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
         RegisterClassW(&wc);
 
@@ -470,15 +551,36 @@ private:
         page_wc.lpfnWndProc = &WingConnectorWindowsDialog::PageWndProc;
         page_wc.hInstance = g_hInst;
         page_wc.lpszClassName = kPageClassName;
-        page_wc.hCursor = LoadCursorW(nullptr, L"IDC_ARROW");
+        page_wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
         page_wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
         RegisterClassW(&page_wc);
+
+        WNDCLASSW logo_wc{};
+        logo_wc.lpfnWndProc = &WingConnectorWindowsDialog::LogoWndProc;
+        logo_wc.hInstance = g_hInst;
+        logo_wc.lpszClassName = kLogoClassName;
+        logo_wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        logo_wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
+        RegisterClassW(&logo_wc);
         registered = true;
     }
 
     static LRESULT CALLBACK PageWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+        auto* context = reinterpret_cast<PageContext*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (msg == WM_NCCREATE) {
+            auto* cs = reinterpret_cast<CREATESTRUCTW*>(lparam);
+            context = reinterpret_cast<PageContext*>(cs->lpCreateParams);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(context));
+        }
         HWND parent = GetParent(hwnd);
         switch (msg) {
+            case WM_VSCROLL:
+            case WM_MOUSEWHEEL:
+            case WM_SIZE:
+                if (context && context->owner && context->state) {
+                    return context->owner->HandlePageMessage(context->state, msg, wparam, lparam);
+                }
+                break;
             case WM_COMMAND:
             case WM_NOTIFY:
             case WM_CTLCOLORSTATIC:
@@ -491,6 +593,58 @@ private:
                 break;
         }
         return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+
+    static LRESULT CALLBACK LogoWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+        switch (msg) {
+            case WM_PAINT: {
+                PAINTSTRUCT ps{};
+                HDC hdc = BeginPaint(hwnd, &ps);
+                RECT rect{};
+                GetClientRect(hwnd, &rect);
+
+                HBRUSH background = CreateSolidBrush(RGB(250, 250, 250));
+                FillRect(hdc, &rect, background);
+                DeleteObject(background);
+
+                const std::wstring logo_path = ResolveLogoPath();
+                bool image_drawn = false;
+                if (!logo_path.empty() && EnsureGdiplusToken() != 0) {
+                    Gdiplus::Graphics graphics(hdc);
+                    graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+                    Gdiplus::Image image(logo_path.c_str());
+                    if (image.GetLastStatus() == Gdiplus::Ok) {
+                        graphics.DrawImage(&image,
+                                           0,
+                                           0,
+                                           rect.right - rect.left,
+                                           rect.bottom - rect.top);
+                        image_drawn = true;
+                    }
+                }
+
+                if (!image_drawn) {
+                    RECT inner = rect;
+                    InflateRect(&inner, -8, -8);
+                    HBRUSH accent = CreateSolidBrush(RGB(28, 114, 184));
+                    FillRect(hdc, &inner, accent);
+                    DeleteObject(accent);
+
+                    SetBkMode(hdc, TRANSPARENT);
+                    SetTextColor(hdc, RGB(255, 255, 255));
+                    HFONT fallback_font = CreateUiFont(-32, FW_BOLD);
+                    HFONT old_font = static_cast<HFONT>(SelectObject(hdc, fallback_font));
+                    DrawTextW(hdc, L"WG", -1, &inner, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                    SelectObject(hdc, old_font);
+                    DeleteObject(fallback_font);
+                }
+
+                EndPaint(hwnd, &ps);
+                return 0;
+            }
+            default:
+                return DefWindowProcW(hwnd, msg, wparam, lparam);
+        }
     }
 
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -549,23 +703,26 @@ private:
     }
 
     LRESULT OnCreate() {
-        font_ = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-        bold_font_ = CreateFontW(-16, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                 DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-        small_bold_font_ = CreateFontW(-14, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-                                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                       DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        font_ = CreateUiFont(-24);
+        bold_font_ = CreateUiFont(-28, FW_SEMIBOLD);
+        small_bold_font_ = CreateUiFont(-22, FW_SEMIBOLD);
+        section_font_ = CreateUiFont(-24, FW_SEMIBOLD);
+        tab_font_ = CreateUiFont(-22, FW_SEMIBOLD);
+        subtle_font_ = CreateUiFont(-20);
+        mono_font_ = CreateUiFont(-22, FW_NORMAL, true);
 
         banner_group_ = CreateWindowW(L"BUTTON", nullptr, WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-                                      12, 10, 820, 132, hwnd_,
+                                      12, 10, 820, 156, hwnd_,
                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdBannerGroup)), g_hInst, nullptr);
+        logo_ = CreateWindowW(kLogoClassName, L"", WS_CHILD | WS_VISIBLE,
+                              36, 34, 120, 120, hwnd_,
+                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdLogo)), g_hInst, nullptr);
         title_ = CreateWindowW(L"STATIC", L"WINGuard", WS_CHILD | WS_VISIBLE,
-                               32, 34, 260, 28, hwnd_,
+                               176, 48, 260, 32, hwnd_,
                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdTitle)), g_hInst, nullptr);
         subtitle_ = CreateWindowW(L"STATIC", L"Guard every take. Faster setup, safer record(w)ing!",
                                   WS_CHILD | WS_VISIBLE,
-                                  32, 66, 360, 20, hwnd_,
+                                  176, 90, 460, 28, hwnd_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSubtitle)), g_hInst, nullptr);
 
         status_group_ = CreateWindowW(L"BUTTON", nullptr, WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
@@ -584,7 +741,7 @@ private:
                                             492, 102, 300, 18, hwnd_,
                                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdHeaderMidiStatus)), g_hInst, nullptr);
 
-        tab_ = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_FIXEDWIDTH,
+        tab_ = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_FIXEDWIDTH | TCS_FOCUSNEVER,
                                12, 154, 820, 560, hwnd_,
                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdTab)), g_hInst, nullptr);
         InsertTab(0, L"Console");
@@ -604,10 +761,22 @@ private:
 
         SetWindowFontRecursive(hwnd_, font_);
         SendMessageW(title_, WM_SETFONT, reinterpret_cast<WPARAM>(bold_font_), TRUE);
+        SendMessageW(subtitle_, WM_SETFONT, reinterpret_cast<WPARAM>(subtle_font_), TRUE);
+        SendMessageW(tab_, WM_SETFONT, reinterpret_cast<WPARAM>(tab_font_), TRUE);
+        SendMessageW(console_section_header_, WM_SETFONT, reinterpret_cast<WPARAM>(section_font_), TRUE);
+        SendMessageW(reaper_section_header_, WM_SETFONT, reinterpret_cast<WPARAM>(section_font_), TRUE);
+        SendMessageW(auto_trigger_header_, WM_SETFONT, reinterpret_cast<WPARAM>(section_font_), TRUE);
         SendMessageW(tab_status_console_, WM_SETFONT, reinterpret_cast<WPARAM>(small_bold_font_), TRUE);
         SendMessageW(tab_status_reaper_, WM_SETFONT, reinterpret_cast<WPARAM>(small_bold_font_), TRUE);
         SendMessageW(tab_status_wing_, WM_SETFONT, reinterpret_cast<WPARAM>(small_bold_font_), TRUE);
         SendMessageW(tab_status_control_, WM_SETFONT, reinterpret_cast<WPARAM>(small_bold_font_), TRUE);
+        SendMessageW(header_console_status_, WM_SETFONT, reinterpret_cast<WPARAM>(small_bold_font_), TRUE);
+        SendMessageW(header_validation_status_, WM_SETFONT, reinterpret_cast<WPARAM>(small_bold_font_), TRUE);
+        SendMessageW(header_recorder_status_, WM_SETFONT, reinterpret_cast<WPARAM>(small_bold_font_), TRUE);
+        SendMessageW(header_midi_status_, WM_SETFONT, reinterpret_cast<WPARAM>(small_bold_font_), TRUE);
+        SendMessageW(footer_status_, WM_SETFONT, reinterpret_cast<WPARAM>(subtle_font_), TRUE);
+        SendMessageW(wing_placeholder_body_, WM_SETFONT, reinterpret_cast<WPARAM>(subtle_font_), TRUE);
+        SendMessageW(control_placeholder_body_, WM_SETFONT, reinterpret_cast<WPARAM>(subtle_font_), TRUE);
 
         SelectOutputMode(ReaperExtension::Instance().GetConfig().soundcheck_output_mode);
         pending_output_mode_ = CurrentOutputMode();
@@ -622,9 +791,11 @@ private:
     }
 
     void InsertTab(int index, const wchar_t* label) {
+        tab_labels_[static_cast<size_t>(index)] = label ? label : L"";
         TCITEMW item{};
         item.mask = TCIF_TEXT;
-        item.pszText = const_cast<wchar_t*>(label);
+        item.pszText = tab_labels_[static_cast<size_t>(index)].data();
+        item.cchTextMax = static_cast<int>(tab_labels_[static_cast<size_t>(index)].size());
         TabCtrl_InsertItem(tab_, index, &item);
     }
 
@@ -635,18 +806,26 @@ private:
         MapWindowPoints(tab_, hwnd_, reinterpret_cast<LPPOINT>(&tab_rect), 2);
         const int width = tab_rect.right - tab_rect.left;
         const int height = tab_rect.bottom - tab_rect.top;
-        page_console_ = CreateWindowW(kPageClassName, L"", WS_CHILD | WS_VISIBLE,
+        page_contexts_[0] = {this, &console_page_state_};
+        page_contexts_[1] = {this, &reaper_page_state_};
+        page_contexts_[2] = {this, &wing_page_state_};
+        page_contexts_[3] = {this, &control_page_state_};
+        page_console_ = CreateWindowW(kPageClassName, L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_CLIPCHILDREN,
                                       tab_rect.left, tab_rect.top, width, height,
-                                      hwnd_, nullptr, g_hInst, nullptr);
-        page_reaper_ = CreateWindowW(kPageClassName, L"", WS_CHILD,
+                                      hwnd_, nullptr, g_hInst, &page_contexts_[0]);
+        page_reaper_ = CreateWindowW(kPageClassName, L"", WS_CHILD | WS_VSCROLL | WS_CLIPCHILDREN,
                                      tab_rect.left, tab_rect.top, width, height,
-                                     hwnd_, nullptr, g_hInst, nullptr);
-        page_wing_ = CreateWindowW(kPageClassName, L"", WS_CHILD,
+                                     hwnd_, nullptr, g_hInst, &page_contexts_[1]);
+        page_wing_ = CreateWindowW(kPageClassName, L"", WS_CHILD | WS_VSCROLL | WS_CLIPCHILDREN,
                                    tab_rect.left, tab_rect.top, width, height,
-                                   hwnd_, nullptr, g_hInst, nullptr);
-        page_control_ = CreateWindowW(kPageClassName, L"", WS_CHILD,
+                                   hwnd_, nullptr, g_hInst, &page_contexts_[2]);
+        page_control_ = CreateWindowW(kPageClassName, L"", WS_CHILD | WS_VSCROLL | WS_CLIPCHILDREN,
                                       tab_rect.left, tab_rect.top, width, height,
-                                      hwnd_, nullptr, g_hInst, nullptr);
+                                      hwnd_, nullptr, g_hInst, &page_contexts_[3]);
+        console_page_state_.hwnd = page_console_;
+        reaper_page_state_.hwnd = page_reaper_;
+        wing_page_state_.hwnd = page_wing_;
+        control_page_state_.hwnd = page_control_;
     }
 
     void CreateConsolePage() {
@@ -697,7 +876,7 @@ private:
 
     void CreateReaperPage() {
         reaper_intro_ = CreateWindowW(L"STATIC",
-                                      L"Prepare REAPER for live recording and virtual soundcheck here: choose USB or CARD routing, stage and apply the source layout, and switch prepared channels between live inputs and playback.",
+                                      L"Prepare REAPER for live recording and virtual soundcheck here: choose USB or CARD routing, stage and apply the source layout, switch prepared channels between live inputs and playback, and use Auto Trigger when you want signal-driven starts.",
                                       WS_CHILD | WS_VISIBLE,
                                       20, 18, 760, 40, page_reaper_, nullptr, g_hInst, nullptr);
 
@@ -747,11 +926,25 @@ private:
                                             L"After setup is validated, this flips prepared channels between live inputs and REAPER playback. One button, less panic.",
                                             WS_CHILD | WS_VISIBLE,
                                             200, 428, 520, 30, page_reaper_, nullptr, g_hInst, nullptr);
+
+        auto_trigger_header_ = CreateWindowW(L"STATIC", L"Auto Trigger", WS_CHILD | WS_VISIBLE,
+                                             20, 500, 240, 24, page_reaper_,
+                                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutoTriggerHeader)), g_hInst, nullptr);
+        auto_trigger_detail_ = CreateWindowW(L"STATIC",
+                                             L"Trigger controls wake up after live setup validates, because they depend on the prepared recording path. This Windows surface now reserves the same lower-page space as macOS so the full workflow can live here instead of disappearing below the fold.",
+                                             WS_CHILD | WS_VISIBLE,
+                                             200, 540, 540, 54, page_reaper_,
+                                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutoTriggerDetail)), g_hInst, nullptr);
+        auto_trigger_hint_ = CreateWindowW(L"STATIC",
+                                           L"Next phase brings the actual ON/OFF, mode, threshold, hold time, and apply controls into this section.",
+                                           WS_CHILD | WS_VISIBLE,
+                                           200, 604, 540, 46, page_reaper_,
+                                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutoTriggerHint)), g_hInst, nullptr);
     }
 
     void CreateWingPlaceholderPage() {
         wing_placeholder_body_ = CreateWindowW(L"STATIC",
-                                               L"Recorder coordination will live here on Windows, matching the macOS Wing tab layout. Phase 1 reserves the surface so the main UI now has the same frame and tab order.",
+                                               L"Recorder coordination will live here on Windows, matching the macOS Wing tab layout with more breathing room. This placeholder stays intentionally spacious so the later recorder controls can land without collapsing into the top edge.",
                                                WS_CHILD | WS_VISIBLE,
                                                24, 40, 740, 40, page_wing_, nullptr, g_hInst, nullptr);
         tab_status_wing_ = CreateWindowW(L"STATIC", L"Inactive", WS_CHILD | WS_VISIBLE,
@@ -761,7 +954,7 @@ private:
 
     void CreateControlPlaceholderPage() {
         control_placeholder_body_ = CreateWindowW(L"STATIC",
-                                                  L"Control Integration will move here on Windows to match the macOS tab for MIDI actions, layers, and debug activity. Phase 1 keeps the layout ready without shipping a half-ported surface.",
+                                                  L"Control Integration will move here on Windows to match the macOS tab for MIDI actions, layers, and debug activity. This page now keeps the same generous frame so the final controls do not feel like bolted-on fallback widgets.",
                                                   WS_CHILD | WS_VISIBLE,
                                                   24, 40, 740, 40, page_control_, nullptr, g_hInst, nullptr);
         tab_status_control_ = CreateWindowW(L"STATIC", L"Inactive", WS_CHILD | WS_VISIBLE,
@@ -786,36 +979,105 @@ private:
         return 0;
     }
 
+    LRESULT HandlePageMessage(PageLayoutState* page, UINT msg, WPARAM wparam, LPARAM lparam) {
+        if (!page || !page->hwnd) {
+            return 0;
+        }
+        if (msg == WM_SIZE) {
+            RECT client_rect{};
+            GetClientRect(hwnd_, &client_rect);
+            LayoutControls(client_rect.right - client_rect.left, client_rect.bottom - client_rect.top);
+            return 0;
+        }
+
+        int next_scroll = page->scroll_y;
+        const int max_scroll = std::max(0, page->content_height - PageViewportHeight(*page));
+        if (msg == WM_MOUSEWHEEL) {
+            const int delta = GET_WHEEL_DELTA_WPARAM(wparam);
+            next_scroll = std::clamp(page->scroll_y - ((delta / WHEEL_DELTA) * kScrollLineStep * 2), 0, max_scroll);
+        } else if (msg == WM_VSCROLL) {
+            SCROLLINFO info{};
+            info.cbSize = sizeof(info);
+            info.fMask = SIF_ALL;
+            GetScrollInfo(page->hwnd, SB_VERT, &info);
+            next_scroll = page->scroll_y;
+            switch (LOWORD(wparam)) {
+                case SB_LINEUP: next_scroll -= kScrollLineStep; break;
+                case SB_LINEDOWN: next_scroll += kScrollLineStep; break;
+                case SB_PAGEUP: next_scroll -= static_cast<int>(info.nPage); break;
+                case SB_PAGEDOWN: next_scroll += static_cast<int>(info.nPage); break;
+                case SB_THUMBPOSITION:
+                case SB_THUMBTRACK: next_scroll = HIWORD(wparam); break;
+                case SB_TOP: next_scroll = 0; break;
+                case SB_BOTTOM: next_scroll = max_scroll; break;
+                default: break;
+            }
+            next_scroll = std::clamp(next_scroll, 0, max_scroll);
+        }
+
+        if (next_scroll != page->scroll_y) {
+            page->scroll_y = next_scroll;
+            RECT client_rect{};
+            GetClientRect(hwnd_, &client_rect);
+            LayoutControls(client_rect.right - client_rect.left, client_rect.bottom - client_rect.top);
+        }
+        return 0;
+    }
+
+    int PageViewportHeight(const PageLayoutState& page) const {
+        RECT rect{};
+        GetClientRect(page.hwnd, &rect);
+        return std::max(0, rect.bottom - rect.top);
+    }
+
+    void UpdatePageScroll(PageLayoutState& page, int viewport_height) {
+        const int max_scroll = std::max(0, page.content_height - viewport_height);
+        page.scroll_y = std::clamp(page.scroll_y, 0, max_scroll);
+        SCROLLINFO info{};
+        info.cbSize = sizeof(info);
+        info.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+        info.nMin = 0;
+        info.nMax = std::max(0, page.content_height - 1);
+        info.nPage = static_cast<UINT>(std::max(1, viewport_height));
+        info.nPos = page.scroll_y;
+        SetScrollInfo(page.hwnd, SB_VERT, &info, TRUE);
+    }
+
+    int PageY(const PageLayoutState& page, int content_y) const {
+        return content_y - page.scroll_y;
+    }
+
     void LayoutControls(int client_width, int client_height) {
-        const int outer_margin = 14;
+        const int outer_margin = 16;
         const int header_y = 16;
-        const int header_height = 156;
+        const int header_height = 188;
         const int header_width = client_width - (outer_margin * 2);
-        const int status_panel_width = std::min(420, std::max(320, header_width / 3));
-        const int status_panel_height = 108;
-        const int status_panel_x = outer_margin + header_width - status_panel_width - 18;
-        const int status_panel_y = header_y + 18;
+        const int status_panel_width = std::min(430, std::max(360, header_width / 3));
+        const int status_panel_height = 124;
+        const int status_panel_x = outer_margin + header_width - status_panel_width - 20;
+        const int status_panel_y = header_y + 24;
 
         MoveWindow(banner_group_, outer_margin, header_y, header_width, header_height, TRUE);
-        MoveWindow(title_, outer_margin + 22, header_y + 22, 360, 26, TRUE);
-        MoveWindow(subtitle_, outer_margin + 22, header_y + 58, std::max(280, header_width - status_panel_width - 80), 26, TRUE);
+        MoveWindow(logo_, outer_margin + 22, header_y + 30, 124, 124, TRUE);
+        MoveWindow(title_, outer_margin + 168, header_y + 54, 360, 34, TRUE);
+        MoveWindow(subtitle_, outer_margin + 168, header_y + 98, std::max(360, header_width - status_panel_width - 220), 34, TRUE);
         MoveWindow(status_group_, status_panel_x, status_panel_y, status_panel_width, status_panel_height, TRUE);
 
-        const int status_text_x = status_panel_x + 20;
-        const int status_text_w = status_panel_width - 32;
-        MoveWindow(header_console_status_, status_text_x, status_panel_y + 14, status_text_w, 20, TRUE);
-        MoveWindow(header_validation_status_, status_text_x, status_panel_y + 36, status_text_w, 20, TRUE);
-        MoveWindow(header_recorder_status_, status_text_x, status_panel_y + 58, status_text_w, 20, TRUE);
-        MoveWindow(header_midi_status_, status_text_x, status_panel_y + 80, status_text_w, 20, TRUE);
+        const int status_text_x = status_panel_x + 18;
+        const int status_text_w = status_panel_width - 30;
+        MoveWindow(header_console_status_, status_text_x, status_panel_y + 16, status_text_w, 24, TRUE);
+        MoveWindow(header_validation_status_, status_text_x, status_panel_y + 42, status_text_w, 24, TRUE);
+        MoveWindow(header_recorder_status_, status_text_x, status_panel_y + 68, status_text_w, 24, TRUE);
+        MoveWindow(header_midi_status_, status_text_x, status_panel_y + 94, status_text_w, 24, TRUE);
 
-        const int footer_height = 26;
+        const int footer_height = 30;
         const int footer_y = client_height - footer_height - 14;
         MoveWindow(footer_status_, outer_margin + 4, footer_y, client_width - (outer_margin * 2) - 8, footer_height, TRUE);
 
         const int tab_y = header_y + header_height + 14;
-        const int tab_height = std::max(420, footer_y - tab_y - 10);
+        const int tab_height = std::max(520, footer_y - tab_y - 10);
         MoveWindow(tab_, outer_margin, tab_y, header_width, tab_height, TRUE);
-        SendMessageW(tab_, TCM_SETITEMSIZE, 0, MAKELPARAM(std::max(150, (header_width - 12) / 4), 30));
+        SendMessageW(tab_, TCM_SETITEMSIZE, 0, MAKELPARAM(std::max(180, (header_width - 20) / 4), 42));
 
         RECT tab_rect{};
         GetClientRect(tab_, &tab_rect);
@@ -829,47 +1091,60 @@ private:
         MoveWindow(page_wing_, tab_rect.left, tab_rect.top, page_width, page_height, TRUE);
         MoveWindow(page_control_, tab_rect.left, tab_rect.top, page_width, page_height, TRUE);
 
-        const int page_margin = 26;
-        const int label_x = 28;
+        const int page_margin = 30;
+        const int label_x = 34;
         const int control_x = 220;
         const int page_right = page_width - page_margin;
-        const int status_chip_w = 150;
+        const int status_chip_w = 180;
         const int status_chip_x = page_right - status_chip_w;
         const int content_w = page_width - (page_margin * 2);
+        const int viewport_height = page_height;
 
-        MoveWindow(console_intro_, page_margin, 24, content_w - 10, 48, TRUE);
-        MoveWindow(console_section_header_, page_margin, 88, 220, 22, TRUE);
-        MoveWindow(tab_status_console_, status_chip_x, 88, status_chip_w, 22, TRUE);
-        MoveWindow(console_label_, label_x, 138, 150, 22, TRUE);
-        MoveWindow(wing_combo_, control_x, 134, std::max(260, page_width - control_x - 170), 420, TRUE);
-        MoveWindow(scan_button_, page_width - 140, 134, 112, 32, TRUE);
-        MoveWindow(console_help_discovery_, control_x, 172, page_width - control_x - 40, 22, TRUE);
-        MoveWindow(console_manual_ip_label_, label_x, 226, 150, 22, TRUE);
-        MoveWindow(manual_ip_edit_, control_x, 222, std::min(380, page_width - control_x - 220), 30, TRUE);
-        MoveWindow(console_help_manual_, control_x, 262, page_width - control_x - 40, 38, TRUE);
-        MoveWindow(connect_button_, page_width - 164, 312, 136, 36, TRUE);
-        MoveWindow(console_footer_, page_margin, 370, page_width - 220, 44, TRUE);
+        console_page_state_.content_height = 560;
+        reaper_page_state_.content_height = 1180;
+        wing_page_state_.content_height = 520;
+        control_page_state_.content_height = 520;
+        UpdatePageScroll(console_page_state_, viewport_height);
+        UpdatePageScroll(reaper_page_state_, viewport_height);
+        UpdatePageScroll(wing_page_state_, viewport_height);
+        UpdatePageScroll(control_page_state_, viewport_height);
 
-        MoveWindow(reaper_intro_, page_margin, 24, content_w - 10, 54, TRUE);
-        MoveWindow(reaper_section_header_, page_margin, 96, 280, 22, TRUE);
-        MoveWindow(tab_status_reaper_, status_chip_x, 96, status_chip_w, 22, TRUE);
-        MoveWindow(reaper_output_label_, label_x, 146, 160, 22, TRUE);
-        MoveWindow(output_usb_radio_, control_x, 142, 92, 28, TRUE);
-        MoveWindow(output_card_radio_, control_x + 96, 142, 96, 28, TRUE);
-        MoveWindow(reaper_output_help_, control_x, 178, page_width - control_x - 40, 40, TRUE);
-        MoveWindow(pending_summary_, control_x, 236, page_width - control_x - 40, 70, TRUE);
-        MoveWindow(readiness_detail_, control_x, 320, page_width - control_x - 40, 84, TRUE);
-        MoveWindow(choose_sources_button_, control_x, 422, 168, 36, TRUE);
-        MoveWindow(apply_setup_button_, control_x + 184, 422, 182, 36, TRUE);
-        MoveWindow(discard_setup_button_, control_x + 382, 422, 132, 36, TRUE);
-        MoveWindow(toggle_soundcheck_button_, control_x, 476, 220, 36, TRUE);
-        MoveWindow(reaper_toggle_help_, control_x, 524, page_width - control_x - 40, 44, TRUE);
+        MoveWindow(console_intro_, page_margin, PageY(console_page_state_, 28), content_w - 10, 60, TRUE);
+        MoveWindow(console_section_header_, page_margin, PageY(console_page_state_, 106), 260, 30, TRUE);
+        MoveWindow(tab_status_console_, status_chip_x, PageY(console_page_state_, 106), status_chip_w, 26, TRUE);
+        MoveWindow(console_label_, label_x, PageY(console_page_state_, 166), 160, 28, TRUE);
+        MoveWindow(wing_combo_, control_x, PageY(console_page_state_, 160), std::max(360, page_width - control_x - 210), 360, TRUE);
+        MoveWindow(scan_button_, page_width - 154, PageY(console_page_state_, 160), 124, 38, TRUE);
+        MoveWindow(console_help_discovery_, control_x, PageY(console_page_state_, 206), page_width - control_x - 40, 28, TRUE);
+        MoveWindow(console_manual_ip_label_, label_x, PageY(console_page_state_, 272), 160, 28, TRUE);
+        MoveWindow(manual_ip_edit_, control_x, PageY(console_page_state_, 266), std::min(440, page_width - control_x - 250), 34, TRUE);
+        MoveWindow(console_help_manual_, control_x, PageY(console_page_state_, 312), page_width - control_x - 40, 42, TRUE);
+        MoveWindow(connect_button_, page_width - 170, PageY(console_page_state_, 388), 140, 40, TRUE);
+        MoveWindow(console_footer_, page_margin, PageY(console_page_state_, 450), page_width - 220, 54, TRUE);
 
-        MoveWindow(tab_status_wing_, status_chip_x, 24, status_chip_w, 22, TRUE);
-        MoveWindow(wing_placeholder_body_, page_margin, 64, content_w - 10, 64, TRUE);
+        MoveWindow(reaper_intro_, page_margin, PageY(reaper_page_state_, 28), content_w - 10, 72, TRUE);
+        MoveWindow(reaper_section_header_, page_margin, PageY(reaper_page_state_, 120), 340, 30, TRUE);
+        MoveWindow(tab_status_reaper_, status_chip_x, PageY(reaper_page_state_, 120), status_chip_w, 26, TRUE);
+        MoveWindow(reaper_output_label_, label_x, PageY(reaper_page_state_, 182), 170, 28, TRUE);
+        MoveWindow(output_usb_radio_, control_x, PageY(reaper_page_state_, 176), 96, 32, TRUE);
+        MoveWindow(output_card_radio_, control_x + 112, PageY(reaper_page_state_, 176), 108, 32, TRUE);
+        MoveWindow(reaper_output_help_, control_x, PageY(reaper_page_state_, 220), page_width - control_x - 40, 48, TRUE);
+        MoveWindow(pending_summary_, control_x, PageY(reaper_page_state_, 286), page_width - control_x - 40, 78, TRUE);
+        MoveWindow(readiness_detail_, control_x, PageY(reaper_page_state_, 380), page_width - control_x - 40, 116, TRUE);
+        MoveWindow(choose_sources_button_, control_x, PageY(reaper_page_state_, 520), 180, 40, TRUE);
+        MoveWindow(apply_setup_button_, control_x + 194, PageY(reaper_page_state_, 520), 190, 40, TRUE);
+        MoveWindow(discard_setup_button_, control_x + 398, PageY(reaper_page_state_, 520), 144, 40, TRUE);
+        MoveWindow(toggle_soundcheck_button_, control_x, PageY(reaper_page_state_, 580), 240, 40, TRUE);
+        MoveWindow(reaper_toggle_help_, control_x, PageY(reaper_page_state_, 634), page_width - control_x - 40, 48, TRUE);
+        MoveWindow(auto_trigger_header_, page_margin, PageY(reaper_page_state_, 736), 260, 28, TRUE);
+        MoveWindow(auto_trigger_detail_, control_x, PageY(reaper_page_state_, 786), page_width - control_x - 40, 84, TRUE);
+        MoveWindow(auto_trigger_hint_, control_x, PageY(reaper_page_state_, 884), page_width - control_x - 40, 54, TRUE);
 
-        MoveWindow(tab_status_control_, status_chip_x, 24, status_chip_w, 22, TRUE);
-        MoveWindow(control_placeholder_body_, page_margin, 64, content_w - 10, 64, TRUE);
+        MoveWindow(tab_status_wing_, status_chip_x, PageY(wing_page_state_, 28), status_chip_w, 26, TRUE);
+        MoveWindow(wing_placeholder_body_, page_margin, PageY(wing_page_state_, 84), content_w - 10, 96, TRUE);
+
+        MoveWindow(tab_status_control_, status_chip_x, PageY(control_page_state_, 28), status_chip_w, 26, TRUE);
+        MoveWindow(control_placeholder_body_, page_margin, PageY(control_page_state_, 84), content_w - 10, 96, TRUE);
     }
 
     void ShowActivePage(int tab_index) {
@@ -957,7 +1232,23 @@ private:
         } else if (id == kIdReadinessDetail) {
             text_color = current_snapshot_.readiness_color;
         } else if (id == kIdFooterStatus) {
-            text_color = RGB(90, 90, 90);
+            text_color = RGB(80, 80, 80);
+        } else if (control == subtitle_ ||
+                   control == console_help_discovery_ ||
+                   control == console_help_manual_ ||
+                   control == console_footer_ ||
+                   control == reaper_output_help_ ||
+                   control == reaper_toggle_help_ ||
+                   control == wing_placeholder_body_ ||
+                   control == control_placeholder_body_) {
+            text_color = RGB(92, 98, 104);
+        } else if (control == console_intro_ ||
+                   control == reaper_intro_) {
+            text_color = RGB(40, 40, 40);
+        } else if (control == auto_trigger_detail_) {
+            text_color = RGB(92, 98, 104);
+        } else if (control == auto_trigger_hint_) {
+            text_color = RGB(28, 114, 184);
         }
         SetTextColor(hdc, text_color);
         return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
@@ -1415,6 +1706,7 @@ private:
     HWND hwnd_ = nullptr;
     HWND banner_group_ = nullptr;
     HWND status_group_ = nullptr;
+    HWND logo_ = nullptr;
     HWND title_ = nullptr;
     HWND subtitle_ = nullptr;
     HWND tab_ = nullptr;
@@ -1442,6 +1734,9 @@ private:
     HWND reaper_output_label_ = nullptr;
     HWND reaper_output_help_ = nullptr;
     HWND reaper_toggle_help_ = nullptr;
+    HWND auto_trigger_header_ = nullptr;
+    HWND auto_trigger_detail_ = nullptr;
+    HWND auto_trigger_hint_ = nullptr;
     HWND wing_placeholder_body_ = nullptr;
     HWND control_placeholder_body_ = nullptr;
     HWND wing_combo_ = nullptr;
@@ -1460,6 +1755,16 @@ private:
     HFONT font_ = nullptr;
     HFONT bold_font_ = nullptr;
     HFONT small_bold_font_ = nullptr;
+    HFONT section_font_ = nullptr;
+    HFONT tab_font_ = nullptr;
+    HFONT subtle_font_ = nullptr;
+    HFONT mono_font_ = nullptr;
+    std::array<std::wstring, 4> tab_labels_;
+    PageLayoutState console_page_state_;
+    PageLayoutState reaper_page_state_;
+    PageLayoutState wing_page_state_;
+    PageLayoutState control_page_state_;
+    std::array<PageContext, 4> page_contexts_{};
     std::vector<WingInfo> discovered_wings_;
     std::vector<SourceSelectionInfo> pending_setup_channels_;
     std::wstring pending_output_mode_;
