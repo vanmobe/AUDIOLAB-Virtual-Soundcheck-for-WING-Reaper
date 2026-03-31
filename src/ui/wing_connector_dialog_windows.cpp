@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <cwchar>
 #include <set>
@@ -88,6 +89,15 @@ enum ControlId {
     kIdAutoTriggerHeader,
     kIdAutoTriggerDetail,
     kIdAutoTriggerHint,
+    kIdAutoTriggerEnableOff,
+    kIdAutoTriggerEnableOn,
+    kIdAutoTriggerModeWarning,
+    kIdAutoTriggerModeRecord,
+    kIdAutoTriggerThresholdEdit,
+    kIdAutoTriggerHoldEdit,
+    kIdAutoTriggerMonitorTrackCombo,
+    kIdApplyAutoTriggerButton,
+    kIdDiscardAutoTriggerButton,
     kIdConsoleSectionIcon,
     kIdReaperSectionIcon,
     kIdAutoTriggerSectionIcon,
@@ -703,7 +713,7 @@ private:
                 RECT rect{};
                 GetClientRect(hwnd, &rect);
 
-                HBRUSH background = CreateSolidBrush(RGB(250, 250, 250));
+                HBRUSH background = CreateSolidBrush(RGB(232, 234, 238));
                 FillRect(hdc, &rect, background);
                 DeleteObject(background);
 
@@ -933,7 +943,9 @@ private:
         ShowWindow(status_group_, SW_HIDE);
 
         SyncPendingSettingsFromConfig();
+        SyncAutoTriggerFromConfig();
         SelectOutputMode(ReaperExtension::Instance().GetConfig().soundcheck_output_mode);
+        SyncAutoTriggerControlsFromPending();
         SyncWingControlsFromPending();
         SyncControlTabFromPending();
         pending_output_mode_ = CurrentOutputMode();
@@ -1084,14 +1096,53 @@ private:
                                              46, 500, 240, 24, page_reaper_,
                                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutoTriggerHeader)), g_hInst, nullptr);
         auto_trigger_detail_ = CreateWindowW(L"STATIC",
-                                             L"Trigger controls wake up after live setup validates, because they depend on the prepared recording path. This Windows surface now reserves the same lower-page space as macOS so the full workflow can live here instead of disappearing below the fold.",
+                                             L"Trigger controls wake up after live setup validates, because they depend on the prepared recording path.",
                                              WS_CHILD | WS_VISIBLE,
-                                             200, 540, 540, 54, page_reaper_,
+                                             200, 540, 540, 34, page_reaper_,
                                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutoTriggerDetail)), g_hInst, nullptr);
+        auto_trigger_enable_label_ = CreateWindowW(L"STATIC", L"Enable Trigger:", WS_CHILD | WS_VISIBLE,
+                                                   48, 596, 150, 24, page_reaper_, nullptr, g_hInst, nullptr);
+        auto_trigger_enable_off_ = CreateWindowW(L"BUTTON", L"OFF", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON | WS_GROUP,
+                                                 200, 594, 84, 28, page_reaper_,
+                                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutoTriggerEnableOff)), g_hInst, nullptr);
+        auto_trigger_enable_on_ = CreateWindowW(L"BUTTON", L"ON", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+                                                296, 594, 84, 28, page_reaper_,
+                                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutoTriggerEnableOn)), g_hInst, nullptr);
+        auto_trigger_monitor_label_ = CreateWindowW(L"STATIC", L"Monitor Track:", WS_CHILD | WS_VISIBLE,
+                                                    48, 644, 150, 24, page_reaper_, nullptr, g_hInst, nullptr);
+        auto_trigger_monitor_combo_ = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST,
+                                                    200, 640, 260, 240, page_reaper_,
+                                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutoTriggerMonitorTrackCombo)), g_hInst, nullptr);
+        auto_trigger_mode_label_ = CreateWindowW(L"STATIC", L"Trigger Mode:", WS_CHILD | WS_VISIBLE,
+                                                 48, 692, 150, 24, page_reaper_, nullptr, g_hInst, nullptr);
+        auto_trigger_mode_warning_ = CreateWindowW(L"BUTTON", L"WARNING", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON | WS_GROUP,
+                                                   200, 690, 120, 28, page_reaper_,
+                                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutoTriggerModeWarning)), g_hInst, nullptr);
+        auto_trigger_mode_record_ = CreateWindowW(L"BUTTON", L"RECORD", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+                                                  332, 690, 110, 28, page_reaper_,
+                                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutoTriggerModeRecord)), g_hInst, nullptr);
+        auto_trigger_threshold_label_ = CreateWindowW(L"STATIC", L"Threshold (dBFS):", WS_CHILD | WS_VISIBLE,
+                                                      48, 740, 150, 24, page_reaper_, nullptr, g_hInst, nullptr);
+        auto_trigger_threshold_edit_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                                       WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+                                                       200, 736, 100, 30, page_reaper_,
+                                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutoTriggerThresholdEdit)), g_hInst, nullptr);
+        auto_trigger_hold_label_ = CreateWindowW(L"STATIC", L"Hold Time (s):", WS_CHILD | WS_VISIBLE,
+                                                 332, 740, 120, 24, page_reaper_, nullptr, g_hInst, nullptr);
+        auto_trigger_hold_edit_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                                  WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+                                                  456, 736, 100, 30, page_reaper_,
+                                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutoTriggerHoldEdit)), g_hInst, nullptr);
+        apply_auto_trigger_button_ = CreateWindowW(L"BUTTON", L"Apply Auto Trigger Settings", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                                   200, 790, 250, 40, page_reaper_,
+                                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdApplyAutoTriggerButton)), g_hInst, nullptr);
+        discard_auto_trigger_button_ = CreateWindowW(L"BUTTON", L"Discard", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                                     464, 790, 140, 40, page_reaper_,
+                                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdDiscardAutoTriggerButton)), g_hInst, nullptr);
         auto_trigger_hint_ = CreateWindowW(L"STATIC",
-                                           L"Next phase brings the actual ON/OFF, mode, threshold, hold time, and apply controls into this section.",
+                                           L"Pending Auto Trigger changes stay parked until you apply them.",
                                            WS_CHILD | WS_VISIBLE,
-                                           200, 604, 540, 46, page_reaper_,
+                                           200, 846, 540, 52, page_reaper_,
                                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutoTriggerHint)), g_hInst, nullptr);
     }
 
@@ -1377,7 +1428,7 @@ private:
         const int viewport_height = page_height;
 
         console_page_state_.content_height = 660;
-        reaper_page_state_.content_height = 1320;
+        reaper_page_state_.content_height = 1460;
         wing_page_state_.content_height = 620;
         control_page_state_.content_height = 620;
         UpdatePageScroll(console_page_state_, viewport_height);
@@ -1420,8 +1471,24 @@ private:
         MoveWindow(reaper_toggle_help_, control_x, PageY(reaper_page_state_, 748), page_width - control_x - 40, 58, TRUE);
         MoveWindow(auto_trigger_section_icon_, page_margin, PageY(reaper_page_state_, 858), 22, 22, TRUE);
         MoveWindow(auto_trigger_header_, page_margin + 26, PageY(reaper_page_state_, 852), 320, 34, TRUE);
-        MoveWindow(auto_trigger_detail_, control_x, PageY(reaper_page_state_, 908), page_width - control_x - 40, 110, TRUE);
-        MoveWindow(auto_trigger_hint_, control_x, PageY(reaper_page_state_, 1032), page_width - control_x - 40, 74, TRUE);
+        MoveWindow(auto_trigger_detail_, control_x, PageY(reaper_page_state_, 908), page_width - control_x - 40, 48, TRUE);
+        MoveWindow(auto_trigger_enable_label_, label_x, PageY(reaper_page_state_, 972), 150, 28, TRUE);
+        MoveWindow(auto_trigger_enable_off_, control_x, PageY(reaper_page_state_, 968), 90, 30, TRUE);
+        MoveWindow(auto_trigger_enable_on_, control_x + 102, PageY(reaper_page_state_, 968), 90, 30, TRUE);
+        MoveWindow(auto_trigger_monitor_label_, label_x, PageY(reaper_page_state_, 1020), 150, 28, TRUE);
+        MoveWindow(auto_trigger_monitor_combo_, control_x, PageY(reaper_page_state_, 1016), 300, 260, TRUE);
+        MoveWindow(auto_trigger_mode_label_, label_x, PageY(reaper_page_state_, 1068), 150, 28, TRUE);
+        MoveWindow(auto_trigger_mode_warning_, control_x, PageY(reaper_page_state_, 1064), 126, 30, TRUE);
+        MoveWindow(auto_trigger_mode_record_, control_x + 140, PageY(reaper_page_state_, 1064), 114, 30, TRUE);
+        MoveWindow(auto_trigger_threshold_label_, label_x, PageY(reaper_page_state_, 1118), 150, 28, TRUE);
+        MoveWindow(auto_trigger_threshold_edit_, control_x, PageY(reaper_page_state_, 1114), 110, 32, TRUE);
+        MoveWindow(auto_trigger_hold_label_, control_x + 142, PageY(reaper_page_state_, 1118), 120, 28, TRUE);
+        MoveWindow(auto_trigger_hold_edit_, control_x + 272, PageY(reaper_page_state_, 1114), 110, 32, TRUE);
+        const int apply_auto_width = ButtonWidthForLabel(apply_auto_trigger_button_, 250);
+        const int discard_auto_width = ButtonWidthForLabel(discard_auto_trigger_button_, 150);
+        MoveWindow(apply_auto_trigger_button_, control_x, PageY(reaper_page_state_, 1176), apply_auto_width, 42, TRUE);
+        MoveWindow(discard_auto_trigger_button_, control_x + apply_auto_width + 14, PageY(reaper_page_state_, 1176), discard_auto_width, 42, TRUE);
+        MoveWindow(auto_trigger_hint_, control_x, PageY(reaper_page_state_, 1234), page_width - control_x - 40, 92, TRUE);
 
         MoveWindow(wing_intro_, page_margin, PageY(wing_page_state_, 28), content_w - 10, 74, TRUE);
         MoveWindow(wing_section_icon_, page_margin, PageY(wing_page_state_, 128), 22, 22, TRUE);
@@ -1537,6 +1604,29 @@ private:
                 return 0;
             case kIdToggleSoundcheckButton:
                 OnToggleSoundcheck();
+                return 0;
+            case kIdAutoTriggerEnableOff:
+            case kIdAutoTriggerEnableOn:
+            case kIdAutoTriggerModeWarning:
+            case kIdAutoTriggerModeRecord:
+                OnAutoTriggerSettingsChanged();
+                return 0;
+            case kIdAutoTriggerThresholdEdit:
+            case kIdAutoTriggerHoldEdit:
+                if (notify_code == EN_CHANGE) {
+                    OnAutoTriggerSettingsChanged();
+                }
+                return 0;
+            case kIdAutoTriggerMonitorTrackCombo:
+                if (notify_code == CBN_SELCHANGE) {
+                    OnAutoTriggerSettingsChanged();
+                }
+                return 0;
+            case kIdApplyAutoTriggerButton:
+                OnApplyAutoTriggerSettings();
+                return 0;
+            case kIdDiscardAutoTriggerButton:
+                OnDiscardAutoTriggerSettings();
                 return 0;
             case kIdRecorderEnableOff:
             case kIdRecorderEnableOn:
@@ -1672,6 +1762,138 @@ private:
         EnableWindow(discard_recorder_button_, recorder_settings_dirty_ ? TRUE : FALSE);
     }
 
+    void RefreshMonitorTrackDropdown() {
+        if (!auto_trigger_monitor_combo_) {
+            return;
+        }
+        auto& config = ReaperExtension::Instance().GetConfig();
+        SendMessageW(auto_trigger_monitor_combo_, CB_RESETCONTENT, 0, 0);
+        SendMessageW(auto_trigger_monitor_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Auto (Armed+Monitored)"));
+        const int track_count = ReaperExtension::Instance().GetProjectTrackCount();
+        for (int i = 1; i <= track_count; ++i) {
+            wchar_t label[64];
+            std::swprintf(label, sizeof(label) / sizeof(wchar_t), L"Track %d", i);
+            SendMessageW(auto_trigger_monitor_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
+        }
+        int wanted = std::max(0, pending_auto_record_monitor_track_);
+        if (wanted > track_count) {
+            wanted = 0;
+            pending_auto_record_monitor_track_ = 0;
+            if (config.auto_record_monitor_track > track_count) {
+                config.auto_record_monitor_track = 0;
+            }
+        }
+        SendMessageW(auto_trigger_monitor_combo_, CB_SETCURSEL, wanted, 0);
+    }
+
+    void SyncAutoTriggerFromConfig() {
+        const auto& config = ReaperExtension::Instance().GetConfig();
+        pending_auto_record_enabled_ = config.auto_record_enabled;
+        pending_auto_record_warning_only_ = config.auto_record_warning_only;
+        pending_auto_record_threshold_db_ = config.auto_record_threshold_db;
+        pending_auto_record_hold_ms_ = config.auto_record_hold_ms;
+        pending_auto_record_monitor_track_ = std::max(0, config.auto_record_monitor_track);
+        auto_trigger_dirty_ = false;
+    }
+
+    void SyncAutoTriggerControlsFromPending() {
+        CheckRadioButton(page_reaper_, kIdAutoTriggerEnableOff, kIdAutoTriggerEnableOn,
+                         pending_auto_record_enabled_ ? kIdAutoTriggerEnableOn : kIdAutoTriggerEnableOff);
+        CheckRadioButton(page_reaper_, kIdAutoTriggerModeWarning, kIdAutoTriggerModeRecord,
+                         pending_auto_record_warning_only_ ? kIdAutoTriggerModeWarning : kIdAutoTriggerModeRecord);
+        wchar_t threshold_text[32];
+        std::swprintf(threshold_text, sizeof(threshold_text) / sizeof(wchar_t), L"%.1f", pending_auto_record_threshold_db_);
+        SetWindowTextW(auto_trigger_threshold_edit_, threshold_text);
+        wchar_t hold_text[32];
+        std::swprintf(hold_text, sizeof(hold_text) / sizeof(wchar_t), L"%.1f", pending_auto_record_hold_ms_ / 1000.0);
+        SetWindowTextW(auto_trigger_hold_edit_, hold_text);
+        RefreshMonitorTrackDropdown();
+    }
+
+    void OnAutoTriggerSettingsChanged() {
+        pending_auto_record_enabled_ = (IsDlgButtonChecked(page_reaper_, kIdAutoTriggerEnableOn) == BST_CHECKED);
+        pending_auto_record_warning_only_ = (IsDlgButtonChecked(page_reaper_, kIdAutoTriggerModeWarning) == BST_CHECKED);
+        pending_auto_record_threshold_db_ = std::wcstod(ReadWindowText(auto_trigger_threshold_edit_).c_str(), nullptr);
+        if (!std::isfinite(pending_auto_record_threshold_db_)) {
+            pending_auto_record_threshold_db_ = ReaperExtension::Instance().GetConfig().auto_record_threshold_db;
+        }
+        const double hold_seconds = std::wcstod(ReadWindowText(auto_trigger_hold_edit_).c_str(), nullptr);
+        pending_auto_record_hold_ms_ = std::max(0, static_cast<int>(std::lround((std::isfinite(hold_seconds) ? hold_seconds : 0.0) * 1000.0)));
+        const LRESULT selection = SendMessageW(auto_trigger_monitor_combo_, CB_GETCURSEL, 0, 0);
+        pending_auto_record_monitor_track_ = (selection >= 0) ? static_cast<int>(selection) : 0;
+        const auto& config = ReaperExtension::Instance().GetConfig();
+        auto_trigger_dirty_ =
+            pending_auto_record_enabled_ != config.auto_record_enabled ||
+            pending_auto_record_warning_only_ != config.auto_record_warning_only ||
+            std::fabs(pending_auto_record_threshold_db_ - config.auto_record_threshold_db) > 0.05 ||
+            pending_auto_record_hold_ms_ != config.auto_record_hold_ms ||
+            pending_auto_record_monitor_track_ != config.auto_record_monitor_track;
+        footer_message_ = auto_trigger_dirty_
+            ? L"Auto Trigger changes staged."
+            : L"Auto Trigger matches the applied settings.";
+        RefreshAll();
+    }
+
+    void OnApplyAutoTriggerSettings() {
+        auto& extension = ReaperExtension::Instance();
+        auto& config = extension.GetConfig();
+        config.auto_record_enabled = pending_auto_record_enabled_;
+        config.auto_record_warning_only = pending_auto_record_warning_only_;
+        config.auto_record_threshold_db = pending_auto_record_threshold_db_;
+        config.auto_record_hold_ms = pending_auto_record_hold_ms_;
+        config.auto_record_monitor_track = pending_auto_record_monitor_track_;
+        SaveConfigIfPossible(extension);
+        extension.ApplyAutoRecordSettings();
+        auto_trigger_dirty_ = false;
+        footer_message_ = L"Auto Trigger settings applied.";
+        RefreshAll();
+    }
+
+    void OnDiscardAutoTriggerSettings() {
+        SyncAutoTriggerFromConfig();
+        SyncAutoTriggerControlsFromPending();
+        footer_message_ = L"Auto Trigger changes discarded.";
+        RefreshAll();
+    }
+
+    void UpdateAutoTriggerUI() {
+        auto& extension = ReaperExtension::Instance();
+        const auto& config = extension.GetConfig();
+        const bool pending_apply = has_pending_setup_draft_ || pending_output_mode_ != ToWide(config.soundcheck_output_mode);
+        const bool live_setup_controls_enabled = (latest_validation_state_ == ValidationState::Ready) && !pending_apply;
+        const bool auto_trigger_enabled = live_setup_controls_enabled && pending_auto_record_enabled_;
+
+        std::wstring detail;
+        if (auto_trigger_dirty_) {
+            detail = L"Auto Trigger settings changed. Apply them to resume trigger monitoring with the staged mode, threshold, hold time, and monitor track.";
+        } else if (pending_apply) {
+            detail = L"Auto Trigger is blocked by pending setup changes. Apply the staged setup or rebuild the current managed setup first.";
+        } else if (latest_validation_state_ != ValidationState::Ready) {
+            detail = L"Auto Trigger is blocked until the live recording setup validates against the current WING and REAPER state.";
+        } else if (extension.IsSoundcheckModeEnabled()) {
+            detail = L"Auto Trigger is paused while Soundcheck Mode is active on the managed channels.";
+        } else if (!config.auto_record_enabled) {
+            detail = L"Auto Trigger is currently off. Turn it on and apply the change to start signal-based monitoring again.";
+        } else {
+            detail = L"Auto Trigger is clear to run with the current live recording setup.";
+        }
+        std::wstring hint = auto_trigger_dirty_
+            ? L"Pending changes stay parked until you click Apply Auto Trigger Settings."
+            : L"Warning mode flashes controls when triggered; Record mode starts and stops recording automatically.";
+        SetWindowTextW(auto_trigger_detail_, detail.c_str());
+        SetWindowTextW(auto_trigger_hint_, hint.c_str());
+
+        EnableWindow(auto_trigger_enable_off_, live_setup_controls_enabled ? TRUE : FALSE);
+        EnableWindow(auto_trigger_enable_on_, live_setup_controls_enabled ? TRUE : FALSE);
+        EnableWindow(auto_trigger_monitor_combo_, auto_trigger_enabled ? TRUE : FALSE);
+        EnableWindow(auto_trigger_mode_warning_, auto_trigger_enabled ? TRUE : FALSE);
+        EnableWindow(auto_trigger_mode_record_, auto_trigger_enabled ? TRUE : FALSE);
+        EnableWindow(auto_trigger_threshold_edit_, auto_trigger_enabled ? TRUE : FALSE);
+        EnableWindow(auto_trigger_hold_edit_, auto_trigger_enabled ? TRUE : FALSE);
+        EnableWindow(apply_auto_trigger_button_, (live_setup_controls_enabled && auto_trigger_dirty_) ? TRUE : FALSE);
+        EnableWindow(discard_auto_trigger_button_, auto_trigger_dirty_ ? TRUE : FALSE);
+    }
+
     void UpdateControlTabUI() {
         auto& extension = ReaperExtension::Instance();
         std::wstring summary = midi_actions_dirty_
@@ -1722,6 +1944,8 @@ private:
         update_text(footer_status_, snapshot.footer);
         update_text(apply_setup_button_, snapshot.apply_label);
         update_text(toggle_soundcheck_button_, snapshot.toggle_label);
+        RefreshMonitorTrackDropdown();
+        UpdateAutoTriggerUI();
         UpdateWingTabUI();
         UpdateControlTabUI();
         EnableWindow(apply_setup_button_, snapshot.can_apply ? TRUE : FALSE);
@@ -2352,6 +2576,20 @@ private:
     HWND auto_trigger_section_icon_ = nullptr;
     HWND auto_trigger_detail_ = nullptr;
     HWND auto_trigger_hint_ = nullptr;
+    HWND auto_trigger_enable_label_ = nullptr;
+    HWND auto_trigger_enable_off_ = nullptr;
+    HWND auto_trigger_enable_on_ = nullptr;
+    HWND auto_trigger_monitor_label_ = nullptr;
+    HWND auto_trigger_monitor_combo_ = nullptr;
+    HWND auto_trigger_mode_label_ = nullptr;
+    HWND auto_trigger_mode_warning_ = nullptr;
+    HWND auto_trigger_mode_record_ = nullptr;
+    HWND auto_trigger_threshold_label_ = nullptr;
+    HWND auto_trigger_threshold_edit_ = nullptr;
+    HWND auto_trigger_hold_label_ = nullptr;
+    HWND auto_trigger_hold_edit_ = nullptr;
+    HWND apply_auto_trigger_button_ = nullptr;
+    HWND discard_auto_trigger_button_ = nullptr;
     HWND wing_intro_ = nullptr;
     HWND wing_section_icon_ = nullptr;
     HWND wing_section_header_ = nullptr;
@@ -2423,6 +2661,12 @@ private:
     bool has_pending_setup_draft_ = false;
     bool pending_setup_soundcheck_ = true;
     bool pending_replace_existing_ = true;
+    bool pending_auto_record_enabled_ = false;
+    bool pending_auto_record_warning_only_ = false;
+    double pending_auto_record_threshold_db_ = -40.0;
+    int pending_auto_record_hold_ms_ = 3000;
+    int pending_auto_record_monitor_track_ = 0;
+    bool auto_trigger_dirty_ = false;
     ValidationState latest_validation_state_ = ValidationState::NotReady;
     std::string latest_validation_details_;
     std::wstring footer_message_;
