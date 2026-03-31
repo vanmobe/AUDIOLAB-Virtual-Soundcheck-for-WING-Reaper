@@ -256,7 +256,12 @@ struct HeaderStatusVisual {
 };
 
 HICON LoadSmallStockIcon(LPCTSTR resource_id) {
-    return static_cast<HICON>(LoadImageW(nullptr, resource_id, IMAGE_ICON, 16, 16, LR_SHARED));
+    return static_cast<HICON>(LoadImageW(nullptr,
+                                         reinterpret_cast<LPCWSTR>(resource_id),
+                                         IMAGE_ICON,
+                                         16,
+                                         16,
+                                         LR_SHARED));
 }
 
 HICON StatusIconForVisual(const HeaderStatusVisual& visual) {
