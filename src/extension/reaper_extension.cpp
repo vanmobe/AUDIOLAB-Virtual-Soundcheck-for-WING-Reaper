@@ -792,28 +792,47 @@ bool ReaperExtension::ConnectToWing() {
     config_.wing_port = 2223;
     config_.listen_port = 2223;
 
-    // Create OSC handler
-    osc_handler_ = std::make_unique<WingOSC>(
-        config_.wing_ip,
-        config_.wing_port,
-        config_.listen_port
-    );
-    
-    // Set callback
-    osc_handler_->SetChannelCallback(
-        [this](const ChannelInfo& channel) {
-            OnChannelDataReceived(channel);
+    std::vector<uint16_t> listen_port_candidates = {2223};
+#if defined(_WIN32)
+    // On Windows, another REAPER-side component may already own UDP 2223.
+    // Falling back to an OS-assigned local port keeps Wing OSC reachable
+    // without changing the console's fixed destination port.
+    listen_port_candidates.push_back(0);
+#endif
+
+    std::string start_failure_detail;
+    for (uint16_t listen_port : listen_port_candidates) {
+        osc_handler_ = std::make_unique<WingOSC>(
+            config_.wing_ip,
+            config_.wing_port,
+            listen_port
+        );
+
+        osc_handler_->SetChannelCallback(
+            [this](const ChannelInfo& channel) {
+                OnChannelDataReceived(channel);
+            }
+        );
+
+        if (osc_handler_->Start()) {
+            config_.listen_port = listen_port;
+            if (listen_port == 0) {
+                Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Local OSC port 2223 was unavailable; using an OS-assigned UDP port instead.\n");
+            }
+            start_failure_detail.clear();
+            break;
         }
-    );
-    
-    // Start OSC server
-    if (!osc_handler_->Start()) {
-        last_connection_failure_detail_ = osc_handler_->GetLastConnectionDiagnostic();
+
+        start_failure_detail = osc_handler_->GetLastConnectionDiagnostic();
+        osc_handler_.reset();
+    }
+
+    if (!osc_handler_) {
+        last_connection_failure_detail_ = start_failure_detail;
         if (last_connection_failure_detail_.empty()) {
-            last_connection_failure_detail_ = "Failed to start the local OSC listener on port 2223.";
+            last_connection_failure_detail_ = "Failed to start the local OSC listener.";
         }
         Log("AUDIOLAB.wing.reaper.virtualsoundcheck: " + last_connection_failure_detail_ + "\n");
-        osc_handler_.reset();
         status_message_ = "Failed to start";
         return false;
     }
