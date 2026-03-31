@@ -210,7 +210,7 @@ private:
         wc.lpfnWndProc = &SourcePickerDialog::WndProc;
         wc.hInstance = g_hInst;
         wc.lpszClassName = kSourceDialogClassName;
-        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
         wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
         RegisterClassW(&wc);
         registered = true;
@@ -468,7 +468,7 @@ private:
         page_wc.lpfnWndProc = &WingConnectorWindowsDialog::PageWndProc;
         page_wc.hInstance = g_hInst;
         page_wc.lpszClassName = kPageClassName;
-        page_wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        page_wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
         page_wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
         RegisterClassW(&page_wc);
         registered = true;
@@ -900,7 +900,7 @@ private:
     std::wstring SelectedOrManualIp() const {
         const int selection = static_cast<int>(SendMessageW(wing_combo_, CB_GETCURSEL, 0, 0));
         if (selection >= 0 && selection < static_cast<int>(discovered_wings_.size())) {
-            return ToWide(discovered_wings_[static_cast<size_t>(selection)].ip);
+            return ToWide(discovered_wings_[static_cast<size_t>(selection)].console_ip);
         }
         const std::wstring typed = ReadWindowText(manual_ip_edit_);
         return typed;
@@ -1091,7 +1091,7 @@ private:
         }
         SendMessageW(wing_combo_, CB_RESETCONTENT, 0, 0);
         for (const auto& wing : discovered_wings_) {
-            std::string title = wing.name.empty() ? wing.ip : wing.name + " (" + wing.ip + ")";
+            std::string title = wing.name.empty() ? wing.console_ip : wing.name + " (" + wing.console_ip + ")";
             const std::wstring wide = ToWide(title);
             SendMessageW(wing_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(wide.c_str()));
         }
@@ -1100,14 +1100,14 @@ private:
             if (!previous_ip.empty()) {
                 const std::string prev_utf8 = ToUtf8(previous_ip);
                 for (size_t i = 0; i < discovered_wings_.size(); ++i) {
-                    if (discovered_wings_[i].ip == prev_utf8) {
+                    if (discovered_wings_[i].console_ip == prev_utf8) {
                         selection_index = static_cast<int>(i);
                         break;
                     }
                 }
             }
             SendMessageW(wing_combo_, CB_SETCURSEL, selection_index, 0);
-            SetWindowTextW(manual_ip_edit_, ToWide(discovered_wings_[static_cast<size_t>(selection_index)].ip).c_str());
+            SetWindowTextW(manual_ip_edit_, ToWide(discovered_wings_[static_cast<size_t>(selection_index)].console_ip).c_str());
         }
     }
 
@@ -1137,9 +1137,9 @@ private:
         const int index = static_cast<int>(SendMessageW(wing_combo_, CB_GETCURSEL, 0, 0));
         if (index >= 0 && index < static_cast<int>(discovered_wings_.size())) {
             const auto& wing = discovered_wings_[static_cast<size_t>(index)];
-            SetWindowTextW(manual_ip_edit_, ToWide(wing.ip).c_str());
+            SetWindowTextW(manual_ip_edit_, ToWide(wing.console_ip).c_str());
             auto& extension = ReaperExtension::Instance();
-            extension.GetConfig().wing_ip = wing.ip;
+            extension.GetConfig().wing_ip = wing.console_ip;
             SaveConfigIfPossible(extension);
             footer_message_ = L"Selected discovered WING target.";
             RefreshAll();
