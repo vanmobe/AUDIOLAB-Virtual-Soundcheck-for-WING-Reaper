@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cwchar>
+#include <sstream>
 #include <set>
 #include <string>
 #include <mutex>
@@ -749,8 +750,12 @@ private:
         RECT dialog_rect{};
         GetWindowRect(owner_ ? owner_ : GetDesktopWindow(), &owner_rect);
         GetWindowRect(hwnd_, &dialog_rect);
-        const int x = owner_rect.left + std::max(0, ((owner_rect.right - owner_rect.left) - (dialog_rect.right - dialog_rect.left)) / 2);
-        const int y = owner_rect.top + std::max(0, ((owner_rect.bottom - owner_rect.top) - (dialog_rect.bottom - dialog_rect.top)) / 2);
+        const int owner_width = static_cast<int>(owner_rect.right - owner_rect.left);
+        const int owner_height = static_cast<int>(owner_rect.bottom - owner_rect.top);
+        const int dialog_width = static_cast<int>(dialog_rect.right - dialog_rect.left);
+        const int dialog_height = static_cast<int>(dialog_rect.bottom - dialog_rect.top);
+        const int x = static_cast<int>(owner_rect.left) + std::max(0, (owner_width - dialog_width) / 2);
+        const int y = static_cast<int>(owner_rect.top) + std::max(0, (owner_height - dialog_height) / 2);
         SetWindowPos(hwnd_, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
         return 0;
     }
@@ -1048,8 +1053,12 @@ private:
         RECT dialog_rect{};
         GetWindowRect(g_hwndParent ? g_hwndParent : GetDesktopWindow(), &owner_rect);
         GetWindowRect(hwnd_, &dialog_rect);
-        const int x = owner_rect.left + std::max(0, ((owner_rect.right - owner_rect.left) - (dialog_rect.right - dialog_rect.left)) / 2);
-        const int y = owner_rect.top + std::max(0, ((owner_rect.bottom - owner_rect.top) - (dialog_rect.bottom - dialog_rect.top)) / 2);
+        const int owner_width = static_cast<int>(owner_rect.right - owner_rect.left);
+        const int owner_height = static_cast<int>(owner_rect.bottom - owner_rect.top);
+        const int dialog_width = static_cast<int>(dialog_rect.right - dialog_rect.left);
+        const int dialog_height = static_cast<int>(dialog_rect.bottom - dialog_rect.top);
+        const int x = static_cast<int>(owner_rect.left) + std::max(0, (owner_width - dialog_width) / 2);
+        const int y = static_cast<int>(owner_rect.top) + std::max(0, (owner_height - dialog_height) / 2);
         SetWindowPos(hwnd_, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
     }
 
