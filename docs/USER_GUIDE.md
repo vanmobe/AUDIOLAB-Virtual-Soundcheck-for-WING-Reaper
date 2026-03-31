@@ -17,11 +17,11 @@ If the menu is missing, verify plugin files are in your REAPER `UserPlugins` fol
 ## 2. Connect to WING and Fetch Channels
 
 1. In the WINGuard dialog, use `Scan` to discover WING consoles.
-2. If scan fails, enter a manual WING IP in the fallback field.
+2. If scan fails, enter a manual WING IP in the manual-IP field.
 3. Start connect/fetch.
 4. Wait for channel discovery and track creation/update.
 
-This same scan/select/manual-IP/connect workflow is available on macOS and Windows.
+This same scan/select/manual-IP/connect workflow is available on macOS and in the native Windows main window.
 
 ![WINGuard dialog](images/wing-connector.png)
 
@@ -53,6 +53,7 @@ From the same dialog flow you can:
 - configure virtual soundcheck routing
 - toggle soundcheck mode (ALT source switching)
 - stage source or recording-mode changes first, then apply them explicitly after reviewing the summary
+- use the same top-level tab layout on macOS and Windows: `Console`, `Reaper`, `Wing`, and `Control Integration`
 - reuse the current managed selection to rebuild the setup after a `USB`/`CARD` mode change without reopening source selection
 - confirm the live setup validation mark before switching modes or enabling MIDI actions
 - after applying a channel-based setup, the plugin keeps watching those managed WING channels and refreshes routing automatically if a channel changes to another mono/stereo-compatible source

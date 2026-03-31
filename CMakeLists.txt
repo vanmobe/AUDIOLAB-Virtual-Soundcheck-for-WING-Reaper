@@ -74,6 +74,10 @@ if(APPLE)
         PROPERTIES
         LANGUAGE OBJCXX
     )
+elseif(WIN32)
+    list(APPEND SOURCES
+        src/ui/wing_connector_dialog_windows.cpp
+    )
 endif()
 
 # Header files
@@ -189,7 +193,7 @@ elseif(WIN32)
         SUFFIX ${EXTENSION_SUFFIX}
         PREFIX ""
     )
-    target_link_libraries(reaper_wingconnector PRIVATE ws2_32 winmm)
+    target_link_libraries(reaper_wingconnector PRIVATE ws2_32 winmm comctl32)
 endif()
 
 # Set output name

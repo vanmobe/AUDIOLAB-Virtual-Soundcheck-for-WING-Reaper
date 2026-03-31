@@ -6,6 +6,9 @@
 
 #include "internal/adoption_plan.h"
 #include "internal/dialog_bridge.h"
+#ifdef _WIN32
+#include "internal/wing_connector_dialog_windows.h"
+#endif
 #include "wingconnector/reaper_extension.h"
 #ifdef __APPLE__
 #include "internal/wing_connector_dialog_macos.h"
@@ -1641,6 +1644,8 @@ bool ShowBridgeSetupWizard() {
 void ShowMainDialog() {
 #ifdef __APPLE__
     ShowWingConnectorDialogAtTab("console");
+#elif defined(_WIN32)
+    ShowWingConnectorDialogWindows();
 #else
     RunCrossPlatformDialog();
 #endif

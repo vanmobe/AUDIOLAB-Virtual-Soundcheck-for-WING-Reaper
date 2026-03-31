@@ -24,7 +24,7 @@ This plugin is a modular C++ REAPER extension with clear separation between:
 - `src/utilities/`
   - config loading, logging, platform helpers, string utils
 - `src/ui/`
-  - dialog bridge and macOS native dialog implementations
+  - dialog bridge plus native platform dialog implementations
 
 Headers are split between:
 
@@ -48,9 +48,9 @@ Headers are split between:
 ## UI Strategy
 
 - macOS: native Objective-C++ dialogs in `src/ui/*_macos.mm`
-- Windows: REAPER-native fallback dialogs through the cross-platform bridge (`dialog_bridge` + platform utilities)
+- Windows: native Win32 main dialog in `src/ui/wing_connector_dialog_windows.cpp`, routed from `dialog_bridge`
 
-This keeps the current product available on both supported platforms while macOS retains the richer native UX.
+This keeps the product on native UI surfaces for both supported platforms while shared extension/core logic remains platform-neutral.
 
 ## Build and Packaging
 

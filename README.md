@@ -52,7 +52,7 @@ See [QUICKSTART.md](QUICKSTART.md) for the 5-minute flow.
 - Separate selected-channel bridge action and planning path for SuperRack-style integration work
 - Cross-platform dialog behavior:
   - macOS: native Cocoa dialogs
-  - Windows: REAPER-native fallback dialogs
+  - Windows: native Win32 main dialog with matching tab layout and staged setup flow
 
 ## User Documentation
 

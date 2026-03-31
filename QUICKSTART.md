@@ -34,7 +34,7 @@ Expected result:
 - WINGuard connects successfully.
 - REAPER tracks are created or refreshed from WING channel data.
 
-This scan/select/manual-IP/connect flow is available on macOS and Windows.
+This scan/select/manual-IP/connect flow is available on macOS and in the native Windows WINGuard window.
 
 ## 4. Optional: Configure Virtual Soundcheck
 
@@ -52,7 +52,8 @@ Notes:
 - Channel strips support full soundcheck setup, including ALT source switching.
 - Buses and matrices can be selected for recording setup, but they remain record-only and are not affected by the soundcheck toggle.
 - If you open a REAPER project that was not prepared by WINGuard, use `Adopt Existing Reaper Project for Virtual Soundcheck` to review likely channel matches first. This action now lets you keep or override the proposed channel mapping, choose global `USB` or `CARD` routing, optionally override playback slots, and then adopt the imported tracks in place without creating duplicate tracks.
-- On Windows, the adoption action now starts with the same scan/select/manual-IP/connect prompt before review begins.
+- On Windows, the main WINGuard action now opens a native tabbed window that follows the macOS layout for connection and REAPER setup.
+- The separate adoption action still begins with the staged scan/select/manual-IP/connect review flow before imported-track review starts.
 
 ## 5. Automatic Wing CC Button Setup
 
