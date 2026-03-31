@@ -35,8 +35,10 @@ namespace {
 constexpr wchar_t kDialogClassName[] = L"WINGuardWindowsDialog";
 constexpr wchar_t kSourceDialogClassName[] = L"WINGuardSourcePickerDialog";
 constexpr wchar_t kPageClassName[] = L"WINGuardWindowsPage";
-constexpr int kWindowWidth = 860;
-constexpr int kWindowHeight = 780;
+constexpr int kWindowWidth = 1160;
+constexpr int kWindowHeight = 860;
+constexpr int kMinWindowWidth = 980;
+constexpr int kMinWindowHeight = 760;
 constexpr UINT_PTR kRefreshTimerId = 101;
 constexpr UINT kRefreshTimerMs = 1500;
 
@@ -508,6 +510,8 @@ private:
             case WM_NOTIFY: return self->OnNotify(reinterpret_cast<NMHDR*>(lparam));
             case WM_TIMER: return self->OnTimer(static_cast<UINT_PTR>(wparam));
             case WM_CTLCOLORSTATIC: return self->OnCtlColor(reinterpret_cast<HDC>(wparam), reinterpret_cast<HWND>(lparam));
+            case WM_SIZE: return self->OnSize(LOWORD(lparam), HIWORD(lparam));
+            case WM_GETMINMAXINFO: return self->OnGetMinMaxInfo(reinterpret_cast<MINMAXINFO*>(lparam));
             case WM_CLOSE:
                 ShowWindow(hwnd, SW_HIDE);
                 return 0;
@@ -553,9 +557,9 @@ private:
                                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                        DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
 
-        CreateWindowW(L"BUTTON", nullptr, WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-                      12, 10, 820, 132, hwnd_,
-                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdBannerGroup)), g_hInst, nullptr);
+        banner_group_ = CreateWindowW(L"BUTTON", nullptr, WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+                                      12, 10, 820, 132, hwnd_,
+                                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdBannerGroup)), g_hInst, nullptr);
         title_ = CreateWindowW(L"STATIC", L"WINGuard", WS_CHILD | WS_VISIBLE,
                                32, 34, 260, 28, hwnd_,
                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdTitle)), g_hInst, nullptr);
@@ -564,9 +568,9 @@ private:
                                   32, 66, 360, 20, hwnd_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSubtitle)), g_hInst, nullptr);
 
-        CreateWindowW(L"BUTTON", nullptr, WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-                      472, 26, 340, 96, hwnd_,
-                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdStatusGroup)), g_hInst, nullptr);
+        status_group_ = CreateWindowW(L"BUTTON", nullptr, WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+                                      472, 26, 340, 96, hwnd_,
+                                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdStatusGroup)), g_hInst, nullptr);
         header_console_status_ = CreateWindowW(L"STATIC", L"Console: Not Connected", WS_CHILD | WS_VISIBLE,
                                                492, 42, 300, 18, hwnd_,
                                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdHeaderConsoleStatus)), g_hInst, nullptr);
@@ -580,7 +584,7 @@ private:
                                             492, 102, 300, 18, hwnd_,
                                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdHeaderMidiStatus)), g_hInst, nullptr);
 
-        tab_ = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+        tab_ = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_FIXEDWIDTH,
                                12, 154, 820, 560, hwnd_,
                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdTab)), g_hInst, nullptr);
         InsertTab(0, L"Console");
@@ -608,6 +612,9 @@ private:
         SelectOutputMode(ReaperExtension::Instance().GetConfig().soundcheck_output_mode);
         pending_output_mode_ = CurrentOutputMode();
         SetTimer(hwnd_, kRefreshTimerId, kRefreshTimerMs, nullptr);
+        RECT client_rect{};
+        GetClientRect(hwnd_, &client_rect);
+        LayoutControls(client_rect.right - client_rect.left, client_rect.bottom - client_rect.top);
         ShowActivePage(0);
         RefreshDiscoveryControls(false);
         RefreshAll();
@@ -643,19 +650,19 @@ private:
     }
 
     void CreateConsolePage() {
-        CreateWindowW(L"STATIC",
-                      L"Connect to a Wing, discover consoles on the network, or enter a manual IP when discovery comes back empty-handed.",
-                      WS_CHILD | WS_VISIBLE,
-                      20, 18, 740, 36, page_console_, nullptr, g_hInst, nullptr);
+        console_intro_ = CreateWindowW(L"STATIC",
+                                       L"Connect to a Wing, discover consoles on the network, or enter a manual IP when discovery comes back empty-handed.",
+                                       WS_CHILD | WS_VISIBLE,
+                                       20, 18, 740, 36, page_console_, nullptr, g_hInst, nullptr);
 
-        CreateWindowW(L"STATIC", L"Connection", WS_CHILD | WS_VISIBLE,
-                      20, 64, 160, 20, page_console_, nullptr, g_hInst, nullptr);
+        console_section_header_ = CreateWindowW(L"STATIC", L"Connection", WS_CHILD | WS_VISIBLE,
+                                                20, 64, 160, 20, page_console_, nullptr, g_hInst, nullptr);
         tab_status_console_ = CreateWindowW(L"STATIC", L"Inactive", WS_CHILD | WS_VISIBLE,
                                             640, 64, 120, 20, page_console_,
                                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdConsoleStatusChip)), g_hInst, nullptr);
 
-        CreateWindowW(L"STATIC", L"Wing Console:", WS_CHILD | WS_VISIBLE,
-                      20, 108, 110, 20, page_console_, nullptr, g_hInst, nullptr);
+        console_label_ = CreateWindowW(L"STATIC", L"Wing Console:", WS_CHILD | WS_VISIBLE,
+                                       20, 108, 110, 20, page_console_, nullptr, g_hInst, nullptr);
         wing_combo_ = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST,
                                     140, 104, 470, 240, page_console_,
                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdWingCombo)), g_hInst, nullptr);
@@ -663,55 +670,55 @@ private:
                                      630, 104, 120, 28, page_console_,
                                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdScanButton)), g_hInst, nullptr);
 
-        CreateWindowW(L"STATIC", L"Pick a discovered Wing to fill the connection details automatically.",
-                      WS_CHILD | WS_VISIBLE,
-                      140, 136, 540, 18, page_console_, nullptr, g_hInst, nullptr);
+        console_help_discovery_ = CreateWindowW(L"STATIC", L"Pick a discovered Wing to fill the connection details automatically.",
+                                                WS_CHILD | WS_VISIBLE,
+                                                140, 136, 540, 18, page_console_, nullptr, g_hInst, nullptr);
 
-        CreateWindowW(L"STATIC", L"Manual IP:", WS_CHILD | WS_VISIBLE,
-                      20, 182, 110, 20, page_console_, nullptr, g_hInst, nullptr);
+        console_manual_ip_label_ = CreateWindowW(L"STATIC", L"Manual IP:", WS_CHILD | WS_VISIBLE,
+                                                 20, 182, 110, 20, page_console_, nullptr, g_hInst, nullptr);
         manual_ip_edit_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
                                           WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
                                           140, 178, 260, 24, page_console_,
                                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdManualIpEdit)), g_hInst, nullptr);
-        CreateWindowW(L"STATIC",
-                      L"If you already know the console IP, skip the scan and connect directly.",
-                      WS_CHILD | WS_VISIBLE,
-                      140, 208, 540, 18, page_console_, nullptr, g_hInst, nullptr);
+        console_help_manual_ = CreateWindowW(L"STATIC",
+                                             L"If you already know the console IP, skip the scan and connect directly.",
+                                             WS_CHILD | WS_VISIBLE,
+                                             140, 208, 540, 18, page_console_, nullptr, g_hInst, nullptr);
 
         connect_button_ = CreateWindowW(L"BUTTON", L"Connect", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
                                         630, 246, 120, 30, page_console_,
                                         reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdConnectButton)), g_hInst, nullptr);
 
-        CreateWindowW(L"STATIC",
-                      L"Console connection and recording-readiness status stay pinned in the header above, visible from every tab.",
-                      WS_CHILD | WS_VISIBLE,
-                      20, 248, 560, 24, page_console_, nullptr, g_hInst, nullptr);
+        console_footer_ = CreateWindowW(L"STATIC",
+                                        L"Console connection and recording-readiness status stay pinned in the header above, visible from every tab.",
+                                        WS_CHILD | WS_VISIBLE,
+                                        20, 248, 560, 24, page_console_, nullptr, g_hInst, nullptr);
     }
 
     void CreateReaperPage() {
-        CreateWindowW(L"STATIC",
-                      L"Prepare REAPER for live recording and virtual soundcheck here: choose USB or CARD routing, stage and apply the source layout, and switch prepared channels between live inputs and playback.",
-                      WS_CHILD | WS_VISIBLE,
-                      20, 18, 760, 40, page_reaper_, nullptr, g_hInst, nullptr);
+        reaper_intro_ = CreateWindowW(L"STATIC",
+                                      L"Prepare REAPER for live recording and virtual soundcheck here: choose USB or CARD routing, stage and apply the source layout, and switch prepared channels between live inputs and playback.",
+                                      WS_CHILD | WS_VISIBLE,
+                                      20, 18, 760, 40, page_reaper_, nullptr, g_hInst, nullptr);
 
-        CreateWindowW(L"STATIC", L"Recording and Soundcheck", WS_CHILD | WS_VISIBLE,
-                      20, 66, 240, 20, page_reaper_, nullptr, g_hInst, nullptr);
+        reaper_section_header_ = CreateWindowW(L"STATIC", L"Recording and Soundcheck", WS_CHILD | WS_VISIBLE,
+                                               20, 66, 240, 20, page_reaper_, nullptr, g_hInst, nullptr);
         tab_status_reaper_ = CreateWindowW(L"STATIC", L"Inactive", WS_CHILD | WS_VISIBLE,
                                            640, 66, 120, 20, page_reaper_,
                                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdReaperStatusChip)), g_hInst, nullptr);
 
-        CreateWindowW(L"STATIC", L"Recording I/O Mode:", WS_CHILD | WS_VISIBLE,
-                      20, 108, 130, 20, page_reaper_, nullptr, g_hInst, nullptr);
+        reaper_output_label_ = CreateWindowW(L"STATIC", L"Recording I/O Mode:", WS_CHILD | WS_VISIBLE,
+                                             20, 108, 130, 20, page_reaper_, nullptr, g_hInst, nullptr);
         output_usb_radio_ = CreateWindowW(L"BUTTON", L"USB", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
                                           200, 106, 80, 22, page_reaper_,
                                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdReaperOutputUsb)), g_hInst, nullptr);
         output_card_radio_ = CreateWindowW(L"BUTTON", L"CARD", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
                                            290, 106, 80, 22, page_reaper_,
                                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdReaperOutputCard)), g_hInst, nullptr);
-        CreateWindowW(L"STATIC",
-                      L"Choose where the Wing sends the recording channels. USB is the usual direct-to-computer path; CARD uses the Wing audio card route.",
-                      WS_CHILD | WS_VISIBLE,
-                      200, 134, 520, 30, page_reaper_, nullptr, g_hInst, nullptr);
+        reaper_output_help_ = CreateWindowW(L"STATIC",
+                                            L"Choose where the Wing sends the recording channels. USB is the usual direct-to-computer path; CARD uses the Wing audio card route.",
+                                            WS_CHILD | WS_VISIBLE,
+                                            200, 134, 520, 30, page_reaper_, nullptr, g_hInst, nullptr);
 
         pending_summary_ = CreateWindowW(L"STATIC",
                                          L"No pending setup changes. Choose sources for a new setup, or change recording mode to stage a rebuild of the current managed setup.",
@@ -736,30 +743,133 @@ private:
         toggle_soundcheck_button_ = CreateWindowW(L"BUTTON", L"Live Mode", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                                                   200, 388, 220, 32, page_reaper_,
                                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdToggleSoundcheckButton)), g_hInst, nullptr);
-        CreateWindowW(L"STATIC",
-                      L"After setup is validated, this flips prepared channels between live inputs and REAPER playback. One button, less panic.",
-                      WS_CHILD | WS_VISIBLE,
-                      200, 428, 520, 30, page_reaper_, nullptr, g_hInst, nullptr);
+        reaper_toggle_help_ = CreateWindowW(L"STATIC",
+                                            L"After setup is validated, this flips prepared channels between live inputs and REAPER playback. One button, less panic.",
+                                            WS_CHILD | WS_VISIBLE,
+                                            200, 428, 520, 30, page_reaper_, nullptr, g_hInst, nullptr);
     }
 
     void CreateWingPlaceholderPage() {
-        CreateWindowW(L"STATIC",
-                      L"Recorder coordination will live here on Windows, matching the macOS Wing tab layout. Phase 1 reserves the surface so the main UI now has the same frame and tab order.",
-                      WS_CHILD | WS_VISIBLE,
-                      24, 40, 740, 40, page_wing_, nullptr, g_hInst, nullptr);
+        wing_placeholder_body_ = CreateWindowW(L"STATIC",
+                                               L"Recorder coordination will live here on Windows, matching the macOS Wing tab layout. Phase 1 reserves the surface so the main UI now has the same frame and tab order.",
+                                               WS_CHILD | WS_VISIBLE,
+                                               24, 40, 740, 40, page_wing_, nullptr, g_hInst, nullptr);
         tab_status_wing_ = CreateWindowW(L"STATIC", L"Inactive", WS_CHILD | WS_VISIBLE,
                                          640, 18, 120, 20, page_wing_,
                                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdWingStatusChip)), g_hInst, nullptr);
     }
 
     void CreateControlPlaceholderPage() {
-        CreateWindowW(L"STATIC",
-                      L"Control Integration will move here on Windows to match the macOS tab for MIDI actions, layers, and debug activity. Phase 1 keeps the layout ready without shipping a half-ported surface.",
-                      WS_CHILD | WS_VISIBLE,
-                      24, 40, 740, 40, page_control_, nullptr, g_hInst, nullptr);
+        control_placeholder_body_ = CreateWindowW(L"STATIC",
+                                                  L"Control Integration will move here on Windows to match the macOS tab for MIDI actions, layers, and debug activity. Phase 1 keeps the layout ready without shipping a half-ported surface.",
+                                                  WS_CHILD | WS_VISIBLE,
+                                                  24, 40, 740, 40, page_control_, nullptr, g_hInst, nullptr);
         tab_status_control_ = CreateWindowW(L"STATIC", L"Inactive", WS_CHILD | WS_VISIBLE,
                                             640, 18, 120, 20, page_control_,
                                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdControlStatusChip)), g_hInst, nullptr);
+    }
+
+    LRESULT OnGetMinMaxInfo(MINMAXINFO* info) {
+        if (!info) {
+            return 0;
+        }
+        info->ptMinTrackSize.x = kMinWindowWidth;
+        info->ptMinTrackSize.y = kMinWindowHeight;
+        return 0;
+    }
+
+    LRESULT OnSize(int width, int height) {
+        if (!hwnd_ || width <= 0 || height <= 0) {
+            return 0;
+        }
+        LayoutControls(width, height);
+        return 0;
+    }
+
+    void LayoutControls(int client_width, int client_height) {
+        const int outer_margin = 14;
+        const int header_y = 16;
+        const int header_height = 156;
+        const int header_width = client_width - (outer_margin * 2);
+        const int status_panel_width = std::min(420, std::max(320, header_width / 3));
+        const int status_panel_height = 108;
+        const int status_panel_x = outer_margin + header_width - status_panel_width - 18;
+        const int status_panel_y = header_y + 18;
+
+        MoveWindow(banner_group_, outer_margin, header_y, header_width, header_height, TRUE);
+        MoveWindow(title_, outer_margin + 22, header_y + 22, 360, 26, TRUE);
+        MoveWindow(subtitle_, outer_margin + 22, header_y + 58, std::max(280, header_width - status_panel_width - 80), 26, TRUE);
+        MoveWindow(status_group_, status_panel_x, status_panel_y, status_panel_width, status_panel_height, TRUE);
+
+        const int status_text_x = status_panel_x + 20;
+        const int status_text_w = status_panel_width - 32;
+        MoveWindow(header_console_status_, status_text_x, status_panel_y + 14, status_text_w, 20, TRUE);
+        MoveWindow(header_validation_status_, status_text_x, status_panel_y + 36, status_text_w, 20, TRUE);
+        MoveWindow(header_recorder_status_, status_text_x, status_panel_y + 58, status_text_w, 20, TRUE);
+        MoveWindow(header_midi_status_, status_text_x, status_panel_y + 80, status_text_w, 20, TRUE);
+
+        const int footer_height = 26;
+        const int footer_y = client_height - footer_height - 14;
+        MoveWindow(footer_status_, outer_margin + 4, footer_y, client_width - (outer_margin * 2) - 8, footer_height, TRUE);
+
+        const int tab_y = header_y + header_height + 14;
+        const int tab_height = std::max(420, footer_y - tab_y - 10);
+        MoveWindow(tab_, outer_margin, tab_y, header_width, tab_height, TRUE);
+        SendMessageW(tab_, TCM_SETITEMSIZE, 0, MAKELPARAM(std::max(150, (header_width - 12) / 4), 30));
+
+        RECT tab_rect{};
+        GetClientRect(tab_, &tab_rect);
+        TabCtrl_AdjustRect(tab_, FALSE, &tab_rect);
+        MapWindowPoints(tab_, hwnd_, reinterpret_cast<LPPOINT>(&tab_rect), 2);
+        const int page_width = tab_rect.right - tab_rect.left;
+        const int page_height = tab_rect.bottom - tab_rect.top;
+
+        MoveWindow(page_console_, tab_rect.left, tab_rect.top, page_width, page_height, TRUE);
+        MoveWindow(page_reaper_, tab_rect.left, tab_rect.top, page_width, page_height, TRUE);
+        MoveWindow(page_wing_, tab_rect.left, tab_rect.top, page_width, page_height, TRUE);
+        MoveWindow(page_control_, tab_rect.left, tab_rect.top, page_width, page_height, TRUE);
+
+        const int page_margin = 26;
+        const int label_x = 28;
+        const int control_x = 220;
+        const int page_right = page_width - page_margin;
+        const int status_chip_w = 150;
+        const int status_chip_x = page_right - status_chip_w;
+        const int content_w = page_width - (page_margin * 2);
+
+        MoveWindow(console_intro_, page_margin, 24, content_w - 10, 48, TRUE);
+        MoveWindow(console_section_header_, page_margin, 88, 220, 22, TRUE);
+        MoveWindow(tab_status_console_, status_chip_x, 88, status_chip_w, 22, TRUE);
+        MoveWindow(console_label_, label_x, 138, 150, 22, TRUE);
+        MoveWindow(wing_combo_, control_x, 134, std::max(260, page_width - control_x - 170), 420, TRUE);
+        MoveWindow(scan_button_, page_width - 140, 134, 112, 32, TRUE);
+        MoveWindow(console_help_discovery_, control_x, 172, page_width - control_x - 40, 22, TRUE);
+        MoveWindow(console_manual_ip_label_, label_x, 226, 150, 22, TRUE);
+        MoveWindow(manual_ip_edit_, control_x, 222, std::min(380, page_width - control_x - 220), 30, TRUE);
+        MoveWindow(console_help_manual_, control_x, 262, page_width - control_x - 40, 38, TRUE);
+        MoveWindow(connect_button_, page_width - 164, 312, 136, 36, TRUE);
+        MoveWindow(console_footer_, page_margin, 370, page_width - 220, 44, TRUE);
+
+        MoveWindow(reaper_intro_, page_margin, 24, content_w - 10, 54, TRUE);
+        MoveWindow(reaper_section_header_, page_margin, 96, 280, 22, TRUE);
+        MoveWindow(tab_status_reaper_, status_chip_x, 96, status_chip_w, 22, TRUE);
+        MoveWindow(reaper_output_label_, label_x, 146, 160, 22, TRUE);
+        MoveWindow(output_usb_radio_, control_x, 142, 92, 28, TRUE);
+        MoveWindow(output_card_radio_, control_x + 96, 142, 96, 28, TRUE);
+        MoveWindow(reaper_output_help_, control_x, 178, page_width - control_x - 40, 40, TRUE);
+        MoveWindow(pending_summary_, control_x, 236, page_width - control_x - 40, 70, TRUE);
+        MoveWindow(readiness_detail_, control_x, 320, page_width - control_x - 40, 84, TRUE);
+        MoveWindow(choose_sources_button_, control_x, 422, 168, 36, TRUE);
+        MoveWindow(apply_setup_button_, control_x + 184, 422, 182, 36, TRUE);
+        MoveWindow(discard_setup_button_, control_x + 382, 422, 132, 36, TRUE);
+        MoveWindow(toggle_soundcheck_button_, control_x, 476, 220, 36, TRUE);
+        MoveWindow(reaper_toggle_help_, control_x, 524, page_width - control_x - 40, 44, TRUE);
+
+        MoveWindow(tab_status_wing_, status_chip_x, 24, status_chip_w, 22, TRUE);
+        MoveWindow(wing_placeholder_body_, page_margin, 64, content_w - 10, 64, TRUE);
+
+        MoveWindow(tab_status_control_, status_chip_x, 24, status_chip_w, 22, TRUE);
+        MoveWindow(control_placeholder_body_, page_margin, 64, content_w - 10, 64, TRUE);
     }
 
     void ShowActivePage(int tab_index) {
@@ -1303,6 +1413,8 @@ private:
     }
 
     HWND hwnd_ = nullptr;
+    HWND banner_group_ = nullptr;
+    HWND status_group_ = nullptr;
     HWND title_ = nullptr;
     HWND subtitle_ = nullptr;
     HWND tab_ = nullptr;
@@ -1318,6 +1430,20 @@ private:
     HWND tab_status_reaper_ = nullptr;
     HWND tab_status_wing_ = nullptr;
     HWND tab_status_control_ = nullptr;
+    HWND console_intro_ = nullptr;
+    HWND console_section_header_ = nullptr;
+    HWND console_label_ = nullptr;
+    HWND console_help_discovery_ = nullptr;
+    HWND console_manual_ip_label_ = nullptr;
+    HWND console_help_manual_ = nullptr;
+    HWND console_footer_ = nullptr;
+    HWND reaper_intro_ = nullptr;
+    HWND reaper_section_header_ = nullptr;
+    HWND reaper_output_label_ = nullptr;
+    HWND reaper_output_help_ = nullptr;
+    HWND reaper_toggle_help_ = nullptr;
+    HWND wing_placeholder_body_ = nullptr;
+    HWND control_placeholder_body_ = nullptr;
     HWND wing_combo_ = nullptr;
     HWND scan_button_ = nullptr;
     HWND manual_ip_edit_ = nullptr;
