@@ -1,12 +1,11 @@
 # WINGuard Installation Guide
 
-WINGuard provides ready-to-use installers for all supported desktop platforms.
+WINGuard provides ready-to-use installers for the supported desktop platforms.
 
 > Guard every take. Faster setup, safer record(w)ing!
 
 - macOS: `.pkg`
 - Windows: `.exe`
-- Linux: `.deb`
 
 Download installers from:
 
@@ -24,7 +23,6 @@ Platform requirements:
 
 - macOS: macOS 10.13+
 - Windows: Windows 10 or newer
-- Linux: Debian/Ubuntu-compatible system with `.deb` support
 
 ## macOS
 
@@ -47,22 +45,6 @@ Default plugin path:
 Default plugin path:
 
 - `%APPDATA%\REAPER\UserPlugins\`
-
-## Linux (Debian/Ubuntu)
-
-1. Download the latest `AUDIOLAB-Virtual-Soundcheck-v*-<arch>.deb` (or matching arch).
-2. Install with your package manager, for example:
-
-```bash
-sudo apt install ./AUDIOLAB-Virtual-Soundcheck-v<version>-<arch>.deb
-```
-
-3. Restart REAPER.
-4. Open `Extensions -> WINGuard: Configure Virtual Soundcheck/Recording`.
-
-Default plugin path:
-
-- `~/.config/REAPER/UserPlugins/`
 
 ## First Run
 
@@ -97,6 +79,5 @@ Remove plugin and config from your REAPER `UserPlugins` path:
 
 - macOS: `reaper_wingconnector.dylib`, `config.json`
 - Windows: `reaper_wingconnector.dll`, `config.json`
-- Linux: `reaper_wingconnector.so`, `config.json`
 
 Then restart REAPER.

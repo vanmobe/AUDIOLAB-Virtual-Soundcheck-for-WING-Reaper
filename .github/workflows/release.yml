@@ -21,8 +21,6 @@ jobs:
             artifact_name: AUDIOLAB-Virtual-Soundcheck-macOS
           - os: windows-latest
             artifact_name: AUDIOLAB-Virtual-Soundcheck-Windows
-          - os: ubuntu-latest
-            artifact_name: AUDIOLAB-Virtual-Soundcheck-Linux
 
     env:
       VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '1.1.0-dev' }}
@@ -92,11 +90,6 @@ jobs:
         shell: pwsh
         run: ./packaging/create_installer_windows.ps1 -Version "$env:VERSION" -StageDir stage -OutDir releases
 
-      - name: Package Linux installer
-        if: runner.os == 'Linux'
-        shell: bash
-        run: ./packaging/create_installer_linux.sh "$VERSION" stage releases
-
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
@@ -127,7 +120,6 @@ jobs:
             Installers:
             - macOS: `.pkg`
             - Windows: `.exe`
-            - Linux: `.deb`
 
             See installation notes in `INSTALL.md`.
           files: dist/*

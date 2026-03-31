@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Build script for AUDIOLAB.wing.reaper.virtualsoundcheck Reaper Extension
-# Supports macOS, Linux, and Windows (via WSL/MinGW)
+# Supports macOS and Windows (via MSYS/MinGW/WSL shell on Windows)
 
 set -e
 
@@ -13,14 +13,19 @@ echo ""
 # Detect OS
 OS="$(uname -s)"
 case "${OS}" in
-    Linux*)     PLATFORM=Linux;;
     Darwin*)    PLATFORM=macOS;;
     MINGW*|MSYS*|CYGWIN*) PLATFORM=Windows;;
+    Linux*)     PLATFORM=Unsupported;;
     *)          PLATFORM="Unknown";;
 esac
 
 echo "Platform: ${PLATFORM}"
 echo ""
+
+if [ "${PLATFORM}" == "Unsupported" ]; then
+    echo "Error: Linux is no longer a supported build target for this project."
+    exit 1
+fi
 
 # Configuration
 BUILD_TYPE="Release"
@@ -131,14 +136,6 @@ if [ "${PLATFORM}" == "macOS" ]; then
     echo "Quick install:"
     echo "  mkdir -p \"${REAPER_PATH}\""
     echo "  cp ${INSTALL_DIR}/reaper_wingconnector.dylib \"${REAPER_PATH}/\""
-    echo "  cp config.json \"${REAPER_PATH}/\""
-elif [ "${PLATFORM}" == "Linux" ]; then
-    REAPER_PATH="$HOME/.config/REAPER/UserPlugins"
-    echo "Copy to: ${REAPER_PATH}/"
-    echo ""
-    echo "Quick install:"
-    echo "  mkdir -p \"${REAPER_PATH}\""
-    echo "  cp ${INSTALL_DIR}/reaper_wingconnector.so \"${REAPER_PATH}/\""
     echo "  cp config.json \"${REAPER_PATH}/\""
 elif [ "${PLATFORM}" == "Windows" ]; then
     REAPER_PATH="%APPDATA%\\REAPER\\UserPlugins"

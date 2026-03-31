@@ -5,8 +5,8 @@ WINGuard is a C++ REAPER extension that connects to a Behringer WING console ove
 > Guard every take. Faster setup, safer record(w)ing!
 
 - Status: Production-ready
-- Platforms: macOS, Windows, Linux
-- Installers: `.pkg` (macOS), `.exe` (Windows), `.deb` (Linux)
+- Platforms: macOS, Windows
+- Installers: `.pkg` (macOS), `.exe` (Windows)
 - License: MIT
 
 > Disclaimer: This software is provided as-is for use at your own risk. No guarantees or official support are provided.
@@ -27,7 +27,6 @@ Platform-specific steps are in [INSTALL.md](INSTALL.md).
 - OS support:
   - macOS 10.13+
   - Windows 10+
-  - Debian/Ubuntu-based Linux with `.deb` package support
 
 ## Quick Start
 
@@ -53,7 +52,7 @@ See [QUICKSTART.md](QUICKSTART.md) for the 5-minute flow.
 - Separate selected-channel bridge action and planning path for SuperRack-style integration work
 - Cross-platform dialog behavior:
   - macOS: native Cocoa dialogs
-  - Windows/Linux: REAPER-native fallback dialogs with the same scan/select/manual-IP/connect workflow
+  - Windows: REAPER-native fallback dialogs
 
 ## User Documentation
 

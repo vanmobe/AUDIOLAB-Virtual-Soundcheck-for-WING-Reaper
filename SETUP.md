@@ -8,7 +8,6 @@ This guide covers building AUDIOLAB.wing.reaper.virtualsoundcheck from source an
 - C++17 compiler
   - macOS: Xcode Command Line Tools
   - Windows: Visual Studio (C++ workload)
-  - Linux: GCC/Clang toolchain
 - Git
 - REAPER SDK headers:
   - `lib/reaper-sdk/reaper_plugin.h`
@@ -29,7 +28,7 @@ Then verify:
 
 ## Build
 
-macOS/Linux:
+macOS:
 
 ```bash
 ./build.sh
@@ -59,14 +58,6 @@ copy install\reaper_wingconnector.dll "%APPDATA%\REAPER\UserPlugins\"
 copy config.json "%APPDATA%\REAPER\UserPlugins\"
 ```
 
-Linux:
-
-```bash
-mkdir -p ~/.config/REAPER/UserPlugins
-cp install/reaper_wingconnector.so ~/.config/REAPER/UserPlugins/
-cp config.json ~/.config/REAPER/UserPlugins/
-```
-
 ## Verify in REAPER
 
 1. Restart REAPER.
@@ -80,7 +71,6 @@ cp config.json ~/.config/REAPER/UserPlugins/
 - Packaging scripts:
   - `packaging/create_installer_macos.sh`
   - `packaging/create_installer_windows.ps1`
-  - `packaging/create_installer_linux.sh`
 
 Release tags matching `v*` trigger installer build + publish.
 
@@ -89,7 +79,7 @@ Release tags matching `v*` trigger installer build + publish.
 - Missing REAPER SDK headers in `lib/reaper-sdk/`
 - Missing `oscpack` checkout in `lib/oscpack/`
 - Compiler toolchain not installed or not on PATH
-- Platform-specific packaging tools missing (`pkgbuild`, Inno Setup, `dpkg-deb`)
+- Platform-specific packaging tools missing (`pkgbuild`, Inno Setup)
 
 ## Related Documentation
 

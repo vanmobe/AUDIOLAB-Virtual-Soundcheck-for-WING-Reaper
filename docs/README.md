@@ -4,7 +4,7 @@ Use this page as the starting point for repository documentation.
 
 ## End Users
 
-- [../INSTALL.md](../INSTALL.md) - installer-first setup for macOS, Windows, and Linux
+- [../INSTALL.md](../INSTALL.md) - installer-first setup for macOS and Windows
 - [../QUICKSTART.md](../QUICKSTART.md) - shortest path from install to first WING connection
 - [USER_GUIDE.md](USER_GUIDE.md) - day-to-day operation in REAPER with a Behringer WING
 - [CC_BUTTONS_AND_AUTO_TRIGGER.md](CC_BUTTONS_AND_AUTO_TRIGGER.md) - MIDI CC control, auto-trigger, and SD recording notes

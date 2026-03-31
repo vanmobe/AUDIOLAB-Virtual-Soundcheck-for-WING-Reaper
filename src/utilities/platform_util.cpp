@@ -56,9 +56,6 @@ std::string GetPluginConfigDir() {
     }
     
     return config_path;
-#elif defined(__linux__)
-    // Linux: ~/.config/REAPER/UserPlugins
-    return std::string(home) + "/.config/REAPER/UserPlugins";
 #else
     // Fallback for unknown platforms
     return std::string(home) + "/.reaper_plugins";

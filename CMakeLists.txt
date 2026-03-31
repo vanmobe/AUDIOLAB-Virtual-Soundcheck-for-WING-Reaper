@@ -35,7 +35,7 @@ if(APPLE)
 elseif(WIN32)
     set(EXTENSION_SUFFIX ".dll")
 else()
-    set(EXTENSION_SUFFIX ".so")
+    message(FATAL_ERROR "Linux and other non-macOS/non-Windows platforms are no longer supported.")
 endif()
 
 # Source files
@@ -190,13 +190,6 @@ elseif(WIN32)
         PREFIX ""
     )
     target_link_libraries(reaper_wingconnector PRIVATE ws2_32 winmm)
-    
-else() # Linux
-    set_target_properties(reaper_wingconnector PROPERTIES
-        SUFFIX ${EXTENSION_SUFFIX}
-        PREFIX ""
-    )
-    target_link_libraries(reaper_wingconnector PRIVATE pthread)
 endif()
 
 # Set output name

@@ -1,6 +1,6 @@
 /*
  * Platform Utilities
- * Abstracts platform-specific differences across Windows, macOS, Linux
+ * Abstracts platform-specific differences across Windows and macOS
  */
 
 #ifndef PLATFORM_UTIL_H
@@ -38,14 +38,6 @@ inline constexpr bool IsWindows() {
 
 inline constexpr bool IsMacOS() {
 #ifdef __APPLE__
-    return true;
-#else
-    return false;
-#endif
-}
-
-inline constexpr bool IsLinux() {
-#ifdef __linux__
     return true;
 #else
     return false;

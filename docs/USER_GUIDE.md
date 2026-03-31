@@ -21,7 +21,7 @@ If the menu is missing, verify plugin files are in your REAPER `UserPlugins` fol
 3. Start connect/fetch.
 4. Wait for channel discovery and track creation/update.
 
-This same scan/select/manual-IP/connect workflow is available on macOS, Windows, and Linux.
+This same scan/select/manual-IP/connect workflow is available on macOS and Windows.
 
 ![WINGuard dialog](images/wing-connector.png)
 

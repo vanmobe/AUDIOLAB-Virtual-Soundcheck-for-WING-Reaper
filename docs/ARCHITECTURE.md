@@ -48,9 +48,9 @@ Headers are split between:
 ## UI Strategy
 
 - macOS: native Objective-C++ dialogs in `src/ui/*_macos.mm`
-- Windows/Linux: cross-platform bridge with REAPER-native dialogs/fallback flows (`dialog_bridge` + platform utilities)
+- Windows: REAPER-native fallback dialogs through the cross-platform bridge (`dialog_bridge` + platform utilities)
 
-This keeps feature parity while still using native UX on macOS.
+This keeps the current product available on both supported platforms while macOS retains the richer native UX.
 
 ## Build and Packaging
 
@@ -59,20 +59,18 @@ Build system: `CMakeLists.txt`
 - Targets plugin as shared library:
   - `.dylib` on macOS
   - `.dll` on Windows
-  - `.so` on Linux
 - Links platform dependencies conditionally.
 - Uses `oscpack` and REAPER SDK headers.
 
 CI/CD:
 
-- `.github/workflows/ci.yml`: build validation on macOS/Windows/Linux
+- `.github/workflows/ci.yml`: build validation on macOS/Windows
 - `.github/workflows/release.yml`: tagged release packaging + GitHub release assets
 
 Packaging scripts:
 
 - `packaging/create_installer_macos.sh`
 - `packaging/create_installer_windows.ps1`
-- `packaging/create_installer_linux.sh`
 
 ## Design Notes
 

@@ -60,7 +60,7 @@ ReaProject* TrackManager::GetCurrentProject() {
  * RGBToReaperColor() - Convert RGB values to REAPER native color format
  * 
  * REAPER uses OS-dependent color encoding. This function converts RGB values
- * to the correct format for the current platform (macOS, Windows, Linux).
+ * to the correct format for the current platform (macOS or Windows).
  * 
  * Args:
  *   r, g, b - Red, green, blue values (0-255)
