@@ -80,9 +80,39 @@ enum ControlId {
     kIdWingPlaceholder,
     kIdControlPlaceholder,
     kIdFooterStatus,
+    kIdPageFrame,
+    kIdTabConsoleButton,
+    kIdTabReaperButton,
+    kIdTabWingButton,
+    kIdTabControlButton,
     kIdAutoTriggerHeader,
     kIdAutoTriggerDetail,
     kIdAutoTriggerHint,
+    kIdConsoleSectionIcon,
+    kIdReaperSectionIcon,
+    kIdAutoTriggerSectionIcon,
+    kIdWingSectionIcon,
+    kIdControlSectionIcon,
+    kIdRecorderEnableOff,
+    kIdRecorderEnableOn,
+    kIdRecorderTargetWLive,
+    kIdRecorderTargetUsb,
+    kIdRecorderPair1,
+    kIdRecorderPair3,
+    kIdRecorderPair5,
+    kIdRecorderPair7,
+    kIdRecorderFollowOff,
+    kIdRecorderFollowOn,
+    kIdRecorderDetail,
+    kIdApplyRecorderButton,
+    kIdDiscardRecorderButton,
+    kIdMidiActionsOff,
+    kIdMidiActionsOn,
+    kIdMidiSummary,
+    kIdMidiDetail,
+    kIdWarningLayerCombo,
+    kIdApplyMidiButton,
+    kIdDiscardMidiButton,
     kIdSourceList,
     kIdSourceSelectAll,
     kIdSourceSelectChannels,
@@ -220,6 +250,20 @@ HFONT CreateUiFont(int height, int weight = FW_NORMAL, bool monospace = false) {
                        monospace ? L"Consolas" : L"Segoe UI");
 }
 
+HICON LoadSmallStockIcon(LPCWSTR resource_id) {
+    return static_cast<HICON>(LoadImageW(nullptr, resource_id, IMAGE_ICON, 16, 16, LR_SHARED));
+}
+
+HICON StatusIconForVisual(const HeaderStatusVisual& visual) {
+    if (visual.color == RGB(40, 140, 70)) {
+        return LoadSmallStockIcon(IDI_INFORMATION);
+    }
+    if (visual.color == RGB(215, 135, 30)) {
+        return LoadSmallStockIcon(IDI_WARNING);
+    }
+    return LoadSmallStockIcon(IDI_APPLICATION);
+}
+
 void SaveConfigIfPossible(ReaperExtension& extension) {
     const std::string path = WingConfig::GetConfigPath();
     if (!extension.GetConfig().SaveToFile(path)) {
@@ -316,6 +360,9 @@ private:
         switch (msg) {
             case WM_CREATE: return self->OnCreate();
             case WM_COMMAND: return self->OnCommand(LOWORD(wparam), HIWORD(wparam));
+            case WM_CTLCOLORSTATIC: return self->OnCtlColor(reinterpret_cast<HDC>(wparam));
+            case WM_CTLCOLOREDIT: return self->OnCtlColor(reinterpret_cast<HDC>(wparam));
+            case WM_CTLCOLORLISTBOX: return self->OnCtlColor(reinterpret_cast<HDC>(wparam));
             case WM_CLOSE:
                 self->done_ = true;
                 return 0;
@@ -380,6 +427,7 @@ private:
 
         SetWindowFontRecursive(hwnd_, font);
         SendMessageW(count_label_, WM_SETFONT, reinterpret_cast<WPARAM>(title_font), TRUE);
+        SendMessageW(listbox_, LB_SETITEMHEIGHT, 0, 30);
         CheckRadioButton(hwnd_,
                          kIdSourceModeSoundcheck,
                          kIdSourceModeRecord,
@@ -389,6 +437,12 @@ private:
         PopulateList();
         CenterWindow();
         return 0;
+    }
+
+    LRESULT OnCtlColor(HDC hdc) {
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, RGB(30, 30, 30));
+        return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
     }
 
     void CenterWindow() {
@@ -752,25 +806,25 @@ private:
         status_group_ = CreateWindowW(L"STATIC", nullptr, WS_CHILD | WS_VISIBLE,
                                       472, 26, 340, 96, hwnd_,
                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdStatusGroup)), g_hInst, nullptr);
-        header_console_icon_ = CreateWindowW(L"STATIC", L"●", WS_CHILD | WS_VISIBLE,
+        header_console_icon_ = CreateWindowW(L"STATIC", nullptr, WS_CHILD | WS_VISIBLE | SS_ICON,
                                              490, 42, 20, 18, hwnd_,
                                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdHeaderConsoleIcon)), g_hInst, nullptr);
         header_console_status_ = CreateWindowW(L"STATIC", L"Console: Not Connected", WS_CHILD | WS_VISIBLE,
                                                514, 42, 278, 18, hwnd_,
                                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdHeaderConsoleStatus)), g_hInst, nullptr);
-        header_validation_icon_ = CreateWindowW(L"STATIC", L"●", WS_CHILD | WS_VISIBLE,
+        header_validation_icon_ = CreateWindowW(L"STATIC", nullptr, WS_CHILD | WS_VISIBLE | SS_ICON,
                                                 490, 62, 20, 18, hwnd_,
                                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdHeaderValidationIcon)), g_hInst, nullptr);
         header_validation_status_ = CreateWindowW(L"STATIC", L"Reaper Recorder: Not Ready", WS_CHILD | WS_VISIBLE,
                                                   514, 62, 278, 18, hwnd_,
                                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdHeaderValidationStatus)), g_hInst, nullptr);
-        header_recorder_icon_ = CreateWindowW(L"STATIC", L"●", WS_CHILD | WS_VISIBLE,
+        header_recorder_icon_ = CreateWindowW(L"STATIC", nullptr, WS_CHILD | WS_VISIBLE | SS_ICON,
                                               490, 82, 20, 18, hwnd_,
                                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdHeaderRecorderIcon)), g_hInst, nullptr);
         header_recorder_status_ = CreateWindowW(L"STATIC", L"Wing Recorder: Disabled", WS_CHILD | WS_VISIBLE,
                                                 514, 82, 278, 18, hwnd_,
                                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdHeaderRecorderStatus)), g_hInst, nullptr);
-        header_midi_icon_ = CreateWindowW(L"STATIC", L"●", WS_CHILD | WS_VISIBLE,
+        header_midi_icon_ = CreateWindowW(L"STATIC", nullptr, WS_CHILD | WS_VISIBLE | SS_ICON,
                                           490, 102, 20, 18, hwnd_,
                                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdHeaderMidiIcon)), g_hInst, nullptr);
         header_midi_status_ = CreateWindowW(L"STATIC", L"Wing control integration: Disabled", WS_CHILD | WS_VISIBLE,
@@ -780,10 +834,22 @@ private:
         tab_ = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_FIXEDWIDTH | TCS_FOCUSNEVER,
                                12, 154, 820, 560, hwnd_,
                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdTab)), g_hInst, nullptr);
-        InsertTab(0, L"Console");
-        InsertTab(1, L"Reaper");
-        InsertTab(2, L"Wing");
-        InsertTab(3, L"Control Integration");
+        ShowWindow(tab_, SW_HIDE);
+        page_frame_ = CreateWindowW(L"STATIC", nullptr, WS_CHILD | WS_VISIBLE,
+                                    12, 206, 820, 560, hwnd_,
+                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdPageFrame)), g_hInst, nullptr);
+        tab_button_console_ = CreateWindowW(L"BUTTON", L"Console", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON | BS_PUSHLIKE | WS_GROUP,
+                                            12, 154, 180, 40, hwnd_,
+                                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdTabConsoleButton)), g_hInst, nullptr);
+        tab_button_reaper_ = CreateWindowW(L"BUTTON", L"Reaper", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON | BS_PUSHLIKE,
+                                           196, 154, 180, 40, hwnd_,
+                                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdTabReaperButton)), g_hInst, nullptr);
+        tab_button_wing_ = CreateWindowW(L"BUTTON", L"Wing", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON | BS_PUSHLIKE,
+                                         380, 154, 180, 40, hwnd_,
+                                         reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdTabWingButton)), g_hInst, nullptr);
+        tab_button_control_ = CreateWindowW(L"BUTTON", L"Control Integration", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON | BS_PUSHLIKE,
+                                            564, 154, 240, 40, hwnd_,
+                                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdTabControlButton)), g_hInst, nullptr);
         CreatePages();
         CreateConsolePage();
         CreateReaperPage();
@@ -798,18 +864,19 @@ private:
         SetWindowFontRecursive(hwnd_, font_);
         SendMessageW(title_, WM_SETFONT, reinterpret_cast<WPARAM>(bold_font_), TRUE);
         SendMessageW(subtitle_, WM_SETFONT, reinterpret_cast<WPARAM>(subtle_font_), TRUE);
-        SendMessageW(tab_, WM_SETFONT, reinterpret_cast<WPARAM>(tab_font_), TRUE);
+        SendMessageW(tab_button_console_, WM_SETFONT, reinterpret_cast<WPARAM>(tab_font_), TRUE);
+        SendMessageW(tab_button_reaper_, WM_SETFONT, reinterpret_cast<WPARAM>(tab_font_), TRUE);
+        SendMessageW(tab_button_wing_, WM_SETFONT, reinterpret_cast<WPARAM>(tab_font_), TRUE);
+        SendMessageW(tab_button_control_, WM_SETFONT, reinterpret_cast<WPARAM>(tab_font_), TRUE);
         SendMessageW(console_section_header_, WM_SETFONT, reinterpret_cast<WPARAM>(section_font_), TRUE);
         SendMessageW(reaper_section_header_, WM_SETFONT, reinterpret_cast<WPARAM>(section_font_), TRUE);
         SendMessageW(auto_trigger_header_, WM_SETFONT, reinterpret_cast<WPARAM>(section_font_), TRUE);
+        SendMessageW(wing_section_header_, WM_SETFONT, reinterpret_cast<WPARAM>(section_font_), TRUE);
+        SendMessageW(control_section_header_, WM_SETFONT, reinterpret_cast<WPARAM>(section_font_), TRUE);
         SendMessageW(tab_status_console_, WM_SETFONT, reinterpret_cast<WPARAM>(small_bold_font_), TRUE);
         SendMessageW(tab_status_reaper_, WM_SETFONT, reinterpret_cast<WPARAM>(small_bold_font_), TRUE);
         SendMessageW(tab_status_wing_, WM_SETFONT, reinterpret_cast<WPARAM>(small_bold_font_), TRUE);
         SendMessageW(tab_status_control_, WM_SETFONT, reinterpret_cast<WPARAM>(small_bold_font_), TRUE);
-        SendMessageW(header_console_icon_, WM_SETFONT, reinterpret_cast<WPARAM>(icon_font_), TRUE);
-        SendMessageW(header_validation_icon_, WM_SETFONT, reinterpret_cast<WPARAM>(icon_font_), TRUE);
-        SendMessageW(header_recorder_icon_, WM_SETFONT, reinterpret_cast<WPARAM>(icon_font_), TRUE);
-        SendMessageW(header_midi_icon_, WM_SETFONT, reinterpret_cast<WPARAM>(icon_font_), TRUE);
         SendMessageW(header_console_status_, WM_SETFONT, reinterpret_cast<WPARAM>(small_bold_font_), TRUE);
         SendMessageW(header_validation_status_, WM_SETFONT, reinterpret_cast<WPARAM>(small_bold_font_), TRUE);
         SendMessageW(header_recorder_status_, WM_SETFONT, reinterpret_cast<WPARAM>(small_bold_font_), TRUE);
@@ -817,9 +884,20 @@ private:
         SendMessageW(footer_status_, WM_SETFONT, reinterpret_cast<WPARAM>(subtle_font_), TRUE);
         SendMessageW(wing_placeholder_body_, WM_SETFONT, reinterpret_cast<WPARAM>(subtle_font_), TRUE);
         SendMessageW(control_placeholder_body_, WM_SETFONT, reinterpret_cast<WPARAM>(subtle_font_), TRUE);
+        SendMessageW(console_section_icon_, STM_SETICON, reinterpret_cast<WPARAM>(LoadSmallStockIcon(IDI_INFORMATION)), 0);
+        SendMessageW(reaper_section_icon_, STM_SETICON, reinterpret_cast<WPARAM>(LoadSmallStockIcon(IDI_APPLICATION)), 0);
+        SendMessageW(auto_trigger_section_icon_, STM_SETICON, reinterpret_cast<WPARAM>(LoadSmallStockIcon(IDI_WARNING)), 0);
+        SendMessageW(wing_section_icon_, STM_SETICON, reinterpret_cast<WPARAM>(LoadSmallStockIcon(IDI_APPLICATION)), 0);
+        SendMessageW(control_section_icon_, STM_SETICON, reinterpret_cast<WPARAM>(LoadSmallStockIcon(IDI_INFORMATION)), 0);
+        ShowWindow(banner_group_, SW_HIDE);
+        ShowWindow(status_group_, SW_HIDE);
 
+        SyncPendingSettingsFromConfig();
         SelectOutputMode(ReaperExtension::Instance().GetConfig().soundcheck_output_mode);
+        SyncWingControlsFromPending();
+        SyncControlTabFromPending();
         pending_output_mode_ = CurrentOutputMode();
+        CheckRadioButton(hwnd_, kIdTabConsoleButton, kIdTabControlButton, kIdTabConsoleButton);
         SetTimer(hwnd_, kRefreshTimerId, kRefreshTimerMs, nullptr);
         RECT client_rect{};
         GetClientRect(hwnd_, &client_rect);
@@ -840,27 +918,23 @@ private:
     }
 
     void CreatePages() {
-        RECT tab_rect{};
-        GetClientRect(tab_, &tab_rect);
-        TabCtrl_AdjustRect(tab_, FALSE, &tab_rect);
-        MapWindowPoints(tab_, hwnd_, reinterpret_cast<LPPOINT>(&tab_rect), 2);
-        const int width = tab_rect.right - tab_rect.left;
-        const int height = tab_rect.bottom - tab_rect.top;
+        const int width = 100;
+        const int height = 100;
         page_contexts_[0] = {this, &console_page_state_};
         page_contexts_[1] = {this, &reaper_page_state_};
         page_contexts_[2] = {this, &wing_page_state_};
         page_contexts_[3] = {this, &control_page_state_};
         page_console_ = CreateWindowW(kPageClassName, L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_CLIPCHILDREN,
-                                      tab_rect.left, tab_rect.top, width, height,
+                                      0, 0, width, height,
                                       hwnd_, nullptr, g_hInst, &page_contexts_[0]);
         page_reaper_ = CreateWindowW(kPageClassName, L"", WS_CHILD | WS_VSCROLL | WS_CLIPCHILDREN,
-                                     tab_rect.left, tab_rect.top, width, height,
+                                     0, 0, width, height,
                                      hwnd_, nullptr, g_hInst, &page_contexts_[1]);
         page_wing_ = CreateWindowW(kPageClassName, L"", WS_CHILD | WS_VSCROLL | WS_CLIPCHILDREN,
-                                   tab_rect.left, tab_rect.top, width, height,
+                                   0, 0, width, height,
                                    hwnd_, nullptr, g_hInst, &page_contexts_[2]);
         page_control_ = CreateWindowW(kPageClassName, L"", WS_CHILD | WS_VSCROLL | WS_CLIPCHILDREN,
-                                      tab_rect.left, tab_rect.top, width, height,
+                                      0, 0, width, height,
                                       hwnd_, nullptr, g_hInst, &page_contexts_[3]);
         console_page_state_.hwnd = page_console_;
         reaper_page_state_.hwnd = page_reaper_;
@@ -873,9 +947,12 @@ private:
                                        L"Connect to a Wing, discover consoles on the network, or enter a manual IP when discovery comes back empty-handed.",
                                        WS_CHILD | WS_VISIBLE,
                                        20, 18, 740, 36, page_console_, nullptr, g_hInst, nullptr);
+        console_section_icon_ = CreateWindowW(L"STATIC", nullptr, WS_CHILD | WS_VISIBLE | SS_ICON,
+                                              20, 64, 18, 18, page_console_,
+                                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdConsoleSectionIcon)), g_hInst, nullptr);
 
-        console_section_header_ = CreateWindowW(L"STATIC", L"◎ Connection", WS_CHILD | WS_VISIBLE,
-                                                20, 64, 160, 20, page_console_, nullptr, g_hInst, nullptr);
+        console_section_header_ = CreateWindowW(L"STATIC", L"Connection", WS_CHILD | WS_VISIBLE,
+                                                46, 64, 200, 20, page_console_, nullptr, g_hInst, nullptr);
         tab_status_console_ = CreateWindowW(L"STATIC", L"Inactive", WS_CHILD | WS_VISIBLE,
                                             640, 64, 120, 20, page_console_,
                                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdConsoleStatusChip)), g_hInst, nullptr);
@@ -919,9 +996,12 @@ private:
                                       L"Prepare REAPER for live recording and virtual soundcheck here: choose USB or CARD routing, stage and apply the source layout, switch prepared channels between live inputs and playback, and use Auto Trigger when you want signal-driven starts.",
                                       WS_CHILD | WS_VISIBLE,
                                       20, 18, 760, 40, page_reaper_, nullptr, g_hInst, nullptr);
+        reaper_section_icon_ = CreateWindowW(L"STATIC", nullptr, WS_CHILD | WS_VISIBLE | SS_ICON,
+                                             20, 66, 18, 18, page_reaper_,
+                                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdReaperSectionIcon)), g_hInst, nullptr);
 
-        reaper_section_header_ = CreateWindowW(L"STATIC", L"◉ Recording and Soundcheck", WS_CHILD | WS_VISIBLE,
-                                               20, 66, 240, 20, page_reaper_, nullptr, g_hInst, nullptr);
+        reaper_section_header_ = CreateWindowW(L"STATIC", L"Recording and Soundcheck", WS_CHILD | WS_VISIBLE,
+                                               46, 66, 280, 20, page_reaper_, nullptr, g_hInst, nullptr);
         tab_status_reaper_ = CreateWindowW(L"STATIC", L"Inactive", WS_CHILD | WS_VISIBLE,
                                            640, 66, 120, 20, page_reaper_,
                                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdReaperStatusChip)), g_hInst, nullptr);
@@ -967,8 +1047,11 @@ private:
                                             WS_CHILD | WS_VISIBLE,
                                             200, 428, 520, 30, page_reaper_, nullptr, g_hInst, nullptr);
 
-        auto_trigger_header_ = CreateWindowW(L"STATIC", L"⚡ Auto Trigger", WS_CHILD | WS_VISIBLE,
-                                             20, 500, 240, 24, page_reaper_,
+        auto_trigger_section_icon_ = CreateWindowW(L"STATIC", nullptr, WS_CHILD | WS_VISIBLE | SS_ICON,
+                                                   20, 500, 18, 18, page_reaper_,
+                                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutoTriggerSectionIcon)), g_hInst, nullptr);
+        auto_trigger_header_ = CreateWindowW(L"STATIC", L"Auto Trigger", WS_CHILD | WS_VISIBLE,
+                                             46, 500, 240, 24, page_reaper_,
                                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdAutoTriggerHeader)), g_hInst, nullptr);
         auto_trigger_detail_ = CreateWindowW(L"STATIC",
                                              L"Trigger controls wake up after live setup validates, because they depend on the prepared recording path. This Windows surface now reserves the same lower-page space as macOS so the full workflow can live here instead of disappearing below the fold.",
@@ -983,23 +1066,115 @@ private:
     }
 
     void CreateWingPlaceholderPage() {
-        wing_placeholder_body_ = CreateWindowW(L"STATIC",
-                                               L"Recorder coordination will live here on Windows, matching the macOS Wing tab layout with more breathing room. This placeholder stays intentionally spacious so the later recorder controls can land without collapsing into the top edge.",
-                                               WS_CHILD | WS_VISIBLE,
-                                               24, 40, 740, 40, page_wing_, nullptr, g_hInst, nullptr);
+        wing_intro_ = CreateWindowW(L"STATIC",
+                                    L"Manage the Wing-side recorder behavior here: target selection, source feed, and whether the recorder follows REAPER-triggered automation.",
+                                    WS_CHILD | WS_VISIBLE,
+                                    24, 24, 760, 40, page_wing_, nullptr, g_hInst, nullptr);
+        wing_section_icon_ = CreateWindowW(L"STATIC", nullptr, WS_CHILD | WS_VISIBLE | SS_ICON,
+                                           24, 88, 18, 18, page_wing_,
+                                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdWingSectionIcon)), g_hInst, nullptr);
+        wing_section_header_ = CreateWindowW(L"STATIC", L"Recorder Coordination", WS_CHILD | WS_VISIBLE,
+                                             48, 88, 300, 26, page_wing_, nullptr, g_hInst, nullptr);
         tab_status_wing_ = CreateWindowW(L"STATIC", L"Inactive", WS_CHILD | WS_VISIBLE,
-                                         640, 18, 120, 20, page_wing_,
+                                         640, 88, 120, 20, page_wing_,
                                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdWingStatusChip)), g_hInst, nullptr);
+        wing_enable_label_ = CreateWindowW(L"STATIC", L"Recorder Control:", WS_CHILD | WS_VISIBLE,
+                                           48, 144, 160, 22, page_wing_, nullptr, g_hInst, nullptr);
+        wing_enable_off_ = CreateWindowW(L"BUTTON", L"OFF", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON | WS_GROUP,
+                                         220, 142, 76, 26, page_wing_,
+                                         reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRecorderEnableOff)), g_hInst, nullptr);
+        wing_enable_on_ = CreateWindowW(L"BUTTON", L"ON", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+                                        304, 142, 76, 26, page_wing_,
+                                        reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRecorderEnableOn)), g_hInst, nullptr);
+        wing_target_label_ = CreateWindowW(L"STATIC", L"Recorder Target:", WS_CHILD | WS_VISIBLE,
+                                           48, 198, 160, 22, page_wing_, nullptr, g_hInst, nullptr);
+        wing_target_wlive_ = CreateWindowW(L"BUTTON", L"SD (WING-LIVE)", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON | WS_GROUP,
+                                           220, 196, 150, 26, page_wing_,
+                                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRecorderTargetWLive)), g_hInst, nullptr);
+        wing_target_usb_ = CreateWindowW(L"BUTTON", L"USB Recorder", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+                                         384, 196, 150, 26, page_wing_,
+                                         reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRecorderTargetUsb)), g_hInst, nullptr);
+        wing_pair_label_ = CreateWindowW(L"STATIC", L"Recorder Source Pair:", WS_CHILD | WS_VISIBLE,
+                                         48, 252, 160, 22, page_wing_, nullptr, g_hInst, nullptr);
+        wing_pair_1_ = CreateWindowW(L"BUTTON", L"MAIN 1/2", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON | WS_GROUP,
+                                     220, 250, 110, 26, page_wing_,
+                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRecorderPair1)), g_hInst, nullptr);
+        wing_pair_3_ = CreateWindowW(L"BUTTON", L"MAIN 3/4", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+                                     338, 250, 110, 26, page_wing_,
+                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRecorderPair3)), g_hInst, nullptr);
+        wing_pair_5_ = CreateWindowW(L"BUTTON", L"MAIN 5/6", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+                                     456, 250, 110, 26, page_wing_,
+                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRecorderPair5)), g_hInst, nullptr);
+        wing_pair_7_ = CreateWindowW(L"BUTTON", L"MAIN 7/8", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+                                     574, 250, 110, 26, page_wing_,
+                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRecorderPair7)), g_hInst, nullptr);
+        wing_follow_label_ = CreateWindowW(L"STATIC", L"Follow Auto-Trigger:", WS_CHILD | WS_VISIBLE,
+                                           48, 306, 160, 22, page_wing_, nullptr, g_hInst, nullptr);
+        wing_follow_off_ = CreateWindowW(L"BUTTON", L"OFF", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON | WS_GROUP,
+                                         220, 304, 76, 26, page_wing_,
+                                         reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRecorderFollowOff)), g_hInst, nullptr);
+        wing_follow_on_ = CreateWindowW(L"BUTTON", L"ON", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+                                        304, 304, 76, 26, page_wing_,
+                                        reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRecorderFollowOn)), g_hInst, nullptr);
+        wing_placeholder_body_ = CreateWindowW(L"STATIC",
+                                               L"Recorder coordination is using the currently applied settings.",
+                                               WS_CHILD | WS_VISIBLE,
+                                               220, 356, 620, 52, page_wing_,
+                                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdRecorderDetail)), g_hInst, nullptr);
+        apply_recorder_button_ = CreateWindowW(L"BUTTON", L"Apply Recorder Settings", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                               220, 430, 220, 38, page_wing_,
+                                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdApplyRecorderButton)), g_hInst, nullptr);
+        discard_recorder_button_ = CreateWindowW(L"BUTTON", L"Discard", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                                 454, 430, 140, 38, page_wing_,
+                                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdDiscardRecorderButton)), g_hInst, nullptr);
     }
 
     void CreateControlPlaceholderPage() {
-        control_placeholder_body_ = CreateWindowW(L"STATIC",
-                                                  L"Control Integration will move here on Windows to match the macOS tab for MIDI actions, layers, and debug activity. This page now keeps the same generous frame so the final controls do not feel like bolted-on fallback widgets.",
-                                                  WS_CHILD | WS_VISIBLE,
-                                                  24, 40, 740, 40, page_control_, nullptr, g_hInst, nullptr);
+        control_intro_ = CreateWindowW(L"STATIC",
+                                       L"Map Wing controls into REAPER here, and keep operator-facing integration settings close by when you need to verify how the plugin reacts on the console.",
+                                       WS_CHILD | WS_VISIBLE,
+                                       24, 24, 760, 44, page_control_, nullptr, g_hInst, nullptr);
+        control_section_icon_ = CreateWindowW(L"STATIC", nullptr, WS_CHILD | WS_VISIBLE | SS_ICON,
+                                              24, 88, 18, 18, page_control_,
+                                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdControlSectionIcon)), g_hInst, nullptr);
+        control_section_header_ = CreateWindowW(L"STATIC", L"Wing Control Integration", WS_CHILD | WS_VISIBLE,
+                                                48, 88, 340, 26, page_control_, nullptr, g_hInst, nullptr);
         tab_status_control_ = CreateWindowW(L"STATIC", L"Inactive", WS_CHILD | WS_VISIBLE,
-                                            640, 18, 120, 20, page_control_,
+                                            640, 88, 120, 20, page_control_,
                                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdControlStatusChip)), g_hInst, nullptr);
+        control_enable_label_ = CreateWindowW(L"STATIC", L"Wing Control Enabled:", WS_CHILD | WS_VISIBLE,
+                                              48, 144, 170, 22, page_control_, nullptr, g_hInst, nullptr);
+        midi_actions_off_ = CreateWindowW(L"BUTTON", L"OFF", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON | WS_GROUP,
+                                          220, 142, 76, 26, page_control_,
+                                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdMidiActionsOff)), g_hInst, nullptr);
+        midi_actions_on_ = CreateWindowW(L"BUTTON", L"ON", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
+                                         304, 142, 76, 26, page_control_,
+                                         reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdMidiActionsOn)), g_hInst, nullptr);
+        midi_summary_ = CreateWindowW(L"STATIC", L"No pending MIDI shortcut changes.", WS_CHILD | WS_VISIBLE,
+                                      220, 198, 620, 42, page_control_,
+                                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdMidiSummary)), g_hInst, nullptr);
+        midi_detail_ = CreateWindowW(L"STATIC", L"MIDI shortcuts are disabled.", WS_CHILD | WS_VISIBLE,
+                                     220, 252, 620, 52, page_control_,
+                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdMidiDetail)), g_hInst, nullptr);
+        warning_layer_label_ = CreateWindowW(L"STATIC", L"Warning CC Layer:", WS_CHILD | WS_VISIBLE,
+                                             48, 328, 170, 22, page_control_, nullptr, g_hInst, nullptr);
+        warning_layer_combo_ = CreateWindowW(WC_COMBOBOXW, L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
+                                             220, 324, 180, 260, page_control_,
+                                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdWarningLayerCombo)), g_hInst, nullptr);
+        for (int i = 1; i <= 16; ++i) {
+            std::wstring label = L"Layer " + std::to_wstring(i);
+            SendMessageW(warning_layer_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
+        }
+        control_placeholder_body_ = CreateWindowW(L"STATIC",
+                                                  L"Bridge routing still uses the applied config, MIDI output selection, and mappings from the existing workflow. This tab now exposes the main REAPER control integration state instead of a placeholder.",
+                                                  WS_CHILD | WS_VISIBLE,
+                                                  220, 370, 620, 64, page_control_, nullptr, g_hInst, nullptr);
+        apply_midi_button_ = CreateWindowW(L"BUTTON", L"Apply MIDI Shortcuts", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                           220, 454, 200, 38, page_control_,
+                                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdApplyMidiButton)), g_hInst, nullptr);
+        discard_midi_button_ = CreateWindowW(L"BUTTON", L"Discard", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                             434, 454, 140, 38, page_control_,
+                                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdDiscardMidiButton)), g_hInst, nullptr);
     }
 
     LRESULT OnGetMinMaxInfo(MINMAXINFO* info) {
@@ -1137,21 +1312,29 @@ private:
         MoveWindow(footer_status_, outer_margin + 4, footer_y, client_width - (outer_margin * 2) - 8, footer_height, TRUE);
 
         const int tab_y = header_y + header_height + 14;
-        const int tab_height = std::max(520, footer_y - tab_y - 10);
-        MoveWindow(tab_, outer_margin, tab_y, header_width, tab_height, TRUE);
-        SendMessageW(tab_, TCM_SETITEMSIZE, 0, MAKELPARAM(std::max(250, (header_width - 20) / 4), 46));
+        const int tab_button_height = 42;
+        const int tab_gap = 10;
+        const int page_y = tab_y + tab_button_height + 8;
+        const int page_height = std::max(520, footer_y - page_y - 10);
+        const int console_w = std::max(170, header_width / 5);
+        const int reaper_w = std::max(170, header_width / 5);
+        const int wing_w = std::max(150, header_width / 6);
+        const int control_w = std::max(260, header_width - console_w - reaper_w - wing_w - (tab_gap * 3));
+        MoveWindow(tab_button_console_, outer_margin, tab_y, console_w, tab_button_height, TRUE);
+        MoveWindow(tab_button_reaper_, outer_margin + console_w + tab_gap, tab_y, reaper_w, tab_button_height, TRUE);
+        MoveWindow(tab_button_wing_, outer_margin + console_w + reaper_w + (tab_gap * 2), tab_y, wing_w, tab_button_height, TRUE);
+        MoveWindow(tab_button_control_, outer_margin + console_w + reaper_w + wing_w + (tab_gap * 3), tab_y, control_w, tab_button_height, TRUE);
+        MoveWindow(page_frame_, outer_margin, page_y, header_width, page_height, TRUE);
 
-        RECT tab_rect{};
-        GetClientRect(tab_, &tab_rect);
-        TabCtrl_AdjustRect(tab_, FALSE, &tab_rect);
-        MapWindowPoints(tab_, hwnd_, reinterpret_cast<LPPOINT>(&tab_rect), 2);
-        const int page_width = tab_rect.right - tab_rect.left;
-        const int page_height = tab_rect.bottom - tab_rect.top;
+        const int page_x = outer_margin + 10;
+        const int inner_page_y = page_y + 10;
+        const int page_width = header_width - 20;
+        const int inner_page_height = page_height - 20;
 
-        MoveWindow(page_console_, tab_rect.left, tab_rect.top, page_width, page_height, TRUE);
-        MoveWindow(page_reaper_, tab_rect.left, tab_rect.top, page_width, page_height, TRUE);
-        MoveWindow(page_wing_, tab_rect.left, tab_rect.top, page_width, page_height, TRUE);
-        MoveWindow(page_control_, tab_rect.left, tab_rect.top, page_width, page_height, TRUE);
+        MoveWindow(page_console_, page_x, inner_page_y, page_width, inner_page_height, TRUE);
+        MoveWindow(page_reaper_, page_x, inner_page_y, page_width, inner_page_height, TRUE);
+        MoveWindow(page_wing_, page_x, inner_page_y, page_width, inner_page_height, TRUE);
+        MoveWindow(page_control_, page_x, inner_page_y, page_width, inner_page_height, TRUE);
 
         const int page_margin = 30;
         const int label_x = 34;
@@ -1172,7 +1355,8 @@ private:
         UpdatePageScroll(control_page_state_, viewport_height);
 
         MoveWindow(console_intro_, page_margin, PageY(console_page_state_, 28), content_w - 10, 82, TRUE);
-        MoveWindow(console_section_header_, page_margin, PageY(console_page_state_, 128), 330, 34, TRUE);
+        MoveWindow(console_section_icon_, page_margin, PageY(console_page_state_, 132), 18, 18, TRUE);
+        MoveWindow(console_section_header_, page_margin + 26, PageY(console_page_state_, 128), 330, 34, TRUE);
         MoveWindow(tab_status_console_, status_chip_x, PageY(console_page_state_, 128), status_chip_w, 28, TRUE);
         MoveWindow(console_label_, label_x, PageY(console_page_state_, 166), 160, 28, TRUE);
         MoveWindow(wing_combo_, control_x, PageY(console_page_state_, 160), std::max(360, page_width - control_x - 210), 360, TRUE);
@@ -1185,7 +1369,8 @@ private:
         MoveWindow(console_footer_, page_margin, PageY(console_page_state_, 450), page_width - 220, 72, TRUE);
 
         MoveWindow(reaper_intro_, page_margin, PageY(reaper_page_state_, 28), content_w - 10, 96, TRUE);
-        MoveWindow(reaper_section_header_, page_margin, PageY(reaper_page_state_, 140), 420, 34, TRUE);
+        MoveWindow(reaper_section_icon_, page_margin, PageY(reaper_page_state_, 146), 18, 18, TRUE);
+        MoveWindow(reaper_section_header_, page_margin + 26, PageY(reaper_page_state_, 140), 420, 34, TRUE);
         MoveWindow(tab_status_reaper_, status_chip_x, PageY(reaper_page_state_, 140), status_chip_w, 28, TRUE);
         MoveWindow(reaper_output_label_, label_x, PageY(reaper_page_state_, 182), 170, 28, TRUE);
         MoveWindow(output_usb_radio_, control_x, PageY(reaper_page_state_, 176), 96, 32, TRUE);
@@ -1193,20 +1378,52 @@ private:
         MoveWindow(reaper_output_help_, control_x, PageY(reaper_page_state_, 220), page_width - control_x - 40, 66, TRUE);
         MoveWindow(pending_summary_, control_x, PageY(reaper_page_state_, 304), page_width - control_x - 40, 112, TRUE);
         MoveWindow(readiness_detail_, control_x, PageY(reaper_page_state_, 432), page_width - control_x - 40, 170, TRUE);
-        MoveWindow(choose_sources_button_, control_x, PageY(reaper_page_state_, 630), 180, 40, TRUE);
+        MoveWindow(choose_sources_button_, control_x, PageY(reaper_page_state_, 630), 220, 42, TRUE);
         MoveWindow(apply_setup_button_, control_x + 194, PageY(reaper_page_state_, 630), 190, 40, TRUE);
         MoveWindow(discard_setup_button_, control_x + 398, PageY(reaper_page_state_, 630), 144, 40, TRUE);
         MoveWindow(toggle_soundcheck_button_, control_x, PageY(reaper_page_state_, 692), 240, 40, TRUE);
         MoveWindow(reaper_toggle_help_, control_x, PageY(reaper_page_state_, 748), page_width - control_x - 40, 58, TRUE);
-        MoveWindow(auto_trigger_header_, page_margin, PageY(reaper_page_state_, 852), 320, 34, TRUE);
+        MoveWindow(auto_trigger_section_icon_, page_margin, PageY(reaper_page_state_, 858), 18, 18, TRUE);
+        MoveWindow(auto_trigger_header_, page_margin + 26, PageY(reaper_page_state_, 852), 320, 34, TRUE);
         MoveWindow(auto_trigger_detail_, control_x, PageY(reaper_page_state_, 908), page_width - control_x - 40, 110, TRUE);
         MoveWindow(auto_trigger_hint_, control_x, PageY(reaper_page_state_, 1032), page_width - control_x - 40, 74, TRUE);
 
-        MoveWindow(tab_status_wing_, status_chip_x, PageY(wing_page_state_, 28), status_chip_w, 28, TRUE);
-        MoveWindow(wing_placeholder_body_, page_margin, PageY(wing_page_state_, 84), content_w - 10, 128, TRUE);
+        MoveWindow(wing_intro_, page_margin, PageY(wing_page_state_, 28), content_w - 10, 74, TRUE);
+        MoveWindow(wing_section_icon_, page_margin, PageY(wing_page_state_, 128), 18, 18, TRUE);
+        MoveWindow(wing_section_header_, page_margin + 26, PageY(wing_page_state_, 122), 340, 34, TRUE);
+        MoveWindow(tab_status_wing_, status_chip_x, PageY(wing_page_state_, 122), status_chip_w, 28, TRUE);
+        MoveWindow(wing_enable_label_, label_x, PageY(wing_page_state_, 184), 170, 28, TRUE);
+        MoveWindow(wing_enable_off_, control_x, PageY(wing_page_state_, 182), 84, 28, TRUE);
+        MoveWindow(wing_enable_on_, control_x + 92, PageY(wing_page_state_, 182), 84, 28, TRUE);
+        MoveWindow(wing_target_label_, label_x, PageY(wing_page_state_, 238), 170, 28, TRUE);
+        MoveWindow(wing_target_wlive_, control_x, PageY(wing_page_state_, 236), 160, 28, TRUE);
+        MoveWindow(wing_target_usb_, control_x + 174, PageY(wing_page_state_, 236), 150, 28, TRUE);
+        MoveWindow(wing_pair_label_, label_x, PageY(wing_page_state_, 292), 170, 28, TRUE);
+        MoveWindow(wing_pair_1_, control_x, PageY(wing_page_state_, 290), 110, 28, TRUE);
+        MoveWindow(wing_pair_3_, control_x + 120, PageY(wing_page_state_, 290), 110, 28, TRUE);
+        MoveWindow(wing_pair_5_, control_x + 240, PageY(wing_page_state_, 290), 110, 28, TRUE);
+        MoveWindow(wing_pair_7_, control_x + 360, PageY(wing_page_state_, 290), 110, 28, TRUE);
+        MoveWindow(wing_follow_label_, label_x, PageY(wing_page_state_, 346), 170, 28, TRUE);
+        MoveWindow(wing_follow_off_, control_x, PageY(wing_page_state_, 344), 84, 28, TRUE);
+        MoveWindow(wing_follow_on_, control_x + 92, PageY(wing_page_state_, 344), 84, 28, TRUE);
+        MoveWindow(wing_placeholder_body_, control_x, PageY(wing_page_state_, 400), page_width - control_x - 40, 92, TRUE);
+        MoveWindow(apply_recorder_button_, control_x, PageY(wing_page_state_, 514), 230, 40, TRUE);
+        MoveWindow(discard_recorder_button_, control_x + 244, PageY(wing_page_state_, 514), 140, 40, TRUE);
 
-        MoveWindow(tab_status_control_, status_chip_x, PageY(control_page_state_, 28), status_chip_w, 28, TRUE);
-        MoveWindow(control_placeholder_body_, page_margin, PageY(control_page_state_, 84), content_w - 10, 128, TRUE);
+        MoveWindow(control_intro_, page_margin, PageY(control_page_state_, 28), content_w - 10, 74, TRUE);
+        MoveWindow(control_section_icon_, page_margin, PageY(control_page_state_, 128), 18, 18, TRUE);
+        MoveWindow(control_section_header_, page_margin + 26, PageY(control_page_state_, 122), 380, 34, TRUE);
+        MoveWindow(tab_status_control_, status_chip_x, PageY(control_page_state_, 122), status_chip_w, 28, TRUE);
+        MoveWindow(control_enable_label_, label_x, PageY(control_page_state_, 184), 180, 28, TRUE);
+        MoveWindow(midi_actions_off_, control_x, PageY(control_page_state_, 182), 84, 28, TRUE);
+        MoveWindow(midi_actions_on_, control_x + 92, PageY(control_page_state_, 182), 84, 28, TRUE);
+        MoveWindow(midi_summary_, control_x, PageY(control_page_state_, 236), page_width - control_x - 40, 58, TRUE);
+        MoveWindow(midi_detail_, control_x, PageY(control_page_state_, 308), page_width - control_x - 40, 74, TRUE);
+        MoveWindow(warning_layer_label_, label_x, PageY(control_page_state_, 406), 180, 28, TRUE);
+        MoveWindow(warning_layer_combo_, control_x, PageY(control_page_state_, 402), 190, 260, TRUE);
+        MoveWindow(control_placeholder_body_, control_x, PageY(control_page_state_, 454), page_width - control_x - 40, 92, TRUE);
+        MoveWindow(apply_midi_button_, control_x, PageY(control_page_state_, 568), 210, 40, TRUE);
+        MoveWindow(discard_midi_button_, control_x + 224, PageY(control_page_state_, 568), 140, 40, TRUE);
     }
 
     void ShowActivePage(int tab_index) {
@@ -1214,12 +1431,19 @@ private:
         ShowWindow(page_reaper_, tab_index == 1 ? SW_SHOW : SW_HIDE);
         ShowWindow(page_wing_, tab_index == 2 ? SW_SHOW : SW_HIDE);
         ShowWindow(page_control_, tab_index == 3 ? SW_SHOW : SW_HIDE);
+        current_tab_index_ = tab_index;
+    }
+
+    void SelectTab(int tab_index) {
+        const int button_id = (tab_index == 0) ? kIdTabConsoleButton :
+                              (tab_index == 1) ? kIdTabReaperButton :
+                              (tab_index == 2) ? kIdTabWingButton :
+                                                 kIdTabControlButton;
+        CheckRadioButton(hwnd_, kIdTabConsoleButton, kIdTabControlButton, button_id);
+        ShowActivePage(tab_index);
     }
 
     LRESULT OnNotify(NMHDR* hdr) {
-        if (hdr && hdr->hwndFrom == tab_ && hdr->code == TCN_SELCHANGE) {
-            ShowActivePage(TabCtrl_GetCurSel(tab_));
-        }
         return 0;
     }
 
@@ -1232,6 +1456,18 @@ private:
 
     LRESULT OnCommand(WORD id, WORD notify_code) {
         switch (id) {
+            case kIdTabConsoleButton:
+                SelectTab(0);
+                return 0;
+            case kIdTabReaperButton:
+                SelectTab(1);
+                return 0;
+            case kIdTabWingButton:
+                SelectTab(2);
+                return 0;
+            case kIdTabControlButton:
+                SelectTab(3);
+                return 0;
             case kIdScanButton:
                 RunScan();
                 return 0;
@@ -1264,6 +1500,39 @@ private:
             case kIdToggleSoundcheckButton:
                 OnToggleSoundcheck();
                 return 0;
+            case kIdRecorderEnableOff:
+            case kIdRecorderEnableOn:
+            case kIdRecorderTargetWLive:
+            case kIdRecorderTargetUsb:
+            case kIdRecorderPair1:
+            case kIdRecorderPair3:
+            case kIdRecorderPair5:
+            case kIdRecorderPair7:
+            case kIdRecorderFollowOff:
+            case kIdRecorderFollowOn:
+                OnRecorderSettingsChanged();
+                return 0;
+            case kIdApplyRecorderButton:
+                OnApplyRecorderSettings();
+                return 0;
+            case kIdDiscardRecorderButton:
+                OnDiscardRecorderSettings();
+                return 0;
+            case kIdMidiActionsOff:
+            case kIdMidiActionsOn:
+                OnMidiActionsChanged();
+                return 0;
+            case kIdWarningLayerCombo:
+                if (notify_code == CBN_SELCHANGE) {
+                    OnMidiActionsChanged();
+                }
+                return 0;
+            case kIdApplyMidiButton:
+                OnApplyMidiActions();
+                return 0;
+            case kIdDiscardMidiButton:
+                OnDiscardMidiActions();
+                return 0;
             default:
                 return 0;
         }
@@ -1275,19 +1544,11 @@ private:
         COLORREF text_color = GetSysColor(COLOR_WINDOWTEXT);
         if (id == kIdHeaderConsoleStatus) {
             text_color = current_snapshot_.console.color;
-        } else if (id == kIdHeaderConsoleIcon) {
-            text_color = current_snapshot_.console.color;
         } else if (id == kIdHeaderValidationStatus) {
-            text_color = current_snapshot_.validation.color;
-        } else if (id == kIdHeaderValidationIcon) {
             text_color = current_snapshot_.validation.color;
         } else if (id == kIdHeaderRecorderStatus) {
             text_color = current_snapshot_.recorder.color;
-        } else if (id == kIdHeaderRecorderIcon) {
-            text_color = current_snapshot_.recorder.color;
         } else if (id == kIdHeaderMidiStatus) {
-            text_color = current_snapshot_.midi.color;
-        } else if (id == kIdHeaderMidiIcon) {
             text_color = current_snapshot_.midi.color;
         } else if (id == kIdConsoleStatusChip) {
             text_color = current_snapshot_.console_tab.color;
@@ -1321,6 +1582,12 @@ private:
             text_color = RGB(28, 114, 184);
         }
         SetTextColor(hdc, text_color);
+        if (control == header_console_icon_ ||
+            control == header_validation_icon_ ||
+            control == header_recorder_icon_ ||
+            control == header_midi_icon_) {
+            return reinterpret_cast<LRESULT>(status_panel_brush_);
+        }
         if (control == title_ ||
             control == subtitle_) {
             return reinterpret_cast<LRESULT>(banner_brush_);
@@ -1336,6 +1603,42 @@ private:
             return reinterpret_cast<LRESULT>(status_panel_brush_);
         }
         return reinterpret_cast<LRESULT>(body_brush_);
+    }
+
+    void UpdateWingTabUI() {
+        auto& extension = ReaperExtension::Instance();
+        std::wstring detail;
+        if (recorder_settings_dirty_) {
+            detail = L"Recorder coordination changes are staged. Apply them to update the target recorder, the MAIN source pair, and follow behavior.";
+        } else if (!extension.GetConfig().recorder_coordination_enabled) {
+            detail = L"Recorder coordination is off. Turn Recorder Control on to prepare a Wing recorder and optionally follow auto-trigger recordings.";
+        } else if (!extension.IsConnected()) {
+            detail = L"Recorder coordination can be staged now, but a connected Wing is required before recorder routing can actually be pushed.";
+        } else {
+            detail = L"Recorder coordination is aligned with the current setup and ready to be used.";
+        }
+        SetWindowTextW(wing_placeholder_body_, detail.c_str());
+        EnableWindow(apply_recorder_button_, recorder_settings_dirty_ ? TRUE : FALSE);
+        EnableWindow(discard_recorder_button_, recorder_settings_dirty_ ? TRUE : FALSE);
+    }
+
+    void UpdateControlTabUI() {
+        auto& extension = ReaperExtension::Instance();
+        std::wstring summary = midi_actions_dirty_
+            ? (pending_midi_actions_enabled_ ? L"Pending control integration enable." : L"Pending control integration disable.")
+            : L"No pending MIDI shortcut changes.";
+        std::wstring detail;
+        if (midi_actions_dirty_) {
+            detail = L"These changes stay staged until you apply them. When enabled, Wing user controls can trigger REAPER transport and warning feedback.";
+        } else if (extension.IsMidiActionsEnabled()) {
+            detail = L"Wing control integration is active. Warning flash layer and transport mappings are using the applied settings.";
+        } else {
+            detail = L"MIDI shortcuts are disabled. Enable them after live setup is validated if you want hands-on transport control from the console.";
+        }
+        SetWindowTextW(midi_summary_, summary.c_str());
+        SetWindowTextW(midi_detail_, detail.c_str());
+        EnableWindow(apply_midi_button_, midi_actions_dirty_ ? TRUE : FALSE);
+        EnableWindow(discard_midi_button_, midi_actions_dirty_ ? TRUE : FALSE);
     }
 
     void RefreshAll() {
@@ -1360,6 +1663,10 @@ private:
         update_text(header_validation_status_, snapshot.validation.text);
         update_text(header_recorder_status_, snapshot.recorder.text);
         update_text(header_midi_status_, snapshot.midi.text);
+        SendMessageW(header_console_icon_, STM_SETICON, reinterpret_cast<WPARAM>(StatusIconForVisual(snapshot.console)), 0);
+        SendMessageW(header_validation_icon_, STM_SETICON, reinterpret_cast<WPARAM>(StatusIconForVisual(snapshot.validation)), 0);
+        SendMessageW(header_recorder_icon_, STM_SETICON, reinterpret_cast<WPARAM>(StatusIconForVisual(snapshot.recorder)), 0);
+        SendMessageW(header_midi_icon_, STM_SETICON, reinterpret_cast<WPARAM>(StatusIconForVisual(snapshot.midi)), 0);
         update_text(tab_status_console_, snapshot.console_tab.text);
         update_text(tab_status_reaper_, snapshot.reaper_tab.text);
         update_text(tab_status_wing_, snapshot.wing_tab.text);
@@ -1369,6 +1676,8 @@ private:
         update_text(footer_status_, snapshot.footer);
         update_text(apply_setup_button_, snapshot.apply_label);
         update_text(toggle_soundcheck_button_, snapshot.toggle_label);
+        UpdateWingTabUI();
+        UpdateControlTabUI();
         EnableWindow(apply_setup_button_, snapshot.can_apply ? TRUE : FALSE);
         EnableWindow(discard_setup_button_, snapshot.can_discard ? TRUE : FALSE);
         EnableWindow(toggle_soundcheck_button_, snapshot.can_toggle ? TRUE : FALSE);
@@ -1842,6 +2151,122 @@ private:
         RefreshAll();
     }
 
+    void SyncPendingSettingsFromConfig() {
+        const auto& config = ReaperExtension::Instance().GetConfig();
+        pending_recorder_enabled_ = config.recorder_coordination_enabled;
+        pending_recorder_target_usb_ = (config.recorder_target == "USBREC");
+        pending_recorder_follow_ = config.sd_auto_record_with_reaper;
+        pending_recorder_pair_left_ = std::clamp(std::max(1, config.sd_lr_left_input), 1, 7);
+        if ((pending_recorder_pair_left_ % 2) == 0) {
+            --pending_recorder_pair_left_;
+        }
+        pending_midi_actions_enabled_ = ReaperExtension::Instance().IsMidiActionsEnabled();
+        pending_warning_layer_ = std::clamp(config.warning_flash_cc_layer, 1, 16);
+        recorder_settings_dirty_ = false;
+        midi_actions_dirty_ = false;
+    }
+
+    void SyncWingControlsFromPending() {
+        CheckRadioButton(page_wing_, kIdRecorderEnableOff, kIdRecorderEnableOn,
+                         pending_recorder_enabled_ ? kIdRecorderEnableOn : kIdRecorderEnableOff);
+        CheckRadioButton(page_wing_, kIdRecorderTargetWLive, kIdRecorderTargetUsb,
+                         pending_recorder_target_usb_ ? kIdRecorderTargetUsb : kIdRecorderTargetWLive);
+        const int pair_id = (pending_recorder_pair_left_ <= 1) ? kIdRecorderPair1 :
+                            (pending_recorder_pair_left_ <= 3) ? kIdRecorderPair3 :
+                            (pending_recorder_pair_left_ <= 5) ? kIdRecorderPair5 :
+                                                                kIdRecorderPair7;
+        CheckRadioButton(page_wing_, kIdRecorderPair1, kIdRecorderPair7, pair_id);
+        CheckRadioButton(page_wing_, kIdRecorderFollowOff, kIdRecorderFollowOn,
+                         pending_recorder_follow_ ? kIdRecorderFollowOn : kIdRecorderFollowOff);
+    }
+
+    void SyncControlTabFromPending() {
+        CheckRadioButton(page_control_, kIdMidiActionsOff, kIdMidiActionsOn,
+                         pending_midi_actions_enabled_ ? kIdMidiActionsOn : kIdMidiActionsOff);
+        SendMessageW(warning_layer_combo_, CB_SETCURSEL, std::max(0, pending_warning_layer_ - 1), 0);
+    }
+
+    void OnRecorderSettingsChanged() {
+        pending_recorder_enabled_ = (IsDlgButtonChecked(page_wing_, kIdRecorderEnableOn) == BST_CHECKED);
+        pending_recorder_target_usb_ = (IsDlgButtonChecked(page_wing_, kIdRecorderTargetUsb) == BST_CHECKED);
+        pending_recorder_follow_ = (IsDlgButtonChecked(page_wing_, kIdRecorderFollowOn) == BST_CHECKED);
+        pending_recorder_pair_left_ = (IsDlgButtonChecked(page_wing_, kIdRecorderPair7) == BST_CHECKED) ? 7 :
+                                      (IsDlgButtonChecked(page_wing_, kIdRecorderPair5) == BST_CHECKED) ? 5 :
+                                      (IsDlgButtonChecked(page_wing_, kIdRecorderPair3) == BST_CHECKED) ? 3 : 1;
+        const auto& config = ReaperExtension::Instance().GetConfig();
+        recorder_settings_dirty_ =
+            pending_recorder_enabled_ != config.recorder_coordination_enabled ||
+            pending_recorder_target_usb_ != (config.recorder_target == "USBREC") ||
+            pending_recorder_follow_ != config.sd_auto_record_with_reaper ||
+            pending_recorder_pair_left_ != std::max(1, config.sd_lr_left_input);
+        footer_message_ = recorder_settings_dirty_
+            ? L"Recorder coordination changes staged."
+            : L"Recorder coordination matches the applied settings.";
+        RefreshAll();
+    }
+
+    void OnApplyRecorderSettings() {
+        auto& extension = ReaperExtension::Instance();
+        auto& config = extension.GetConfig();
+        config.recorder_coordination_enabled = pending_recorder_enabled_;
+        config.sd_lr_route_enabled = pending_recorder_enabled_;
+        config.recorder_target = pending_recorder_target_usb_ ? "USBREC" : "WLIVE";
+        config.sd_auto_record_with_reaper = pending_recorder_follow_;
+        config.sd_lr_group = "MAIN";
+        config.sd_lr_left_input = pending_recorder_pair_left_;
+        config.sd_lr_right_input = pending_recorder_pair_left_ + 1;
+        SaveConfigIfPossible(extension);
+        extension.ApplyAutoRecordSettings();
+        if (extension.IsConnected() && config.recorder_coordination_enabled) {
+            extension.ApplyRecorderRoutingNoDialog();
+        }
+        recorder_settings_dirty_ = false;
+        footer_message_ = L"Recorder coordination settings applied.";
+        RefreshAll();
+    }
+
+    void OnDiscardRecorderSettings() {
+        SyncPendingSettingsFromConfig();
+        SyncWingControlsFromPending();
+        footer_message_ = L"Recorder coordination changes discarded.";
+        RefreshAll();
+    }
+
+    void OnMidiActionsChanged() {
+        pending_midi_actions_enabled_ = (IsDlgButtonChecked(page_control_, kIdMidiActionsOn) == BST_CHECKED);
+        const LRESULT selection = SendMessageW(warning_layer_combo_, CB_GETCURSEL, 0, 0);
+        pending_warning_layer_ = (selection >= 0) ? static_cast<int>(selection) + 1 : 1;
+        auto& extension = ReaperExtension::Instance();
+        const auto& config = extension.GetConfig();
+        midi_actions_dirty_ =
+            pending_midi_actions_enabled_ != extension.IsMidiActionsEnabled() ||
+            pending_warning_layer_ != config.warning_flash_cc_layer;
+        footer_message_ = midi_actions_dirty_
+            ? L"Control integration changes staged."
+            : L"Control integration matches the applied settings.";
+        RefreshAll();
+    }
+
+    void OnApplyMidiActions() {
+        auto& extension = ReaperExtension::Instance();
+        extension.GetConfig().warning_flash_cc_layer = pending_warning_layer_;
+        SaveConfigIfPossible(extension);
+        extension.EnableMidiActions(pending_midi_actions_enabled_);
+        if (pending_midi_actions_enabled_ && extension.IsConnected()) {
+            extension.SyncMidiActionsToWing();
+        }
+        midi_actions_dirty_ = false;
+        footer_message_ = L"Control integration settings applied.";
+        RefreshAll();
+    }
+
+    void OnDiscardMidiActions() {
+        SyncPendingSettingsFromConfig();
+        SyncControlTabFromPending();
+        footer_message_ = L"Control integration changes discarded.";
+        RefreshAll();
+    }
+
     HWND hwnd_ = nullptr;
     HWND banner_group_ = nullptr;
     HWND status_group_ = nullptr;
@@ -1849,6 +2274,11 @@ private:
     HWND title_ = nullptr;
     HWND subtitle_ = nullptr;
     HWND tab_ = nullptr;
+    HWND page_frame_ = nullptr;
+    HWND tab_button_console_ = nullptr;
+    HWND tab_button_reaper_ = nullptr;
+    HWND tab_button_wing_ = nullptr;
+    HWND tab_button_control_ = nullptr;
     HWND header_console_icon_ = nullptr;
     HWND header_console_status_ = nullptr;
     HWND header_validation_icon_ = nullptr;
@@ -1866,6 +2296,7 @@ private:
     HWND tab_status_wing_ = nullptr;
     HWND tab_status_control_ = nullptr;
     HWND console_intro_ = nullptr;
+    HWND console_section_icon_ = nullptr;
     HWND console_section_header_ = nullptr;
     HWND console_label_ = nullptr;
     HWND console_help_discovery_ = nullptr;
@@ -1873,13 +2304,46 @@ private:
     HWND console_help_manual_ = nullptr;
     HWND console_footer_ = nullptr;
     HWND reaper_intro_ = nullptr;
+    HWND reaper_section_icon_ = nullptr;
     HWND reaper_section_header_ = nullptr;
     HWND reaper_output_label_ = nullptr;
     HWND reaper_output_help_ = nullptr;
     HWND reaper_toggle_help_ = nullptr;
     HWND auto_trigger_header_ = nullptr;
+    HWND auto_trigger_section_icon_ = nullptr;
     HWND auto_trigger_detail_ = nullptr;
     HWND auto_trigger_hint_ = nullptr;
+    HWND wing_intro_ = nullptr;
+    HWND wing_section_icon_ = nullptr;
+    HWND wing_section_header_ = nullptr;
+    HWND wing_enable_label_ = nullptr;
+    HWND wing_enable_off_ = nullptr;
+    HWND wing_enable_on_ = nullptr;
+    HWND wing_target_label_ = nullptr;
+    HWND wing_target_wlive_ = nullptr;
+    HWND wing_target_usb_ = nullptr;
+    HWND wing_pair_label_ = nullptr;
+    HWND wing_pair_1_ = nullptr;
+    HWND wing_pair_3_ = nullptr;
+    HWND wing_pair_5_ = nullptr;
+    HWND wing_pair_7_ = nullptr;
+    HWND wing_follow_label_ = nullptr;
+    HWND wing_follow_off_ = nullptr;
+    HWND wing_follow_on_ = nullptr;
+    HWND apply_recorder_button_ = nullptr;
+    HWND discard_recorder_button_ = nullptr;
+    HWND control_intro_ = nullptr;
+    HWND control_section_icon_ = nullptr;
+    HWND control_section_header_ = nullptr;
+    HWND control_enable_label_ = nullptr;
+    HWND midi_actions_off_ = nullptr;
+    HWND midi_actions_on_ = nullptr;
+    HWND midi_summary_ = nullptr;
+    HWND midi_detail_ = nullptr;
+    HWND warning_layer_label_ = nullptr;
+    HWND warning_layer_combo_ = nullptr;
+    HWND apply_midi_button_ = nullptr;
+    HWND discard_midi_button_ = nullptr;
     HWND wing_placeholder_body_ = nullptr;
     HWND control_placeholder_body_ = nullptr;
     HWND wing_combo_ = nullptr;
@@ -1925,6 +2389,15 @@ private:
     std::string latest_validation_details_;
     std::wstring footer_message_;
     StatusSnapshot current_snapshot_;
+    int current_tab_index_ = 0;
+    bool pending_recorder_enabled_ = false;
+    bool pending_recorder_target_usb_ = false;
+    bool pending_recorder_follow_ = false;
+    int pending_recorder_pair_left_ = 1;
+    bool recorder_settings_dirty_ = false;
+    bool pending_midi_actions_enabled_ = false;
+    int pending_warning_layer_ = 1;
+    bool midi_actions_dirty_ = false;
 };
 
 WingConnectorWindowsDialog* WingConnectorWindowsDialog::instance_ = nullptr;
