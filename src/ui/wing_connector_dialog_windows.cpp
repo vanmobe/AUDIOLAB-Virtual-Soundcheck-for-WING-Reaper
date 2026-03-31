@@ -320,6 +320,16 @@ int ButtonWidthForLabel(HWND control, int min_width, int padding = 34) {
     return std::max(min_width, MeasureTextWidth(control, ReadWindowText(control)) + padding);
 }
 
+int MultiLineTextHeight(HWND control, int width, const std::wstring& text);
+
+int StaticHeightForText(HWND control, int width, int min_height, int padding = 0) {
+    if (!control) {
+        return min_height;
+    }
+    const int measured = MultiLineTextHeight(control, width, ReadWindowText(control));
+    return std::max(min_height, measured + padding);
+}
+
 int MultiLineTextHeight(HWND control, int width, const std::wstring& text) {
     if (!control) {
         return 0;
@@ -386,7 +396,7 @@ public:
             kSourceDialogClassName,
             L"Review Sources For Live Setup",
             WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-            CW_USEDEFAULT, CW_USEDEFAULT, 980, 790,
+            CW_USEDEFAULT, CW_USEDEFAULT, 1120, 860,
             owner_,
             nullptr,
             g_hInst,
@@ -459,10 +469,10 @@ private:
         HFONT font = CreateUiFont(-22);
         HFONT title_font = CreateUiFont(-22, FW_SEMIBOLD);
 
-        CreateWindowW(L"STATIC",
+        HWND intro = CreateWindowW(L"STATIC",
                       L"Choose which channels, buses, or matrices should be included in the next apply. No routing changes happen until you confirm.",
                       WS_CHILD | WS_VISIBLE,
-                      24, 18, 910, 54,
+                      24, 20, 1048, 70,
                       hwnd_,
                       nullptr,
                       g_hInst,
@@ -472,57 +482,60 @@ private:
                                    L"LISTBOX",
                                    nullptr,
                                    WS_CHILD | WS_VISIBLE | LBS_EXTENDEDSEL | WS_VSCROLL | LBS_NOTIFY,
-                                   24, 86, 910, 500,
+                                   24, 104, 1048, 530,
                                    hwnd_,
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceList)),
                                    g_hInst,
                                    nullptr);
 
         HWND select_all = CreateWindowW(L"BUTTON", L"Select All", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                      24, 608, 164, 40, hwnd_,
+                      24, 658, 164, 42, hwnd_,
                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceSelectAll)), g_hInst, nullptr);
         HWND channels_only = CreateWindowW(L"BUTTON", L"Channels Only", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                      204, 608, 194, 40, hwnd_,
+                      204, 658, 194, 42, hwnd_,
                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceSelectChannels)), g_hInst, nullptr);
         HWND clear_button = CreateWindowW(L"BUTTON", L"Clear", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                      414, 608, 118, 40, hwnd_,
+                      414, 658, 118, 42, hwnd_,
                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceClear)), g_hInst, nullptr);
 
         count_label_ = CreateWindowW(L"STATIC", L"0 sources selected", WS_CHILD | WS_VISIBLE,
-                                     554, 614, 230, 32, hwnd_,
+                                     572, 664, 340, 34, hwnd_,
                                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceCount)), g_hInst, nullptr);
 
         CreateWindowW(L"BUTTON", L"Soundcheck", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                      24, 664, 160, 32, hwnd_,
+                      24, 724, 174, 34, hwnd_,
                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceModeSoundcheck)), g_hInst, nullptr);
         CreateWindowW(L"BUTTON", L"Record", WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON,
-                      198, 664, 120, 32, hwnd_,
+                      214, 724, 140, 34, hwnd_,
                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceModeRecord)), g_hInst, nullptr);
         replace_checkbox_ = CreateWindowW(L"BUTTON", L"Replace managed REAPER tracks", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                                          24, 708, 470, 34, hwnd_,
+                                          24, 770, 520, 36, hwnd_,
                                           reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceReplace)), g_hInst, nullptr);
 
         HWND apply_draft = CreateWindowW(L"BUTTON", L"Apply Draft", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-                      652, 704, 184, 44, hwnd_,
+                      812, 764, 170, 46, hwnd_,
                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceOk)), g_hInst, nullptr);
         HWND cancel_button = CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                      850, 704, 92, 44, hwnd_,
+                      998, 764, 110, 46, hwnd_,
                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSourceCancel)), g_hInst, nullptr);
 
         SetWindowFontRecursive(hwnd_, font);
+        SendMessageW(intro, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SendMessageW(count_label_, WM_SETFONT, reinterpret_cast<WPARAM>(title_font), TRUE);
         SendMessageW(listbox_, LB_SETITEMHEIGHT, 0, 30);
-        const int select_all_width = ButtonWidthForLabel(select_all, 164);
-        const int channels_only_width = ButtonWidthForLabel(channels_only, 194);
-        const int clear_width = ButtonWidthForLabel(clear_button, 118);
-        const int apply_width = ButtonWidthForLabel(apply_draft, 184);
-        const int cancel_width = ButtonWidthForLabel(cancel_button, 104);
-        MoveWindow(select_all, 24, 608, select_all_width, 40, TRUE);
-        MoveWindow(channels_only, 24 + select_all_width + 16, 608, channels_only_width, 40, TRUE);
-        MoveWindow(clear_button, 24 + select_all_width + channels_only_width + 32, 608, clear_width, 40, TRUE);
-        MoveWindow(count_label_, 24 + select_all_width + channels_only_width + clear_width + 56, 614, 280, 32, TRUE);
-        MoveWindow(apply_draft, 652, 704, apply_width, 44, TRUE);
-        MoveWindow(cancel_button, 652 + apply_width + 16, 704, cancel_width, 44, TRUE);
+        const int intro_height = StaticHeightForText(intro, 1048, 52, 8);
+        MoveWindow(intro, 24, 20, 1048, intro_height, TRUE);
+        const int select_all_width = ButtonWidthForLabel(select_all, 172, 42);
+        const int channels_only_width = ButtonWidthForLabel(channels_only, 206, 42);
+        const int clear_width = ButtonWidthForLabel(clear_button, 126, 42);
+        const int apply_width = ButtonWidthForLabel(apply_draft, 190, 44);
+        const int cancel_width = ButtonWidthForLabel(cancel_button, 120, 42);
+        MoveWindow(select_all, 24, 658, select_all_width, 42, TRUE);
+        MoveWindow(channels_only, 24 + select_all_width + 16, 658, channels_only_width, 42, TRUE);
+        MoveWindow(clear_button, 24 + select_all_width + channels_only_width + 32, 658, clear_width, 42, TRUE);
+        MoveWindow(count_label_, 24 + select_all_width + channels_only_width + clear_width + 58, 662, 360, 34, TRUE);
+        MoveWindow(apply_draft, 812, 764, apply_width, 46, TRUE);
+        MoveWindow(cancel_button, 812 + apply_width + 16, 764, cancel_width, 46, TRUE);
         CheckRadioButton(hwnd_,
                          kIdSourceModeSoundcheck,
                          kIdSourceModeRecord,
@@ -1353,11 +1366,11 @@ private:
 
     LRESULT OnCreate() {
         font_ = CreateUiFont(-24);
-        bold_font_ = CreateUiFont(-28, FW_SEMIBOLD);
+        bold_font_ = CreateUiFont(-34, FW_SEMIBOLD);
         small_bold_font_ = CreateUiFont(-22, FW_SEMIBOLD);
-        section_font_ = CreateUiFont(-24, FW_SEMIBOLD);
+        section_font_ = CreateUiFont(-26, FW_SEMIBOLD);
         tab_font_ = CreateUiFont(-22, FW_SEMIBOLD);
-        subtle_font_ = CreateUiFont(-20);
+        subtle_font_ = CreateUiFont(-21);
         mono_font_ = CreateUiFont(-22, FW_NORMAL, true);
         icon_font_ = CreateSymbolFont(-26, FW_SEMIBOLD);
         banner_brush_ = CreateSolidBrush(RGB(232, 234, 238));
@@ -1369,14 +1382,14 @@ private:
                                       12, 10, 820, 156, hwnd_,
                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdBannerGroup)), g_hInst, nullptr);
         logo_ = CreateWindowW(kLogoClassName, L"", WS_CHILD | WS_VISIBLE,
-                              36, 34, 120, 120, hwnd_,
+                              36, 30, 144, 144, hwnd_,
                               reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdLogo)), g_hInst, nullptr);
         title_ = CreateWindowW(L"STATIC", L"WINGuard", WS_CHILD | WS_VISIBLE,
-                               176, 48, 260, 32, hwnd_,
+                               194, 48, 360, 44, hwnd_,
                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdTitle)), g_hInst, nullptr);
         subtitle_ = CreateWindowW(L"STATIC", L"Guard every take. Faster setup, safer record(w)ing!",
                                   WS_CHILD | WS_VISIBLE,
-                                  176, 90, 460, 28, hwnd_,
+                                  194, 102, 520, 34, hwnd_,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSubtitle)), g_hInst, nullptr);
 
         status_group_ = CreateWindowW(L"STATIC", nullptr, WS_CHILD | WS_VISIBLE,
@@ -1930,45 +1943,45 @@ private:
     void LayoutControls(int client_width, int client_height) {
         const int outer_margin = 16;
         const int header_y = 16;
-        const int header_height = 188;
+        const int header_height = 214;
         const int header_width = client_width - (outer_margin * 2);
-        const int status_panel_width = std::min(430, std::max(360, header_width / 3));
-        const int status_panel_height = 124;
-        const int status_panel_x = outer_margin + header_width - status_panel_width - 20;
-        const int status_panel_y = header_y + 24;
+        const int status_panel_width = std::min(470, std::max(380, header_width / 3));
+        const int status_panel_height = 132;
+        const int status_panel_x = outer_margin + header_width - status_panel_width - 24;
+        const int status_panel_y = header_y + 28;
         banner_rect_ = RECT{outer_margin, header_y, outer_margin + header_width, header_y + header_height};
         status_panel_rect_ = RECT{status_panel_x, status_panel_y, status_panel_x + status_panel_width, status_panel_y + status_panel_height};
 
         MoveWindow(banner_group_, outer_margin, header_y, header_width, header_height, TRUE);
-        MoveWindow(logo_, outer_margin + 22, header_y + 30, 124, 124, TRUE);
-        MoveWindow(title_, outer_margin + 168, header_y + 54, 360, 34, TRUE);
-        MoveWindow(subtitle_, outer_margin + 168, header_y + 98, std::max(420, header_width - status_panel_width - 220), 42, TRUE);
+        MoveWindow(logo_, outer_margin + 24, header_y + 28, 144, 144, TRUE);
+        MoveWindow(title_, outer_margin + 194, header_y + 44, 420, 44, TRUE);
+        MoveWindow(subtitle_, outer_margin + 194, header_y + 100, std::max(460, header_width - status_panel_width - 260), 46, TRUE);
         MoveWindow(status_group_, status_panel_x, status_panel_y, status_panel_width, status_panel_height, TRUE);
 
         const int status_icon_x = status_panel_x + 16;
-        const int status_text_x = status_panel_x + 40;
-        const int status_text_w = status_panel_width - 52;
+        const int status_text_x = status_panel_x + 44;
+        const int status_text_w = status_panel_width - 60;
         MoveWindow(header_console_icon_, status_icon_x, status_panel_y + 14, 24, 24, TRUE);
-        MoveWindow(header_console_status_, status_text_x + 4, status_panel_y + 14, status_text_w - 4, 24, TRUE);
-        MoveWindow(header_validation_icon_, status_icon_x, status_panel_y + 42, 24, 24, TRUE);
-        MoveWindow(header_validation_status_, status_text_x + 4, status_panel_y + 42, status_text_w - 4, 24, TRUE);
-        MoveWindow(header_recorder_icon_, status_icon_x, status_panel_y + 70, 24, 24, TRUE);
-        MoveWindow(header_recorder_status_, status_text_x + 4, status_panel_y + 70, status_text_w - 4, 24, TRUE);
-        MoveWindow(header_midi_icon_, status_icon_x, status_panel_y + 98, 24, 24, TRUE);
-        MoveWindow(header_midi_status_, status_text_x + 4, status_panel_y + 98, status_text_w - 4, 24, TRUE);
+        MoveWindow(header_console_status_, status_text_x, status_panel_y + 12, status_text_w, 26, TRUE);
+        MoveWindow(header_validation_icon_, status_icon_x, status_panel_y + 44, 24, 24, TRUE);
+        MoveWindow(header_validation_status_, status_text_x, status_panel_y + 42, status_text_w, 26, TRUE);
+        MoveWindow(header_recorder_icon_, status_icon_x, status_panel_y + 74, 24, 24, TRUE);
+        MoveWindow(header_recorder_status_, status_text_x, status_panel_y + 72, status_text_w, 26, TRUE);
+        MoveWindow(header_midi_icon_, status_icon_x, status_panel_y + 104, 24, 24, TRUE);
+        MoveWindow(header_midi_status_, status_text_x, status_panel_y + 102, status_text_w, 26, TRUE);
 
-        const int footer_height = 30;
+        const int footer_height = 34;
         const int footer_y = client_height - footer_height - 14;
         MoveWindow(footer_status_, outer_margin + 4, footer_y, client_width - (outer_margin * 2) - 8, footer_height, TRUE);
 
         const int tab_y = header_y + header_height + 14;
-        const int tab_button_height = 42;
+        const int tab_button_height = 46;
         const int tab_gap = 10;
         const int page_y = tab_y + tab_button_height + 8;
         const int page_height = std::max(520, footer_y - page_y - 10);
-        const int console_w = std::max(180, header_width / 5);
-        const int reaper_w = std::max(180, header_width / 5);
-        const int wing_w = std::max(160, header_width / 6);
+        const int console_w = std::max(190, ButtonWidthForLabel(tab_button_console_, 190, 56));
+        const int reaper_w = std::max(180, ButtonWidthForLabel(tab_button_reaper_, 180, 56));
+        const int wing_w = std::max(160, ButtonWidthForLabel(tab_button_wing_, 160, 56));
         const int control_w = std::max(320, header_width - console_w - reaper_w - wing_w - (tab_gap * 3));
         MoveWindow(tab_button_console_, outer_margin, tab_y, console_w, tab_button_height, TRUE);
         MoveWindow(tab_button_reaper_, outer_margin + console_w + tab_gap, tab_y, reaper_w, tab_button_height, TRUE);
@@ -1986,129 +1999,211 @@ private:
         MoveWindow(page_wing_, page_x, inner_page_y, page_width, inner_page_height, TRUE);
         MoveWindow(page_control_, page_x, inner_page_y, page_width, inner_page_height, TRUE);
 
-        const int page_margin = 30;
-        const int label_x = 34;
-        const int control_x = 260;
+        const int page_margin = 34;
+        const int label_x = 40;
+        const int control_x = 290;
         const int page_right = page_width - page_margin;
-        const int status_chip_w = 180;
+        const int status_chip_w = 200;
         const int status_chip_x = page_right - status_chip_w;
         const int content_w = page_width - (page_margin * 2);
         const int viewport_height = page_height;
-
-        console_page_state_.content_height = 660;
-        reaper_page_state_.content_height = 1520;
-        wing_page_state_.content_height = 620;
-        control_page_state_.content_height = 1040;
+        console_page_state_.content_height = std::max(viewport_height, 760);
+        reaper_page_state_.content_height = std::max(viewport_height, 1680);
+        wing_page_state_.content_height = std::max(viewport_height, 780);
+        control_page_state_.content_height = std::max(viewport_height, 1150);
         UpdatePageScroll(console_page_state_, viewport_height);
         UpdatePageScroll(reaper_page_state_, viewport_height);
         UpdatePageScroll(wing_page_state_, viewport_height);
         UpdatePageScroll(control_page_state_, viewport_height);
 
-        MoveWindow(console_intro_, page_margin, PageY(console_page_state_, 28), content_w - 10, 82, TRUE);
-        MoveWindow(console_section_icon_, page_margin, PageY(console_page_state_, 132), 22, 22, TRUE);
-        MoveWindow(console_section_header_, page_margin + 26, PageY(console_page_state_, 128), 330, 34, TRUE);
-        MoveWindow(tab_status_console_, status_chip_x, PageY(console_page_state_, 128), status_chip_w, 28, TRUE);
-        MoveWindow(console_label_, label_x, PageY(console_page_state_, 166), 160, 28, TRUE);
-        MoveWindow(wing_combo_, control_x, PageY(console_page_state_, 160), std::max(360, page_width - control_x - 210), 360, TRUE);
-        MoveWindow(scan_button_, page_width - ButtonWidthForLabel(scan_button_, 132), PageY(console_page_state_, 160), ButtonWidthForLabel(scan_button_, 132), 42, TRUE);
-        MoveWindow(console_help_discovery_, control_x, PageY(console_page_state_, 206), page_width - control_x - 40, 34, TRUE);
-        MoveWindow(console_manual_ip_label_, label_x, PageY(console_page_state_, 272), 160, 28, TRUE);
-        MoveWindow(manual_ip_edit_, control_x, PageY(console_page_state_, 266), std::min(440, page_width - control_x - 250), 34, TRUE);
-        MoveWindow(console_help_manual_, control_x, PageY(console_page_state_, 312), page_width - control_x - 40, 52, TRUE);
-        MoveWindow(connect_button_, page_width - ButtonWidthForLabel(connect_button_, 148), PageY(console_page_state_, 388), ButtonWidthForLabel(connect_button_, 148), 42, TRUE);
-        MoveWindow(console_footer_, page_margin, PageY(console_page_state_, 450), page_width - 220, 72, TRUE);
+        const int standard_text_width = page_width - control_x - 40;
+        const int button_row_gap = 18;
+        const int section_gap = 32;
+        const int line_gap = 16;
 
-        MoveWindow(reaper_intro_, page_margin, PageY(reaper_page_state_, 28), content_w - 10, 96, TRUE);
-        MoveWindow(reaper_section_icon_, page_margin, PageY(reaper_page_state_, 146), 22, 22, TRUE);
-        MoveWindow(reaper_section_header_, page_margin + 26, PageY(reaper_page_state_, 140), 420, 34, TRUE);
-        MoveWindow(tab_status_reaper_, status_chip_x, PageY(reaper_page_state_, 140), status_chip_w, 28, TRUE);
-        MoveWindow(reaper_output_label_, label_x, PageY(reaper_page_state_, 182), 170, 28, TRUE);
-        MoveWindow(output_usb_radio_, control_x, PageY(reaper_page_state_, 176), 96, 32, TRUE);
-        MoveWindow(output_card_radio_, control_x + 112, PageY(reaper_page_state_, 176), 108, 32, TRUE);
-        MoveWindow(reaper_output_help_, control_x, PageY(reaper_page_state_, 220), page_width - control_x - 40, 66, TRUE);
-        MoveWindow(pending_summary_, control_x, PageY(reaper_page_state_, 304), page_width - control_x - 40, 112, TRUE);
-        MoveWindow(readiness_detail_, control_x, PageY(reaper_page_state_, 432), page_width - control_x - 40, 170, TRUE);
+        int console_y = 28;
+        const int console_intro_h = StaticHeightForText(console_intro_, content_w - 10, 72, 10);
+        MoveWindow(console_intro_, page_margin, PageY(console_page_state_, console_y), content_w - 10, console_intro_h, TRUE);
+        console_y += console_intro_h + 26;
+        MoveWindow(console_section_icon_, page_margin, PageY(console_page_state_, console_y + 4), 22, 22, TRUE);
+        MoveWindow(console_section_header_, page_margin + 26, PageY(console_page_state_, console_y), 330, 34, TRUE);
+        MoveWindow(tab_status_console_, status_chip_x, PageY(console_page_state_, console_y), status_chip_w, 30, TRUE);
+        console_y += 52;
+        MoveWindow(console_label_, label_x, PageY(console_page_state_, console_y + 6), 180, 30, TRUE);
+        const int scan_width = ButtonWidthForLabel(scan_button_, 144, 44);
+        const int wing_combo_width = std::max(360, page_width - control_x - scan_width - 64);
+        MoveWindow(wing_combo_, control_x, PageY(console_page_state_, console_y), wing_combo_width, 360, TRUE);
+        MoveWindow(scan_button_, control_x + wing_combo_width + 18, PageY(console_page_state_, console_y), scan_width, 44, TRUE);
+        console_y += 52;
+        const int discovery_h = StaticHeightForText(console_help_discovery_, standard_text_width, 34, 6);
+        MoveWindow(console_help_discovery_, control_x, PageY(console_page_state_, console_y), standard_text_width, discovery_h, TRUE);
+        console_y += discovery_h + line_gap;
+        MoveWindow(console_manual_ip_label_, label_x, PageY(console_page_state_, console_y + 6), 180, 30, TRUE);
+        const int manual_ip_width = std::min(480, page_width - control_x - 240);
+        MoveWindow(manual_ip_edit_, control_x, PageY(console_page_state_, console_y), manual_ip_width, 36, TRUE);
+        console_y += 48;
+        const int manual_h = StaticHeightForText(console_help_manual_, standard_text_width, 52, 8);
+        MoveWindow(console_help_manual_, control_x, PageY(console_page_state_, console_y), standard_text_width, manual_h, TRUE);
+        console_y += manual_h + 24;
+        const int connect_width = ButtonWidthForLabel(connect_button_, 162, 44);
+        MoveWindow(connect_button_, control_x + manual_ip_width - connect_width, PageY(console_page_state_, console_y), connect_width, 44, TRUE);
+        console_y += 62;
+        const int console_footer_h = StaticHeightForText(console_footer_, page_width - 220, 72, 10);
+        MoveWindow(console_footer_, page_margin, PageY(console_page_state_, console_y), page_width - 220, console_footer_h, TRUE);
+        console_page_state_.content_height = console_y + console_footer_h + 48;
+
+        int reaper_y = 28;
+        const int reaper_intro_h = StaticHeightForText(reaper_intro_, content_w - 10, 88, 10);
+        MoveWindow(reaper_intro_, page_margin, PageY(reaper_page_state_, reaper_y), content_w - 10, reaper_intro_h, TRUE);
+        reaper_y += reaper_intro_h + 24;
+        MoveWindow(reaper_section_icon_, page_margin, PageY(reaper_page_state_, reaper_y + 4), 22, 22, TRUE);
+        MoveWindow(reaper_section_header_, page_margin + 26, PageY(reaper_page_state_, reaper_y), 420, 34, TRUE);
+        MoveWindow(tab_status_reaper_, status_chip_x, PageY(reaper_page_state_, reaper_y), status_chip_w, 30, TRUE);
+        reaper_y += 52;
+        MoveWindow(reaper_output_label_, label_x, PageY(reaper_page_state_, reaper_y + 6), 210, 30, TRUE);
+        MoveWindow(output_usb_radio_, control_x, PageY(reaper_page_state_, reaper_y), ButtonWidthForLabel(output_usb_radio_, 96, 38), 34, TRUE);
+        MoveWindow(output_card_radio_, control_x + 126, PageY(reaper_page_state_, reaper_y), ButtonWidthForLabel(output_card_radio_, 108, 38), 34, TRUE);
+        reaper_y += 46;
+        const int reaper_help_h = StaticHeightForText(reaper_output_help_, standard_text_width, 58, 8);
+        MoveWindow(reaper_output_help_, control_x, PageY(reaper_page_state_, reaper_y), standard_text_width, reaper_help_h, TRUE);
+        reaper_y += reaper_help_h + 24;
+        const int pending_h = StaticHeightForText(pending_summary_, standard_text_width, 92, 10);
+        MoveWindow(pending_summary_, control_x, PageY(reaper_page_state_, reaper_y), standard_text_width, pending_h, TRUE);
+        reaper_y += pending_h + 20;
+        const int readiness_h = StaticHeightForText(readiness_detail_, standard_text_width, 128, 10);
+        MoveWindow(readiness_detail_, control_x, PageY(reaper_page_state_, reaper_y), standard_text_width, readiness_h, TRUE);
+        reaper_y += readiness_h + 28;
         const int choose_width = ButtonWidthForLabel(choose_sources_button_, 230);
         const int apply_width = ButtonWidthForLabel(apply_setup_button_, 200);
         const int discard_width = ButtonWidthForLabel(discard_setup_button_, 150);
         const int toggle_width = ButtonWidthForLabel(toggle_soundcheck_button_, 244);
-        MoveWindow(choose_sources_button_, control_x, PageY(reaper_page_state_, 630), choose_width, 44, TRUE);
-        MoveWindow(apply_setup_button_, control_x + choose_width + 14, PageY(reaper_page_state_, 630), apply_width, 44, TRUE);
-        MoveWindow(discard_setup_button_, control_x + choose_width + apply_width + 28, PageY(reaper_page_state_, 630), discard_width, 44, TRUE);
-        MoveWindow(toggle_soundcheck_button_, control_x, PageY(reaper_page_state_, 692), toggle_width, 44, TRUE);
-        MoveWindow(reaper_toggle_help_, control_x, PageY(reaper_page_state_, 748), page_width - control_x - 40, 58, TRUE);
-        MoveWindow(auto_trigger_section_icon_, page_margin, PageY(reaper_page_state_, 858), 22, 22, TRUE);
-        MoveWindow(auto_trigger_header_, page_margin + 26, PageY(reaper_page_state_, 852), 320, 34, TRUE);
-        MoveWindow(auto_trigger_detail_, control_x, PageY(reaper_page_state_, 908), page_width - control_x - 56, 56, TRUE);
-        MoveWindow(auto_trigger_enable_label_, label_x, PageY(reaper_page_state_, 972), 188, 32, TRUE);
+        MoveWindow(choose_sources_button_, control_x, PageY(reaper_page_state_, reaper_y), choose_width, 46, TRUE);
+        MoveWindow(apply_setup_button_, control_x + choose_width + 16, PageY(reaper_page_state_, reaper_y), apply_width, 46, TRUE);
+        MoveWindow(discard_setup_button_, control_x + choose_width + apply_width + 32, PageY(reaper_page_state_, reaper_y), discard_width, 46, TRUE);
+        reaper_y += 64;
+        MoveWindow(toggle_soundcheck_button_, control_x, PageY(reaper_page_state_, reaper_y), toggle_width, 46, TRUE);
+        reaper_y += 62;
+        const int toggle_help_h = StaticHeightForText(reaper_toggle_help_, standard_text_width, 54, 8);
+        MoveWindow(reaper_toggle_help_, control_x, PageY(reaper_page_state_, reaper_y), standard_text_width, toggle_help_h, TRUE);
+        reaper_y += toggle_help_h + section_gap;
+        MoveWindow(auto_trigger_section_icon_, page_margin, PageY(reaper_page_state_, reaper_y + 4), 22, 22, TRUE);
+        MoveWindow(auto_trigger_header_, page_margin + 26, PageY(reaper_page_state_, reaper_y), 360, 34, TRUE);
+        reaper_y += 52;
+        const int auto_detail_h = StaticHeightForText(auto_trigger_detail_, page_width - control_x - 56, 50, 8);
+        MoveWindow(auto_trigger_detail_, control_x, PageY(reaper_page_state_, reaper_y), page_width - control_x - 56, auto_detail_h, TRUE);
+        reaper_y += auto_detail_h + 20;
+        MoveWindow(auto_trigger_enable_label_, label_x, PageY(reaper_page_state_, reaper_y + 6), 210, 32, TRUE);
         const int auto_toggle_width = 110;
-        MoveWindow(auto_trigger_enable_off_, control_x, PageY(reaper_page_state_, 968), auto_toggle_width, 34, TRUE);
-        MoveWindow(auto_trigger_enable_on_, control_x + auto_toggle_width + 18, PageY(reaper_page_state_, 968), auto_toggle_width, 34, TRUE);
-        MoveWindow(auto_trigger_monitor_label_, label_x, PageY(reaper_page_state_, 1024), 188, 32, TRUE);
-        MoveWindow(auto_trigger_monitor_combo_, control_x, PageY(reaper_page_state_, 1018), 380, 260, TRUE);
-        MoveWindow(auto_trigger_mode_label_, label_x, PageY(reaper_page_state_, 1078), 188, 32, TRUE);
+        MoveWindow(auto_trigger_enable_off_, control_x, PageY(reaper_page_state_, reaper_y), auto_toggle_width, 34, TRUE);
+        MoveWindow(auto_trigger_enable_on_, control_x + auto_toggle_width + button_row_gap, PageY(reaper_page_state_, reaper_y), auto_toggle_width, 34, TRUE);
+        reaper_y += 54;
+        MoveWindow(auto_trigger_monitor_label_, label_x, PageY(reaper_page_state_, reaper_y + 6), 210, 32, TRUE);
+        MoveWindow(auto_trigger_monitor_combo_, control_x, PageY(reaper_page_state_, reaper_y), 420, 280, TRUE);
+        reaper_y += 58;
+        MoveWindow(auto_trigger_mode_label_, label_x, PageY(reaper_page_state_, reaper_y + 6), 210, 32, TRUE);
         const int warning_width = ButtonWidthForLabel(auto_trigger_mode_warning_, 154);
         const int record_width = ButtonWidthForLabel(auto_trigger_mode_record_, 144);
-        MoveWindow(auto_trigger_mode_warning_, control_x, PageY(reaper_page_state_, 1072), warning_width, 34, TRUE);
-        MoveWindow(auto_trigger_mode_record_, control_x + warning_width + 18, PageY(reaper_page_state_, 1072), record_width, 34, TRUE);
-        MoveWindow(auto_trigger_threshold_label_, label_x, PageY(reaper_page_state_, 1134), 188, 32, TRUE);
-        MoveWindow(auto_trigger_threshold_edit_, control_x, PageY(reaper_page_state_, 1128), 132, 36, TRUE);
-        MoveWindow(auto_trigger_hold_label_, control_x + 164, PageY(reaper_page_state_, 1134), 138, 32, TRUE);
-        MoveWindow(auto_trigger_hold_edit_, control_x + 314, PageY(reaper_page_state_, 1128), 132, 36, TRUE);
-        MoveWindow(auto_trigger_meter_label_, control_x, PageY(reaper_page_state_, 1180), 380, 30, TRUE);
+        MoveWindow(auto_trigger_mode_warning_, control_x, PageY(reaper_page_state_, reaper_y), warning_width, 34, TRUE);
+        MoveWindow(auto_trigger_mode_record_, control_x + warning_width + button_row_gap, PageY(reaper_page_state_, reaper_y), record_width, 34, TRUE);
+        reaper_y += 56;
+        MoveWindow(auto_trigger_threshold_label_, label_x, PageY(reaper_page_state_, reaper_y + 6), 210, 32, TRUE);
+        MoveWindow(auto_trigger_threshold_edit_, control_x, PageY(reaper_page_state_, reaper_y), 140, 36, TRUE);
+        MoveWindow(auto_trigger_hold_label_, control_x + 170, PageY(reaper_page_state_, reaper_y + 6), 150, 32, TRUE);
+        MoveWindow(auto_trigger_hold_edit_, control_x + 334, PageY(reaper_page_state_, reaper_y), 140, 36, TRUE);
+        reaper_y += 50;
+        MoveWindow(auto_trigger_meter_label_, control_x, PageY(reaper_page_state_, reaper_y), 420, 30, TRUE);
+        reaper_y += 50;
         const int apply_auto_width = ButtonWidthForLabel(apply_auto_trigger_button_, 310);
         const int discard_auto_width = ButtonWidthForLabel(discard_auto_trigger_button_, 170);
-        MoveWindow(apply_auto_trigger_button_, control_x, PageY(reaper_page_state_, 1224), apply_auto_width, 44, TRUE);
-        MoveWindow(discard_auto_trigger_button_, control_x + apply_auto_width + 18, PageY(reaper_page_state_, 1224), discard_auto_width, 44, TRUE);
-        MoveWindow(auto_trigger_hint_, control_x, PageY(reaper_page_state_, 1286), page_width - control_x - 56, 92, TRUE);
+        MoveWindow(apply_auto_trigger_button_, control_x, PageY(reaper_page_state_, reaper_y), apply_auto_width, 46, TRUE);
+        MoveWindow(discard_auto_trigger_button_, control_x + apply_auto_width + button_row_gap, PageY(reaper_page_state_, reaper_y), discard_auto_width, 46, TRUE);
+        reaper_y += 66;
+        const int auto_hint_h = StaticHeightForText(auto_trigger_hint_, page_width - control_x - 56, 72, 8);
+        MoveWindow(auto_trigger_hint_, control_x, PageY(reaper_page_state_, reaper_y), page_width - control_x - 56, auto_hint_h, TRUE);
+        reaper_page_state_.content_height = reaper_y + auto_hint_h + 54;
 
-        MoveWindow(wing_intro_, page_margin, PageY(wing_page_state_, 28), content_w - 10, 74, TRUE);
-        MoveWindow(wing_section_icon_, page_margin, PageY(wing_page_state_, 128), 22, 22, TRUE);
-        MoveWindow(wing_section_header_, page_margin + 26, PageY(wing_page_state_, 122), 340, 34, TRUE);
-        MoveWindow(tab_status_wing_, status_chip_x, PageY(wing_page_state_, 122), status_chip_w, 28, TRUE);
-        MoveWindow(wing_enable_label_, label_x, PageY(wing_page_state_, 184), 148, 28, TRUE);
-        MoveWindow(wing_enable_off_, control_x, PageY(wing_page_state_, 182), 84, 28, TRUE);
-        MoveWindow(wing_enable_on_, control_x + 92, PageY(wing_page_state_, 182), 84, 28, TRUE);
-        MoveWindow(wing_target_label_, label_x, PageY(wing_page_state_, 238), 148, 28, TRUE);
-        MoveWindow(wing_target_wlive_, control_x, PageY(wing_page_state_, 236), 160, 28, TRUE);
-        MoveWindow(wing_target_usb_, control_x + 174, PageY(wing_page_state_, 236), 150, 28, TRUE);
-        MoveWindow(wing_pair_label_, label_x, PageY(wing_page_state_, 292), 148, 28, TRUE);
-        MoveWindow(wing_pair_1_, control_x, PageY(wing_page_state_, 290), 120, 30, TRUE);
-        MoveWindow(wing_pair_3_, control_x + 138, PageY(wing_page_state_, 290), 120, 30, TRUE);
-        MoveWindow(wing_pair_5_, control_x + 276, PageY(wing_page_state_, 290), 120, 30, TRUE);
-        MoveWindow(wing_pair_7_, control_x + 414, PageY(wing_page_state_, 290), 120, 30, TRUE);
-        MoveWindow(wing_follow_label_, label_x, PageY(wing_page_state_, 346), 148, 28, TRUE);
-        MoveWindow(wing_follow_off_, control_x, PageY(wing_page_state_, 344), 84, 28, TRUE);
-        MoveWindow(wing_follow_on_, control_x + 92, PageY(wing_page_state_, 344), 84, 28, TRUE);
-        MoveWindow(wing_placeholder_body_, control_x, PageY(wing_page_state_, 400), page_width - control_x - 40, 92, TRUE);
+        int wing_y = 28;
+        const int wing_intro_h = StaticHeightForText(wing_intro_, content_w - 10, 68, 8);
+        MoveWindow(wing_intro_, page_margin, PageY(wing_page_state_, wing_y), content_w - 10, wing_intro_h, TRUE);
+        wing_y += wing_intro_h + 26;
+        MoveWindow(wing_section_icon_, page_margin, PageY(wing_page_state_, wing_y + 4), 22, 22, TRUE);
+        MoveWindow(wing_section_header_, page_margin + 26, PageY(wing_page_state_, wing_y), 340, 34, TRUE);
+        MoveWindow(tab_status_wing_, status_chip_x, PageY(wing_page_state_, wing_y), status_chip_w, 30, TRUE);
+        wing_y += 52;
+        MoveWindow(wing_enable_label_, label_x, PageY(wing_page_state_, wing_y + 4), 170, 30, TRUE);
+        MoveWindow(wing_enable_off_, control_x, PageY(wing_page_state_, wing_y), ButtonWidthForLabel(wing_enable_off_, 92, 38), 32, TRUE);
+        MoveWindow(wing_enable_on_, control_x + 108, PageY(wing_page_state_, wing_y), ButtonWidthForLabel(wing_enable_on_, 92, 38), 32, TRUE);
+        wing_y += 54;
+        MoveWindow(wing_target_label_, label_x, PageY(wing_page_state_, wing_y + 4), 170, 30, TRUE);
+        MoveWindow(wing_target_wlive_, control_x, PageY(wing_page_state_, wing_y), ButtonWidthForLabel(wing_target_wlive_, 176, 40), 32, TRUE);
+        MoveWindow(wing_target_usb_, control_x + 196, PageY(wing_page_state_, wing_y), ButtonWidthForLabel(wing_target_usb_, 176, 40), 32, TRUE);
+        wing_y += 54;
+        MoveWindow(wing_pair_label_, label_x, PageY(wing_page_state_, wing_y + 4), 170, 30, TRUE);
+        const int pair_width = ButtonWidthForLabel(wing_pair_1_, 132, 40);
+        MoveWindow(wing_pair_1_, control_x, PageY(wing_page_state_, wing_y), pair_width, 34, TRUE);
+        MoveWindow(wing_pair_3_, control_x + pair_width + 16, PageY(wing_page_state_, wing_y), pair_width, 34, TRUE);
+        MoveWindow(wing_pair_5_, control_x + ((pair_width + 16) * 2), PageY(wing_page_state_, wing_y), pair_width, 34, TRUE);
+        MoveWindow(wing_pair_7_, control_x + ((pair_width + 16) * 3), PageY(wing_page_state_, wing_y), pair_width, 34, TRUE);
+        wing_y += 58;
+        MoveWindow(wing_follow_label_, label_x, PageY(wing_page_state_, wing_y + 4), 170, 30, TRUE);
+        MoveWindow(wing_follow_off_, control_x, PageY(wing_page_state_, wing_y), ButtonWidthForLabel(wing_follow_off_, 92, 38), 32, TRUE);
+        MoveWindow(wing_follow_on_, control_x + 108, PageY(wing_page_state_, wing_y), ButtonWidthForLabel(wing_follow_on_, 92, 38), 32, TRUE);
+        wing_y += 58;
+        const int wing_detail_h = StaticHeightForText(wing_placeholder_body_, standard_text_width, 80, 8);
+        MoveWindow(wing_placeholder_body_, control_x, PageY(wing_page_state_, wing_y), standard_text_width, wing_detail_h, TRUE);
+        wing_y += wing_detail_h + 28;
         const int apply_recorder_width = ButtonWidthForLabel(apply_recorder_button_, 248);
         const int discard_recorder_width = ButtonWidthForLabel(discard_recorder_button_, 150);
-        MoveWindow(apply_recorder_button_, control_x, PageY(wing_page_state_, 514), apply_recorder_width, 42, TRUE);
-        MoveWindow(discard_recorder_button_, control_x + apply_recorder_width + 14, PageY(wing_page_state_, 514), discard_recorder_width, 42, TRUE);
+        MoveWindow(apply_recorder_button_, control_x, PageY(wing_page_state_, wing_y), apply_recorder_width, 44, TRUE);
+        MoveWindow(discard_recorder_button_, control_x + apply_recorder_width + 16, PageY(wing_page_state_, wing_y), discard_recorder_width, 44, TRUE);
+        wing_page_state_.content_height = wing_y + 66;
 
-        MoveWindow(control_intro_, page_margin, PageY(control_page_state_, 28), content_w - 10, 74, TRUE);
-        MoveWindow(control_section_icon_, page_margin, PageY(control_page_state_, 128), 22, 22, TRUE);
-        MoveWindow(control_section_header_, page_margin + 26, PageY(control_page_state_, 122), 380, 34, TRUE);
-        MoveWindow(tab_status_control_, status_chip_x, PageY(control_page_state_, 122), status_chip_w, 28, TRUE);
-        MoveWindow(control_enable_label_, label_x, PageY(control_page_state_, 184), 180, 28, TRUE);
-        MoveWindow(midi_actions_off_, control_x, PageY(control_page_state_, 182), 84, 28, TRUE);
-        MoveWindow(midi_actions_on_, control_x + 92, PageY(control_page_state_, 182), 84, 28, TRUE);
-        MoveWindow(midi_summary_, control_x, PageY(control_page_state_, 236), page_width - control_x - 40, 58, TRUE);
-        MoveWindow(midi_detail_, control_x, PageY(control_page_state_, 308), page_width - control_x - 40, 74, TRUE);
-        MoveWindow(warning_layer_label_, label_x, PageY(control_page_state_, 406), 180, 28, TRUE);
-        MoveWindow(warning_layer_combo_, control_x, PageY(control_page_state_, 402), 190, 260, TRUE);
-        MoveWindow(control_placeholder_body_, control_x, PageY(control_page_state_, 454), page_width - control_x - 40, 92, TRUE);
+        int control_y = 28;
+        const int control_intro_h = StaticHeightForText(control_intro_, content_w - 10, 68, 8);
+        MoveWindow(control_intro_, page_margin, PageY(control_page_state_, control_y), content_w - 10, control_intro_h, TRUE);
+        control_y += control_intro_h + 26;
+        MoveWindow(control_section_icon_, page_margin, PageY(control_page_state_, control_y + 4), 22, 22, TRUE);
+        MoveWindow(control_section_header_, page_margin + 26, PageY(control_page_state_, control_y), 380, 34, TRUE);
+        MoveWindow(tab_status_control_, status_chip_x, PageY(control_page_state_, control_y), status_chip_w, 30, TRUE);
+        control_y += 52;
+        MoveWindow(control_enable_label_, label_x, PageY(control_page_state_, control_y + 4), 200, 30, TRUE);
+        MoveWindow(midi_actions_off_, control_x, PageY(control_page_state_, control_y), ButtonWidthForLabel(midi_actions_off_, 92, 38), 32, TRUE);
+        MoveWindow(midi_actions_on_, control_x + 108, PageY(control_page_state_, control_y), ButtonWidthForLabel(midi_actions_on_, 92, 38), 32, TRUE);
+        control_y += 54;
+        const int midi_summary_h = StaticHeightForText(midi_summary_, standard_text_width, 54, 8);
+        MoveWindow(midi_summary_, control_x, PageY(control_page_state_, control_y), standard_text_width, midi_summary_h, TRUE);
+        control_y += midi_summary_h + 16;
+        const int midi_detail_h = StaticHeightForText(midi_detail_, standard_text_width, 68, 8);
+        MoveWindow(midi_detail_, control_x, PageY(control_page_state_, control_y), standard_text_width, midi_detail_h, TRUE);
+        control_y += midi_detail_h + 20;
+        MoveWindow(warning_layer_label_, label_x, PageY(control_page_state_, control_y + 4), 200, 30, TRUE);
+        MoveWindow(warning_layer_combo_, control_x, PageY(control_page_state_, control_y), 240, 260, TRUE);
+        control_y += 58;
+        const int control_placeholder_h = StaticHeightForText(control_placeholder_body_, standard_text_width, 84, 8);
+        MoveWindow(control_placeholder_body_, control_x, PageY(control_page_state_, control_y), standard_text_width, control_placeholder_h, TRUE);
+        control_y += control_placeholder_h + 24;
         const int apply_midi_width = ButtonWidthForLabel(apply_midi_button_, 226);
         const int discard_midi_width = ButtonWidthForLabel(discard_midi_button_, 150);
-        MoveWindow(apply_midi_button_, control_x, PageY(control_page_state_, 568), apply_midi_width, 42, TRUE);
-        MoveWindow(discard_midi_button_, control_x + apply_midi_width + 14, PageY(control_page_state_, 568), discard_midi_width, 42, TRUE);
-        MoveWindow(support_section_header_, page_margin + 26, PageY(control_page_state_, 668), 360, 34, TRUE);
-        MoveWindow(support_detail_, control_x, PageY(control_page_state_, 720), page_width - control_x - 40, 58, TRUE);
+        MoveWindow(apply_midi_button_, control_x, PageY(control_page_state_, control_y), apply_midi_width, 44, TRUE);
+        MoveWindow(discard_midi_button_, control_x + apply_midi_width + 16, PageY(control_page_state_, control_y), discard_midi_width, 44, TRUE);
+        control_y += 76;
+        MoveWindow(support_section_header_, page_margin + 26, PageY(control_page_state_, control_y), 360, 34, TRUE);
+        control_y += 52;
+        const int support_h = StaticHeightForText(support_detail_, standard_text_width, 54, 8);
+        MoveWindow(support_detail_, control_x, PageY(control_page_state_, control_y), standard_text_width, support_h, TRUE);
+        control_y += support_h + 20;
         const int open_log_width = ButtonWidthForLabel(open_debug_log_button_, 180);
         const int clear_log_width = ButtonWidthForLabel(clear_debug_log_button_, 136);
-        MoveWindow(open_debug_log_button_, control_x, PageY(control_page_state_, 792), open_log_width, 42, TRUE);
-        MoveWindow(clear_debug_log_button_, control_x + open_log_width + 14, PageY(control_page_state_, 792), clear_log_width, 42, TRUE);
-        MoveWindow(debug_log_view_, control_x, PageY(control_page_state_, 854), page_width - control_x - 40, 150, TRUE);
+        MoveWindow(open_debug_log_button_, control_x, PageY(control_page_state_, control_y), open_log_width, 44, TRUE);
+        MoveWindow(clear_debug_log_button_, control_x + open_log_width + 16, PageY(control_page_state_, control_y), clear_log_width, 44, TRUE);
+        control_y += 64;
+        MoveWindow(debug_log_view_, control_x, PageY(control_page_state_, control_y), standard_text_width, 180, TRUE);
+        control_page_state_.content_height = control_y + 210;
+
+        UpdatePageScroll(console_page_state_, viewport_height);
+        UpdatePageScroll(reaper_page_state_, viewport_height);
+        UpdatePageScroll(wing_page_state_, viewport_height);
+        UpdatePageScroll(control_page_state_, viewport_height);
     }
 
     void ShowActivePage(int tab_index) {
