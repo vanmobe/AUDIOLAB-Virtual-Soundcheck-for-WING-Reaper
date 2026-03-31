@@ -460,7 +460,7 @@ private:
         wc.lpfnWndProc = &WingConnectorWindowsDialog::WndProc;
         wc.hInstance = g_hInst;
         wc.lpszClassName = kDialogClassName;
-        wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(OCR_NORMAL));
+        wc.hCursor = LoadCursorW(nullptr, L"IDC_ARROW");
         wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
         RegisterClassW(&wc);
 
@@ -468,7 +468,7 @@ private:
         page_wc.lpfnWndProc = &WingConnectorWindowsDialog::PageWndProc;
         page_wc.hInstance = g_hInst;
         page_wc.lpszClassName = kPageClassName;
-        page_wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(OCR_NORMAL));
+        page_wc.hCursor = LoadCursorW(nullptr, L"IDC_ARROW");
         page_wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
         RegisterClassW(&page_wc);
         registered = true;
