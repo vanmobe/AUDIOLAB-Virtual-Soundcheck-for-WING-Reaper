@@ -1259,27 +1259,71 @@ private:
         if (!hwnd_) {
             return;
         }
+        const StatusSnapshot previous_snapshot = current_snapshot_;
         auto snapshot = BuildSnapshot();
         current_snapshot_ = snapshot;
-        SetWindowTextW(header_console_status_, snapshot.console.text.c_str());
-        SetWindowTextW(header_validation_status_, snapshot.validation.text.c_str());
-        SetWindowTextW(header_recorder_status_, snapshot.recorder.text.c_str());
-        SetWindowTextW(header_midi_status_, snapshot.midi.text.c_str());
-        SetWindowTextW(tab_status_console_, snapshot.console_tab.text.c_str());
-        SetWindowTextW(tab_status_reaper_, snapshot.reaper_tab.text.c_str());
-        SetWindowTextW(tab_status_wing_, snapshot.wing_tab.text.c_str());
-        SetWindowTextW(tab_status_control_, snapshot.control_tab.text.c_str());
-        SetWindowTextW(pending_summary_, snapshot.pending_summary.c_str());
-        SetWindowTextW(readiness_detail_, snapshot.readiness_detail.c_str());
-        SetWindowTextW(footer_status_, snapshot.footer.c_str());
-        SetWindowTextW(apply_setup_button_, snapshot.apply_label.c_str());
-        SetWindowTextW(toggle_soundcheck_button_, snapshot.toggle_label.c_str());
+        auto update_text = [](HWND control, const std::wstring& text) {
+            if (control && ReadWindowText(control) != text) {
+                SetWindowTextW(control, text.c_str());
+            }
+        };
+        auto redraw_control = [](HWND control) {
+            if (control) {
+                RedrawWindow(control, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+            }
+        };
+
+        update_text(header_console_status_, snapshot.console.text);
+        update_text(header_validation_status_, snapshot.validation.text);
+        update_text(header_recorder_status_, snapshot.recorder.text);
+        update_text(header_midi_status_, snapshot.midi.text);
+        update_text(tab_status_console_, snapshot.console_tab.text);
+        update_text(tab_status_reaper_, snapshot.reaper_tab.text);
+        update_text(tab_status_wing_, snapshot.wing_tab.text);
+        update_text(tab_status_control_, snapshot.control_tab.text);
+        update_text(pending_summary_, snapshot.pending_summary);
+        update_text(readiness_detail_, snapshot.readiness_detail);
+        update_text(footer_status_, snapshot.footer);
+        update_text(apply_setup_button_, snapshot.apply_label);
+        update_text(toggle_soundcheck_button_, snapshot.toggle_label);
         EnableWindow(apply_setup_button_, snapshot.can_apply ? TRUE : FALSE);
         EnableWindow(discard_setup_button_, snapshot.can_discard ? TRUE : FALSE);
         EnableWindow(toggle_soundcheck_button_, snapshot.can_toggle ? TRUE : FALSE);
-        SetWindowTextW(connect_button_,
-                       ReaperExtension::Instance().IsConnected() ? L"Disconnect" : L"Connect");
-        InvalidateRect(hwnd_, nullptr, TRUE);
+        update_text(connect_button_, ReaperExtension::Instance().IsConnected() ? L"Disconnect" : L"Connect");
+
+        if (previous_snapshot.console.color != snapshot.console.color || previous_snapshot.console.text != snapshot.console.text) {
+            redraw_control(header_console_status_);
+        }
+        if (previous_snapshot.validation.color != snapshot.validation.color || previous_snapshot.validation.text != snapshot.validation.text) {
+            redraw_control(header_validation_status_);
+        }
+        if (previous_snapshot.recorder.color != snapshot.recorder.color || previous_snapshot.recorder.text != snapshot.recorder.text) {
+            redraw_control(header_recorder_status_);
+        }
+        if (previous_snapshot.midi.color != snapshot.midi.color || previous_snapshot.midi.text != snapshot.midi.text) {
+            redraw_control(header_midi_status_);
+        }
+        if (previous_snapshot.console_tab.color != snapshot.console_tab.color || previous_snapshot.console_tab.text != snapshot.console_tab.text) {
+            redraw_control(tab_status_console_);
+        }
+        if (previous_snapshot.reaper_tab.color != snapshot.reaper_tab.color || previous_snapshot.reaper_tab.text != snapshot.reaper_tab.text) {
+            redraw_control(tab_status_reaper_);
+        }
+        if (previous_snapshot.wing_tab.color != snapshot.wing_tab.color || previous_snapshot.wing_tab.text != snapshot.wing_tab.text) {
+            redraw_control(tab_status_wing_);
+        }
+        if (previous_snapshot.control_tab.color != snapshot.control_tab.color || previous_snapshot.control_tab.text != snapshot.control_tab.text) {
+            redraw_control(tab_status_control_);
+        }
+        if (previous_snapshot.pending_color != snapshot.pending_color || previous_snapshot.pending_summary != snapshot.pending_summary) {
+            redraw_control(pending_summary_);
+        }
+        if (previous_snapshot.readiness_color != snapshot.readiness_color || previous_snapshot.readiness_detail != snapshot.readiness_detail) {
+            redraw_control(readiness_detail_);
+        }
+        if (previous_snapshot.footer != snapshot.footer) {
+            redraw_control(footer_status_);
+        }
     }
 
     HeaderStatusVisual MakeStatus(std::wstring text, COLORREF color) const {
