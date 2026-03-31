@@ -584,7 +584,6 @@ private:
             case WM_COMMAND:
             case WM_NOTIFY:
             case WM_CTLCOLORSTATIC:
-            case WM_CTLCOLORBTN:
                 if (parent) {
                     return SendMessageW(parent, msg, wparam, lparam);
                 }
@@ -1269,7 +1268,7 @@ private:
         };
         auto redraw_control = [](HWND control) {
             if (control) {
-                RedrawWindow(control, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+                RedrawWindow(control, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
             }
         };
 
@@ -1290,6 +1289,13 @@ private:
         EnableWindow(discard_setup_button_, snapshot.can_discard ? TRUE : FALSE);
         EnableWindow(toggle_soundcheck_button_, snapshot.can_toggle ? TRUE : FALSE);
         update_text(connect_button_, ReaperExtension::Instance().IsConnected() ? L"Disconnect" : L"Connect");
+        redraw_control(apply_setup_button_);
+        redraw_control(discard_setup_button_);
+        redraw_control(toggle_soundcheck_button_);
+        redraw_control(connect_button_);
+        redraw_control(output_usb_radio_);
+        redraw_control(output_card_radio_);
+        redraw_control(scan_button_);
 
         if (previous_snapshot.console.color != snapshot.console.color || previous_snapshot.console.text != snapshot.console.text) {
             redraw_control(header_console_status_);
