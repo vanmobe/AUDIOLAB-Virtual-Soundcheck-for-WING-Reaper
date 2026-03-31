@@ -1027,7 +1027,8 @@ private:
     int PageViewportHeight(const PageLayoutState& page) const {
         RECT rect{};
         GetClientRect(page.hwnd, &rect);
-        return std::max(0, rect.bottom - rect.top);
+        const int height = static_cast<int>(rect.bottom - rect.top);
+        return std::max(0, height);
     }
 
     void UpdatePageScroll(PageLayoutState& page, int viewport_height) {
