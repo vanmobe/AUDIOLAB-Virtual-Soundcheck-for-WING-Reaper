@@ -2546,7 +2546,7 @@ bool ShowExistingProjectAdoptionEditor(const std::vector<AdoptionEditorRow>& row
     } else if (!latestLiveSetupValidationDetails.empty()) {
         detail = [NSString stringWithUTF8String:latestLiveSetupValidationDetails.c_str()];
         if (latestLiveSetupValidationState == ValidationState::Ready) {
-            nextStep = @"Setup is ready. Use Live/Soundcheck to switch the validated setup now, or change recording mode to stage a rebuild of the current managed setup.";
+            nextStep = @"Setup is ready. Use Live Mode / Soundcheck Mode to switch the validated setup now, or change recording mode to stage a rebuild of the current managed setup.";
             detailColor = [NSColor systemGreenColor];
         } else if (latestLiveSetupValidationState == ValidationState::Warning) {
             nextStep = @"Next step: review the validation warning. Rebuild the current managed setup if routing changed, or use Choose Sources only if you want a different selection.";

@@ -2889,10 +2889,10 @@ private:
         } else if (!latest_validation_details_.empty()) {
             snapshot.readiness_detail = ToWide(latest_validation_details_);
             if (latest_validation_state_ == ValidationState::Ready) {
-                snapshot.readiness_detail += L"\r\nSetup is ready. Use Live/Soundcheck to switch the validated setup now, or change recording mode to stage a rebuild.";
+                snapshot.readiness_detail += L"\r\nSetup is ready. Use Live Mode / Soundcheck Mode to switch the validated setup now, or change recording mode to stage a rebuild of the current managed setup.";
                 snapshot.readiness_color = RGB(40, 140, 70);
             } else {
-                snapshot.readiness_detail += L"\r\nNext step: review the validation warning. Rebuild the current managed setup if routing changed.";
+                snapshot.readiness_detail += L"\r\nNext step: review the validation warning. Rebuild the current managed setup if routing changed, or use Choose Sources only if you want a different selection.";
                 snapshot.readiness_color = RGB(215, 135, 30);
             }
         } else {
@@ -2915,7 +2915,7 @@ private:
             : L"Apply Setup";
         snapshot.toggle_label = extension.IsSoundcheckModeEnabled() ? L"Soundcheck Mode" : L"Live Mode";
         snapshot.footer = footer_message_.empty()
-            ? L"Windows WINGuard now mirrors the macOS shell more closely: connection in the header, setup in Reaper, and recorder/control sections in their own tabs."
+            ? L"Connect first, then use the Reaper tab to confirm whether the managed setup is ready, needs rebuild, or needs a different source selection."
             : footer_message_;
 
         return snapshot;

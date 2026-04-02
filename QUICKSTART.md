@@ -46,6 +46,7 @@ Inside the WINGuard dialog:
 4. If you reopen an existing WINGuard-managed project later, connect first and look at the Reaper tab status:
    - if the setup validates, you can switch `Live Mode` / `Soundcheck Mode` directly
    - if you changed `USB` or `CARD` mode, use `Rebuild Current Setup` to reuse the current managed selection
+   - if validation warns about topology or unreadable managed sources, rebuild the current managed setup before switching modes
 
 Notes:
 
