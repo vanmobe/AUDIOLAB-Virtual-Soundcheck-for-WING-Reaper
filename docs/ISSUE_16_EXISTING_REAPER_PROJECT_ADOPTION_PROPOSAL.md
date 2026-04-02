@@ -136,7 +136,7 @@ This is the best place for:
 - mapping summaries
 - per-track confirmation UI
 
-### Windows/Linux
+### Windows
 
 Do not try to mirror a complex inline wizard in the first pass.
 

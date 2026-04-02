@@ -100,7 +100,7 @@ Why this needs its own issue:
 - The user changes output mode without wanting track replacement.
 - The console channel source changed but remained mono/stereo-compatible; current managed monitoring can refresh this automatically.
 - The console source became unreadable or changed topology; current behavior correctly warns and waits for manual review.
-- Windows/Linux fallback UI cannot absorb a complex adoption workflow cleanly without a separate dialog design.
+- Windows fallback UI cannot absorb a complex adoption workflow cleanly without a separate dialog design.
 
 ## Recommendation
 

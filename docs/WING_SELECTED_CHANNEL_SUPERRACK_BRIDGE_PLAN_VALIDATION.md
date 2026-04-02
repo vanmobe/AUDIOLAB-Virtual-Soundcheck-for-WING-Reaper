@@ -127,7 +127,7 @@ The extension currently registers MIDI input hooks and maps inbound CC controls 
 ### Scope
 - Validate routing with SuperRack Performer mapping.
 - Capture latency/duplicate behavior under rapid selection changes.
-- Run cross-platform checks (macOS/Windows/Linux build/runtime verification).
+- Run supported-platform checks (macOS/Windows build/runtime verification).
 
 ### Deliverables
 - Integration notes + known limitations + recommended mapping pattern(s).

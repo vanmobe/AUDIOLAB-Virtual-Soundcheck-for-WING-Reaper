@@ -42,7 +42,7 @@ These are treated as fixed for v1 of this step:
 - Stereo slot rules stay enforced:
   - stereo rows may only use valid odd-start slot pairs
 - Duplicate playback slots must never be applied.
-- Windows/Linux fallback should follow the same style as the current soundcheck action fallback.
+- Windows fallback should follow the same style as the current soundcheck action fallback.
 
 ## Recommended UX
 
@@ -81,7 +81,7 @@ Recommended interaction rules:
 
 This hybrid approach is preferable to only hiding options, because it keeps the full routing space visible while still enforcing correctness at apply time.
 
-### Windows/Linux fallback
+### Windows fallback
 
 Use the same pattern as the current cross-platform soundcheck action:
 
@@ -333,7 +333,7 @@ Problem
 - Current adoption is too automatic for real imported-project workflows.
 
 Proposed Direction
-- Add a table-based editable adoption plan on macOS and a structured fallback input flow on Windows/Linux.
+- Add a table-based editable adoption plan on macOS and a structured fallback input flow on Windows.
 - Keep `USB` / `CARD` global.
 - Keep mirrored I/O mandatory.
 - Make explicit slot override optional.

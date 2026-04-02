@@ -2592,7 +2592,7 @@ void ReaperExtension::ShowSettings() {
         }
     }
     #else
-    // Fallback for non-macOS platforms
+    // Windows fallback path
     char settings_msg[512];
     snprintf(settings_msg, sizeof(settings_msg), 
         "WINGuard Settings\n\n"

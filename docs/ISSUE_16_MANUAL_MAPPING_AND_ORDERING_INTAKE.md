@@ -32,7 +32,7 @@ User decisions captured in intake:
 - Explicit playback-slot override is optional, not required.
 - Stereo odd-start slot rules stay enforced; stereo rows may only target valid odd-start pairs.
 - Duplicate playback slots should not be allowed by the UI.
-- Windows/Linux fallback should follow the same style as the current soundcheck action fallback rather than being withheld entirely.
+- Windows fallback should follow the same style as the current soundcheck action fallback rather than being withheld entirely.
 - macOS editor direction: use a table with one row per adoptable track/channel mapping and dropdown controls for configurable fields.
 - Dropdown behavior direction:
 - preferred behavior: show all options but gray out options that are not currently selectable
@@ -77,7 +77,7 @@ Alternatives
 Checks
 - Architecture: Best fit is still the separate adoption action. The current `ShowExistingProjectAdoptionDialog()` path in [src/ui/dialog_bridge.cpp](../src/ui/dialog_bridge.cpp) is too summary-driven; it needs an intermediate mapping model rather than jumping from suggestions to `SetupSoundcheckFromSelection()`. The current engine only understands `SourceSelectionInfo` plus sequential allocation; it does not have a first-class “adoption routing plan” object.
 - UX: The operator mental model should be “review and edit the adoption plan before WINGuard writes anything.” Auto-suggestions are still useful, but they need to become editable defaults, not the final mapping. The UI must distinguish three different things clearly: WING channel target, routing mode, and playback slot.
-- UI/UX: macOS should use a dedicated table-based editor view or sheet with one row per adoptable mapping and dropdowns for editable fields. The UI should either gray out unavailable targets directly in those dropdowns or allow temporary conflicts with explicit per-row conflict state and an apply gate. Windows/Linux should follow the same fallback style as the current soundcheck action: REAPER dialogs with structured text input/review, not a hidden or unavailable path.
+- UI/UX: macOS should use a dedicated table-based editor view or sheet with one row per adoptable mapping and dropdowns for editable fields. The UI should either gray out unavailable targets directly in those dropdowns or allow temporary conflicts with explicit per-row conflict state and an apply gate. Windows should follow the same fallback style as the current soundcheck action: REAPER dialogs with structured text input/review, not a hidden or unavailable path.
 - Compatibility: Backward-compatible if this remains scoped to the adoption action. Existing managed-project rebuild behavior should remain unchanged. Existing adopted-in-place tracks need a predictable re-adopt/reorder story.
 - API/Data: Current `SourceSelectionInfo` is not enough to represent “REAPER track X is being adopted onto WING channel Y with routing mode M and playback slot S.” A dedicated adoption-plan row structure is likely needed, with track reference, chosen channel, stereo intent, confirmed order, chosen global mode, and explicit slot start/end when overridden. Because `USB`/`CARD` is still a global setting, the design must decide whether adoption temporarily stages that global value before apply or explicitly commits it as part of confirmation.
 - Risk: The main risks are destructive remapping, conflicting channel assignments, conflicting playback slots, stereo pair splits, and operator confusion about whether reordering changes WING channel identity, playback-slot order, or both. The design must keep those separate and visible.
@@ -91,7 +91,7 @@ Open Questions
 - If a user moves a stereo imported track onto `CH8`, should the UI preview “CH8 -> USB9-10” directly so the odd-start rule stays visible?
 - Should the adoption flow temporarily stage `USB`/`CARD` mode without immediately rewriting `config.soundcheck_output_mode`, or is changing global mode during adoption acceptable?
 - What should happen when the imported project already contains some adopted/managed channels and the operator wants to reorder only part of the set?
-- What exact fallback input format should be used on Windows/Linux so it stays consistent with the current soundcheck action while still preventing duplicate-slot conflicts?
+- What exact fallback input format should be used on Windows so it stays consistent with the current soundcheck action while still preventing duplicate-slot conflicts?
 - Should the macOS dropdowns gray out unavailable options immediately, or should the table allow temporarily invalid combinations and rely on conflict badges plus an apply gate?
 
 Readiness
