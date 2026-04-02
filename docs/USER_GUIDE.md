@@ -42,7 +42,7 @@ If connection fails:
 - check WING OSC settings
 - verify network path and firewall
 - verify selected or manually entered WING IP
-- verify WING OSC port is `2223`
+- verify the console is reachable on WING OSC port `2223`
 
 ## 4. Use Optional Features
 
@@ -176,7 +176,7 @@ Detailed reference:
 - No connection:
   - WING and computer must be on same network
   - OSC lock must be disabled on WING
-  - WING OSC port must be set to `2223`
+  - WINGuard connects on the fixed WING OSC port `2223`
 - Plugin not visible in REAPER:
   - verify plugin binary exists in `UserPlugins`
   - restart REAPER after install
