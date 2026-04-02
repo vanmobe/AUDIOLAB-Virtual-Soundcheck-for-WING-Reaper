@@ -10,7 +10,7 @@ On the Behringer WING console:
 
 1. Open `Setup -> Remote -> OSC`.
 2. Ensure OSC remote lock is disabled.
-3. Confirm OSC port is `2223` (required by this plugin).
+3. Confirm the console is using the fixed WING OSC runtime port `2223` required by WINGuard.
 4. Note the WING IP address.
 5. If you plan to use button MIDI actions, set `External MIDI Control` to `USB`.
 
@@ -127,7 +127,7 @@ Destination is configured by `osc_out_host` + `osc_out_port`.
 
 - Confirm WING and computer are on the same network.
 - Verify the selected/discovered WING IP (or manual IP entry).
-- Verify the WING OSC port on the console is `2223`.
+- Verify the console is reachable on WING OSC port `2223`.
 - Check firewall rules for UDP traffic.
 - Confirm REAPER loaded the extension from `UserPlugins`.
 

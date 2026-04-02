@@ -49,8 +49,8 @@ Default plugin path:
 ## First Run
 
 1. Go to `Extensions -> WINGuard: Configure Virtual Soundcheck/Recording`.
-2. Set WING IP and port (default `2223`).
-3. Fetch channels and confirm track creation.
+2. Enter or discover the WING IP address.
+3. Fetch channels and confirm track creation. WINGuard uses the fixed WING OSC runtime port `2223`.
 
 ## Verify Installation
 
