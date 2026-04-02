@@ -93,6 +93,12 @@ build.bat
 Then copy the plugin binary + `config.json` into your REAPER `UserPlugins` folder.
 Details are in [SETUP.md](SETUP.md).
 
+Config lookup precedence at runtime:
+
+- WINGuard checks REAPER `UserPlugins/config.json` first.
+- If that file is absent, it falls back to `~/.wingconnector/config.json`.
+- If both files exist, the `UserPlugins` copy wins.
+
 ## CI and Release
 
 - CI build matrix: `.github/workflows/ci.yml`

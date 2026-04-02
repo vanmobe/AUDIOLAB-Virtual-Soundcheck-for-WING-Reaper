@@ -46,6 +46,20 @@ Default plugin path:
 
 - `%APPDATA%\REAPER\UserPlugins\`
 
+## Config Location Precedence
+
+At runtime WINGuard resolves `config.json` in this order:
+
+1. REAPER `UserPlugins/config.json`
+2. `~/.wingconnector/config.json`
+
+What this means in practice:
+
+- Packaged installs normally use the `UserPlugins` copy because that is where the installer places the plugin and expected companion config.
+- If the `UserPlugins` config is missing, WINGuard falls back to the home-directory config instead.
+- If both copies exist, the `UserPlugins` copy wins.
+- On Windows, `~/.wingconnector/config.json` maps to the current user's profile directory.
+
 ## First Run
 
 1. Go to `Extensions -> WINGuard: Configure Virtual Soundcheck/Recording`.
@@ -79,5 +93,7 @@ Remove plugin and config from your REAPER `UserPlugins` path:
 
 - macOS: `reaper_wingconnector.dylib`, `config.json`
 - Windows: `reaper_wingconnector.dll`, `config.json`
+
+If behavior still persists after removing the `UserPlugins` copy, also check for a fallback config in `~/.wingconnector/config.json`.
 
 Then restart REAPER.

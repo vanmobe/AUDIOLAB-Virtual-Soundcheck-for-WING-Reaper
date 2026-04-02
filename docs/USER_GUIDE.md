@@ -183,6 +183,11 @@ Detailed reference:
 - No track updates:
   - rerun channel fetch/refresh
   - verify channel source configuration on WING
+- Settings look inconsistent between installs:
+  - check `UserPlugins/config.json` first
+  - if that file is absent, WINGuard falls back to `~/.wingconnector/config.json`
+  - if both files exist, the `UserPlugins` copy wins
+  - when troubleshooting, update or remove the `UserPlugins` copy first so you are not editing the inactive fallback file
 
 ## Related Docs
 

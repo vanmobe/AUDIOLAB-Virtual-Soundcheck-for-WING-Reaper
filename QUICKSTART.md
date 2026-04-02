@@ -55,6 +55,11 @@ Notes:
 - On Windows, the main WINGuard action now opens a native tabbed window that follows the macOS layout for connection and REAPER setup.
 - The separate adoption action still begins with the staged scan/select/manual-IP/connect review flow before imported-track review starts.
 
+Config note:
+
+- WINGuard checks `UserPlugins/config.json` first and only falls back to `~/.wingconnector/config.json` when the `UserPlugins` copy is absent.
+- If both files exist, the `UserPlugins` copy wins.
+
 ## 5. Automatic Wing CC Button Setup
 
 Default mapping used by the plugin:
@@ -130,6 +135,8 @@ Destination is configured by `osc_out_host` + `osc_out_port`.
 - Verify the console is reachable on WING OSC port `2223`.
 - Check firewall rules for UDP traffic.
 - Confirm REAPER loaded the extension from `UserPlugins`.
+- If settings differ between a packaged install and a development install, check both `UserPlugins/config.json` and `~/.wingconnector/config.json`.
+- If both config files exist, edit or remove the `UserPlugins` copy first because it takes precedence.
 
 ## Next Docs
 

@@ -58,6 +58,16 @@ copy install\reaper_wingconnector.dll "%APPDATA%\REAPER\UserPlugins\"
 copy config.json "%APPDATA%\REAPER\UserPlugins\"
 ```
 
+Runtime config precedence:
+
+1. `UserPlugins/config.json`
+2. `~/.wingconnector/config.json`
+
+Development implication:
+
+- If you copy a development `config.json` into `UserPlugins`, that copy overrides any fallback config in `~/.wingconnector/`.
+- If you want to test fallback behavior, remove or rename the `UserPlugins` copy first.
+
 ## Verify in REAPER
 
 1. Restart REAPER.
@@ -80,6 +90,12 @@ Release tags matching `v*` trigger installer build + publish.
 - Missing `oscpack` checkout in `lib/oscpack/`
 - Compiler toolchain not installed or not on PATH
 - Platform-specific packaging tools missing (`pkgbuild`, Inno Setup)
+
+## Config Troubleshooting
+
+- If a packaged install and a local development build appear to use different settings, compare both `UserPlugins/config.json` and `~/.wingconnector/config.json`.
+- If both files exist, WINGuard loads the `UserPlugins` copy.
+- When neither file exists yet, new saves default to the `~/.wingconnector/config.json` path.
 
 ## Related Documentation
 
