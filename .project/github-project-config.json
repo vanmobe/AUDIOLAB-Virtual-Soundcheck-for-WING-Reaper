@@ -1,0 +1,37 @@
+{
+  "repository": {
+    "full_name": "vanmobe/AUDIOLAB-Virtual-Soundcheck-for-WING-Reaper"
+  },
+  "project": {
+    "owner": "vanmobe",
+    "project_id": "PVT_kwHOAK4nP84BSwRq",
+    "project_number": 4,
+    "title": "Wing Reaper Integration"
+  },
+  "fields": {
+    "status": {
+      "field_id": "PVTSSF_lAHOAK4nP84BSwRqzhAMiuA",
+      "type": "single_select",
+      "options": {
+        "logged": "f75ad846",
+        "ready": "e18bf179",
+        "in_progress": "47fc9ee4",
+        "in_review": "aba860b9",
+        "finished": "98236657"
+      }
+    },
+    "priority": {
+      "field_id": "PVTSSF_lAHOAK4nP84BSwRqzhAMizY",
+      "type": "single_select",
+      "options": {
+        "high": "79628723",
+        "medium": "0a877460",
+        "low": "da944a9c"
+      }
+    },
+    "iteration": {
+      "field_id": "PVTIF_lAHOAK4nP84BSwRqzhAMizk",
+      "type": "iteration"
+    }
+  }
+}

@@ -1,6 +1,6 @@
 /*
- * macOS Native Settings Dialog Implementation
- * Provides native Cocoa dialogs for editing AUDIOLAB.wing.reaper.virtualsoundcheck settings
+ * macOS native settings dialog implementation.
+ * Provides native Cocoa dialogs for editing WINGuard settings.
  */
 
 #ifdef __APPLE__

@@ -1,5 +1,5 @@
 /*
- * Windows Native AUDIOLAB.wing.reaper.virtualsoundcheck Dialog Header
+ * Windows native WINGuard dialog header.
  */
 
 #ifndef WING_CONNECTOR_DIALOG_WINDOWS_H

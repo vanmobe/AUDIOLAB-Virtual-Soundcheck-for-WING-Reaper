@@ -1,5 +1,5 @@
 /*
- * Windows Native AUDIOLAB.wing.reaper.virtualsoundcheck Dialog Implementation
+ * Windows native WINGuard dialog implementation.
  */
 
 #ifdef _WIN32

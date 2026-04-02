@@ -1,6 +1,6 @@
 /*
- * AUDIOLAB.wing.reaper.virtualsoundcheck - Reaper Extension Entry Point
- * Integrates Behringer Wing console with Reaper via OSC
+ * WINGuard REAPER Extension Entry Point
+ * Integrates the Behringer WING console with REAPER via OSC
  * 
  * This module handles the Reaper plugin lifecycle:
  * - Plugin loading/unloading
@@ -56,12 +56,17 @@ static int g_cmd_main_dialog = 0;
 static int g_cmd_selected_channel_bridge = 0;
 static int g_cmd_project_adoption = 0;
 
+namespace {
+constexpr const char* kMainActionId = "_AUDIOLAB_VIRTUALSOUNDCHECK_MAIN_DIALOG";
+constexpr const char* kProjectAdoptionActionId = "_AUDIOLAB_WING_PROJECT_ADOPTION";
+}  // namespace
+
 // ===== COMMAND HOOK (hookcommand2) =====
 /**
  * OnAction() - REAPER Command Dispatcher
  * 
  * Called by REAPER whenever an action/command is executed.
- * We filter for our Wing Connector actions and launch the matching UI flow.
+ * We filter for our WINGuard actions and launch the matching UI flow.
  * 
  * Args:
  *   sec     - Keyboard section info (unused)
@@ -105,11 +110,11 @@ static bool OnAction(KbdSectionInfo* sec, int cmd, int val, int valhw, int relmo
 
 // ===== REGISTRATION =====
 /**
- * RegisterCommands() - Register Wing Connector UI actions
+ * RegisterCommands() - Register WINGuard UI actions
  * 
  * Register with REAPER:
  * 1. hookcommand2 callback to intercept user commands
- * 2. Custom action "Behringer Wing: Open Wing Connector"
+ * 2. Custom WINGuard actions
  * 3. Optional keyboard shortcuts for key WINGuard actions
  *
  * REAPER will:
@@ -136,7 +141,7 @@ static void RegisterCommands() {
     memset(&action, 0, sizeof(action));
     action.uniqueSectionId = 0;
     // Keep the legacy action id stable so existing REAPER bindings continue to resolve.
-    action.idStr = "_AUDIOLAB_VIRTUALSOUNDCHECK_MAIN_DIALOG";
+    action.idStr = kMainActionId;
     action.name = "WINGuard: Configure Virtual Soundcheck/Recording";
     g_cmd_main_dialog = g_rec->Register("custom_action", &action);
     
@@ -145,7 +150,7 @@ static void RegisterCommands() {
     custom_action_register_t adoption_action;
     memset(&adoption_action, 0, sizeof(adoption_action));
     adoption_action.uniqueSectionId = 0;
-    adoption_action.idStr = "_AUDIOLAB_WING_PROJECT_ADOPTION";
+    adoption_action.idStr = kProjectAdoptionActionId;
     adoption_action.name = "WINGuard: Adopt Existing Reaper Project for Virtual Soundcheck";
     g_cmd_project_adoption = g_rec->Register("custom_action", &adoption_action);
 

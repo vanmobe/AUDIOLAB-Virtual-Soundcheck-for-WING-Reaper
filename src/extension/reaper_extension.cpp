@@ -605,10 +605,10 @@ bool ReaperExtension::Initialize(reaper_plugin_info_t* rec) {
     if (!loaded_user_config) {
         // Try loading from install directory
         if (!config_.LoadFromFile("config.json")) {
-            Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Using default configuration\n");
+            Log("WINGuard: Using default configuration\n");
         }
     } else {
-        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Configuration loaded\n");
+        Log("WINGuard: Configuration loaded\n");
         
         bool config_updated = false;
         
@@ -616,7 +616,7 @@ bool ReaperExtension::Initialize(reaper_plugin_info_t* rec) {
         if (config_.listen_port == 2224) {
             config_.listen_port = 2223;
             config_updated = true;
-            Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Updated listener port to 2223\n");
+            Log("WINGuard: Updated listener port to 2223\n");
         }
         
         // Save updated config
@@ -716,10 +716,10 @@ void ReaperExtension::MainThreadTimerTick() {
     if (ext.pending_record_start_.exchange(false)) {
         // Record action is a toggle in REAPER; only issue it when not already recording.
         if (!is_recording_now) {
-            ext.Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Auto-trigger requesting REAPER transport record.\n");
+            ext.Log("WINGuard: Auto-trigger requesting REAPER transport record.\n");
             Main_OnCommand(kCmdTransportRecord, 0);  // Transport: Record (main thread)
         } else {
-            ext.Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Auto-trigger requested record, but REAPER was already recording.\n");
+            ext.Log("WINGuard: Auto-trigger requested record, but REAPER was already recording.\n");
         }
     }
     if (ext.pending_record_stop_.exchange(false)) {
@@ -763,7 +763,7 @@ void ReaperExtension::MainThreadTimerTick() {
     const int play_state_after_actions = GetPlayState();
     const bool is_recording_after_actions = (play_state_after_actions & kReaperPlayStateRecordingBit) != 0;
     if (is_recording_after_actions != is_recording_now) {
-        ext.Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: REAPER transport changed to ") +
+        ext.Log(std::string("WINGuard: REAPER transport changed to ") +
                 (is_recording_after_actions ? "RECORDING.\n" : "STOPPED.\n"));
     }
     ext.SyncExternalRecorderWithReaperState(is_recording_after_actions);
@@ -780,11 +780,11 @@ bool ReaperExtension::ConnectToWing() {
     } midi_suppress_guard(suppress_midi_processing_);
 
     if (connected_) {
-        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Already connected\n");
+        Log("WINGuard: Already connected\n");
         return true;
     }
     
-    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Connecting to Wing...\n");
+    Log("WINGuard: Connecting to WING...\n");
     status_message_ = "Connecting...";
     last_connection_failure_detail_.clear();
     
@@ -812,7 +812,7 @@ bool ReaperExtension::ConnectToWing() {
         if (last_connection_failure_detail_.empty()) {
             last_connection_failure_detail_ = "Failed to start the local OSC listener on port 2223.";
         }
-        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: " + last_connection_failure_detail_ + "\n");
+        Log("WINGuard: " + last_connection_failure_detail_ + "\n");
         osc_handler_.reset();
         status_message_ = "Failed to start";
         return false;
@@ -824,14 +824,14 @@ bool ReaperExtension::ConnectToWing() {
         if (last_connection_failure_detail_.empty()) {
             last_connection_failure_detail_ = "Could not connect to the Wing console. Check the IP, OSC settings, and local network path.";
         }
-        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: " + last_connection_failure_detail_ + "\n");
+        Log("WINGuard: " + last_connection_failure_detail_ + "\n");
         osc_handler_->Stop();
         osc_handler_.reset();
         status_message_ = "Connection failed";
         return false;
     }
     
-    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Connected!\n");
+    Log("WINGuard: Connected!\n");
     connected_ = true;
     status_message_ = "Connected";
     last_connection_failure_detail_.clear();
@@ -842,7 +842,7 @@ bool ReaperExtension::ConnectToWing() {
     if (!wing_info.model.empty()) {
         char info_msg[256];
         snprintf(info_msg, sizeof(info_msg),
-                 "AUDIOLAB.wing.reaper.virtualsoundcheck: Detected %s (%s) FW %s\n",
+                 "WINGuard: Detected %s (%s) FW %s\n",
                  wing_info.model.c_str(),
                  wing_info.name.empty() ? "Unnamed" : wing_info.name.c_str(),
                  wing_info.firmware.empty() ? "unknown" : wing_info.firmware.c_str());
@@ -863,11 +863,11 @@ std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
     std::vector<SourceSelectionInfo> result;
     
     if (!connected_ || !osc_handler_) {
-        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Not connected. Cannot query sources.\n");
+        Log("WINGuard: Not connected. Cannot query sources.\n");
         return result;
     }
     
-    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Querying channel sources...\n");
+    Log("WINGuard: Querying channel sources...\n");
 
     std::set<std::string> existing_source_ids;
     std::set<std::string> existing_source_names;
@@ -900,7 +900,7 @@ std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
     for (int attempt = 1; attempt <= kChannelQueryAttempts; ++attempt) {
         char attempt_msg[128];
         snprintf(attempt_msg, sizeof(attempt_msg),
-                 "AUDIOLAB.wing.reaper.virtualsoundcheck: Querying channels (attempt %d/%d)\n",
+                 "WINGuard: Querying channels (attempt %d/%d)\n",
                  attempt, kChannelQueryAttempts);
         Log(attempt_msg);
         osc_handler_->QueryAllChannels(config_.channel_count);
@@ -909,14 +909,14 @@ std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
             break;
         }
         if (attempt < kChannelQueryAttempts) {
-            Log("AUDIOLAB.wing.reaper.virtualsoundcheck: No channel data yet, retrying...\n");
+            Log("WINGuard: No channel data yet, retrying...\n");
         }
     }
     
     // Get channel data
     const auto& channel_data = osc_handler_->GetChannelData();
     if (channel_data.empty()) {
-        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: No channel data received. Check timeout settings.\n");
+        Log("WINGuard: No channel data received. Check timeout settings.\n");
         return result;
     }
 
@@ -971,7 +971,7 @@ std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
         direct_channel_names = osc_handler_->QueryStringAddressesDirect(missing_name_addresses, 100, 15);
     }
     
-    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Processing channel data...\n");
+    Log("WINGuard: Processing channel data...\n");
     // stereo_linked is set from /io/in/{grp}/{num}/mode by the second pass in QueryAllChannels.
     // No heuristics needed.
     
@@ -1114,7 +1114,7 @@ std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
         return std::make_pair(std::move(modes), std::move(names));
     };
 
-    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Querying bus and matrix sources...\n");
+    Log("WINGuard: Querying bus and matrix sources...\n");
     auto [bus_modes, bus_names] = load_record_only_metadata("$BUS", "bus", 32);
     auto [mtx_modes, mtx_names] = load_record_only_metadata("$MTX", "mtx", 16);
 
@@ -1122,7 +1122,7 @@ std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
     append_record_only_sources(SourceKind::Matrix, "MTX", 16, "Matrix", mtx_modes, mtx_names);
     
     char msg[128];
-    snprintf(msg, sizeof(msg), "AUDIOLAB.wing.reaper.virtualsoundcheck: Found %d selectable sources\n", 
+    snprintf(msg, sizeof(msg), "WINGuard: Found %d selectable sources\n",
              (int)result.size());
     Log(msg);
     
@@ -1131,11 +1131,11 @@ std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
 
 void ReaperExtension::CreateTracksFromSelection(const std::vector<SourceSelectionInfo>& channels) {
     if (!connected_ || !osc_handler_) {
-        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Not connected\n");
+        Log("WINGuard: Not connected\n");
         return;
     }
     
-    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Creating tracks from selection...\n");
+    Log("WINGuard: Creating tracks from selection...\n");
     
     std::vector<SourceSelectionInfo> selected;
     for (const auto& ch : channels) {
@@ -1145,7 +1145,7 @@ void ReaperExtension::CreateTracksFromSelection(const std::vector<SourceSelectio
     }
     
     if (selected.empty()) {
-        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: No sources selected\n");
+        Log("WINGuard: No sources selected\n");
         return;
     }
 
@@ -1182,10 +1182,10 @@ void ReaperExtension::CreateTracksFromSelection(const std::vector<SourceSelectio
         track_index++;
         created_tracks++;
     }
-    Undo_EndBlock("AUDIOLAB.wing.reaper.virtualsoundcheck: Create tracks from selected sources", UNDO_STATE_TRACKCFG);
+    Undo_EndBlock("WINGuard: Create tracks from selected sources", UNDO_STATE_TRACKCFG);
 
     char msg[128];
-    snprintf(msg, sizeof(msg), "AUDIOLAB.wing.reaper.virtualsoundcheck: Created %d tracks\n", created_tracks);
+    snprintf(msg, sizeof(msg), "WINGuard: Created %d tracks\n", created_tracks);
     Log(msg);
 }
 
@@ -1499,11 +1499,11 @@ bool ReaperExtension::SetupSoundcheckInternal(const std::vector<SourceSelectionI
     } monitor_suppress_guard(*this);
 
     if (!connected_ || !osc_handler_) {
-        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Not connected\n");
+        Log("WINGuard: Not connected\n");
         return false;
     }
     
-    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Setting up Virtual Soundcheck...\n");
+    Log("WINGuard: Setting up virtual soundcheck...\n");
     
     std::vector<SourceSelectionInfo> requested_sources;
     const auto& channel_data = osc_handler_->GetChannelData();
@@ -1527,7 +1527,7 @@ bool ReaperExtension::SetupSoundcheckInternal(const std::vector<SourceSelectionI
     }
     
     if (requested_sources.empty()) {
-        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: No sources selected\n");
+        Log("WINGuard: No sources selected\n");
         return false;
     }
 
@@ -1684,7 +1684,7 @@ bool ReaperExtension::SetupSoundcheckInternal(const std::vector<SourceSelectionI
 
     if (required_input_channels > wing_bank_limit) {
         std::ostringstream err;
-        err << "AUDIOLAB.wing.reaper.virtualsoundcheck: Selected sources exceed the Wing "
+        err << "WINGuard: Selected sources exceed the WING "
             << output_type << " bank. Required by current selection: " << required_input_channels
             << ", available on Wing: " << wing_bank_limit << ".\n";
         Log(err.str());
@@ -1703,7 +1703,7 @@ bool ReaperExtension::SetupSoundcheckInternal(const std::vector<SourceSelectionI
     const int available_outputs = GetNumAudioOutputs();
     if (available_inputs < required_input_channels || available_outputs < required_output_channels) {
         std::ostringstream err;
-        err << "AUDIOLAB.wing.reaper.virtualsoundcheck: REAPER audio device does not expose enough channels for "
+        err << "WINGuard: REAPER audio device does not expose enough channels for "
             << output_type << " routing. Required by current selection: "
             << required_input_channels << " in / " << required_output_channels << " out, available: "
             << available_inputs << " in / " << available_outputs << " out.\n";
@@ -1876,7 +1876,7 @@ bool ReaperExtension::SetupSoundcheckInternal(const std::vector<SourceSelectionI
         }
     }
 
-    Undo_EndBlock("AUDIOLAB.wing.reaper.virtualsoundcheck: Configure Virtual Soundcheck", UNDO_STATE_TRACKCFG);
+    Undo_EndBlock("WINGuard: Configure Virtual Soundcheck", UNDO_STATE_TRACKCFG);
     
     Log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
     Log("✓ CONFIGURATION COMPLETE\n");
@@ -1951,7 +1951,7 @@ void ReaperExtension::ApplyManagedTrackRoutingUpdate(const std::vector<SourceSel
         }
 
         std::ostringstream msg;
-        msg << "AUDIOLAB.wing.reaper.virtualsoundcheck: Updated managed track routing for "
+        msg << "WINGuard: Updated managed track routing for "
             << source_id_buf << " to " << output_type << " " << allocation.usb_start;
         if (allocation.is_stereo) {
             msg << "-" << allocation.usb_end;
@@ -2084,7 +2084,7 @@ bool ReaperExtension::ReapplyManagedChannelRouting(const std::map<int, ManagedCh
     managed_monitor_snapshot_ = latest_states;
     managed_monitor_display_snapshot_ = channel_display_states;
     status_message_ = "Managed routing refreshed";
-    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Reapplied managed routing after " + reason + ".\n");
+    Log("WINGuard: Reapplied managed routing after " + reason + ".\n");
     return true;
 }
 
@@ -2136,7 +2136,7 @@ void ReaperExtension::ManagedSourceMonitorLoop() {
 
         if (filtered_snapshot.cycle_degraded) {
             if (degraded_cycle_count == 1) {
-                Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Managed polling missed a full cycle. Waiting for another poll before warning.\n");
+                Log("WINGuard: Managed polling missed a full cycle. Waiting for another poll before warning.\n");
             }
             if (degraded_cycle_count >= kManagedSourceDegradedCycleThreshold) {
                 status_message_ = "WING polling degraded";
@@ -2163,7 +2163,7 @@ void ReaperExtension::ManagedSourceMonitorLoop() {
         const auto decision = WingConnector::ManagedSourceMonitor::ClassifyChange(previous_snapshot, current_snapshot);
         if (decision.action == WingConnector::ManagedSourceMonitor::Action::WarnTopologyChange) {
             std::ostringstream warning;
-            warning << "AUDIOLAB.wing.reaper.virtualsoundcheck: Managed channel source topology changed on "
+            warning << "WINGuard: Managed channel source topology changed on "
                     << JoinChannelNumbers(decision.changed_channels)
                     << ". Review and re-apply setup manually.\n";
             Log(warning.str());
@@ -2180,7 +2180,7 @@ void ReaperExtension::ManagedSourceMonitorLoop() {
             managed_monitor_degraded_cycle_count_ = degraded_cycle_count;
         } else if (decision.action == WingConnector::ManagedSourceMonitor::Action::WarnInvalidSource) {
             std::ostringstream warning;
-            warning << "AUDIOLAB.wing.reaper.virtualsoundcheck: Managed channel source became unreadable or OFF on "
+            warning << "WINGuard: Managed channel source became unreadable or OFF on "
                     << JoinChannelNumbers(decision.changed_channels)
                     << ". Keeping the last applied routing.\n";
             Log(warning.str());
@@ -2230,7 +2230,7 @@ void ReaperExtension::ManagedSourceMonitorLoop() {
                 }
                 if (!link_changed_channels.empty()) {
                     std::ostringstream msg;
-                    msg << "AUDIOLAB.wing.reaper.virtualsoundcheck: Managed channel customization link changed on "
+                    msg << "WINGuard: Managed channel customization link changed on "
                         << JoinChannelNumbers(link_changed_channels)
                         << ". Refreshing track metadata.\n";
                     Log(msg.str());
@@ -2265,7 +2265,7 @@ void ReaperExtension::DisconnectFromWing() {
     last_known_reaper_recording_state_ = false;
     StopAutoRecordMonitor();
     
-    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Disconnecting...\n");
+    Log("WINGuard: Disconnecting...\n");
     
     if (osc_handler_) {
         osc_handler_->Stop();
@@ -2276,7 +2276,7 @@ void ReaperExtension::DisconnectFromWing() {
     monitoring_enabled_ = false;
     status_message_ = "Disconnected";
     
-    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Disconnected\n");
+    Log("WINGuard: Disconnected\n");
 }
 
 std::vector<std::string> ReaperExtension::GetMidiOutputDevices() const {
@@ -2530,7 +2530,7 @@ void ReaperExtension::RefreshTracks() {
         return;
     }
     
-    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Refreshing tracks...\n");
+    Log("WINGuard: Refreshing tracks...\n");
     
     // Re-query channels
     osc_handler_->QueryAllChannels(config_.channel_count);
@@ -2581,7 +2581,7 @@ void ReaperExtension::ShowSettings() {
                 config_.wing_ip.c_str());
             
             ShowMessageBox(success_msg, "WINGuard - Settings Saved", 0);
-            Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Settings updated from dialog\n");
+            Log("WINGuard: Settings updated from dialog\n");
         } else {
             char error_msg[512];
             snprintf(error_msg, sizeof(error_msg),
@@ -2778,7 +2778,7 @@ void ReaperExtension::StartManagedSourceMonitor() {
 
     managed_source_monitor_running_ = true;
     managed_source_monitor_thread_ = std::make_unique<std::thread>(&ReaperExtension::ManagedSourceMonitorLoop, this);
-    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Managed source monitor started.\n");
+    Log("WINGuard: Managed source monitor started.\n");
 }
 
 void ReaperExtension::StopManagedSourceMonitor() {
@@ -2974,7 +2974,7 @@ void ReaperExtension::MonitorAutoRecordLoop() {
                         pending_record_start_ = true;
                         auto_record_started_by_plugin_ = true;
                         record_started_at = std::chrono::steady_clock::now();
-                        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Auto-trigger threshold met; queued REAPER record start.\n");
+                        Log("WINGuard: Auto-trigger threshold met; queued REAPER record start.\n");
                         SendOscToWing(config_, config_.osc_start_path, 1);
                     }
                     above_since = {};
@@ -3067,7 +3067,7 @@ bool ReaperExtension::RefreshSoundcheckModeFromWing() {
 
     const bool previous = soundcheck_mode_enabled_.exchange(detected_soundcheck_mode);
     if (previous != detected_soundcheck_mode) {
-        Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: Soundcheck mode state synchronized from WING: ") +
+        Log(std::string("WINGuard: Soundcheck mode state synchronized from WING: ") +
             (detected_soundcheck_mode ? "ENABLED\n" : "DISABLED\n"));
     }
     return detected_soundcheck_mode;
@@ -3412,7 +3412,7 @@ void ReaperExtension::RouteMainLRToCardForSDRecording() {
     const std::string group = config_.sd_lr_group.empty() ? "MAIN" : config_.sd_lr_group;
 
     const bool usb_recorder = RecorderTargetKey(config_) == "USBREC";
-    Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: Routing Main LR to ") +
+    Log(std::string("WINGuard: Routing Main LR to ") +
         RecorderTargetLabel(config_) + " 1/2...\n");
     if (usb_recorder) {
         osc_handler_->SetRecorderOutputSource(1, group, left_input);
@@ -3470,22 +3470,22 @@ void ReaperExtension::StartExternalRecorderFollow() {
     }
 
     ApplyRecorderRoutingNoDialog();
-    Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: ") + RecorderTargetLabel(config_) +
+    Log(std::string("WINGuard: ") + RecorderTargetLabel(config_) +
         " routing applied (best effort; verify on WING).\n");
     if (RecorderTargetKey(config_) == "USBREC") {
         osc_handler_->StartUSBRecorder();
     } else {
         osc_handler_->StartSDRecorder();
     }
-    Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: ") + RecorderTargetLabel(config_) +
+    Log(std::string("WINGuard: ") + RecorderTargetLabel(config_) +
         " start requested for plugin auto-trigger recording (best effort OSC; verify recorder state on WING).\n");
 
     std::string status_detail;
     if (PollRecorderStarted(config_, osc_handler_.get(), status_detail)) {
-        Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: Confirmed ") +
+        Log(std::string("WINGuard: Confirmed ") +
             RecorderTargetLabel(config_) + " started. " + status_detail + "\n");
     } else {
-        Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: ") + RecorderTargetLabel(config_) +
+        Log(std::string("WINGuard: ") + RecorderTargetLabel(config_) +
             " did not confirm a recording state after start request. " + status_detail + "\n");
     }
 }
@@ -3502,15 +3502,15 @@ void ReaperExtension::StopExternalRecorderFollow() {
     } else {
         osc_handler_->StopSDRecorder();
     }
-    Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: ") + RecorderTargetLabel(config_) +
+    Log(std::string("WINGuard: ") + RecorderTargetLabel(config_) +
         " stop requested for plugin auto-trigger recording (best effort OSC; verify recorder state on WING).\n");
 
     std::string status_detail;
     if (PollRecorderStopped(config_, osc_handler_.get(), status_detail)) {
-        Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: Confirmed ") +
+        Log(std::string("WINGuard: Confirmed ") +
             RecorderTargetLabel(config_) + " stopped. " + status_detail + "\n");
     } else {
-        Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: ") + RecorderTargetLabel(config_) +
+        Log(std::string("WINGuard: ") + RecorderTargetLabel(config_) +
             " did not confirm a stopped state after stop request. " + status_detail + "\n");
     }
 }
@@ -3527,15 +3527,15 @@ void ReaperExtension::SyncExternalRecorderWithReaperState(bool is_recording_now)
 
     if (is_recording_now && !was_recording) {
         if (auto_record_started_by_plugin_) {
-            Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: REAPER entered record from auto-trigger; starting ") +
+            Log(std::string("WINGuard: REAPER entered record from auto-trigger; starting ") +
                 RecorderTargetLabel(config_) + ".\n");
             StartExternalRecorderFollow();
         } else {
-            Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: REAPER entered record, but no plugin-owned auto-trigger session was active; not starting ") +
+            Log(std::string("WINGuard: REAPER entered record, but no plugin-owned auto-trigger session was active; not starting ") +
                 RecorderTargetLabel(config_) + ".\n");
         }
     } else if (!is_recording_now && was_recording && external_recorder_started_by_plugin_) {
-        Log(std::string("AUDIOLAB.wing.reaper.virtualsoundcheck: REAPER left record; stopping ") +
+        Log(std::string("WINGuard: REAPER left record; stopping ") +
             RecorderTargetLabel(config_) + ".\n");
         StopExternalRecorderFollow();
     }
@@ -3555,7 +3555,7 @@ void ReaperExtension::ConfigureVirtualSoundcheck() {
         return;
     }
     
-    Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Configuring Virtual Soundcheck...\n");
+    Log("WINGuard: Configuring virtual soundcheck...\n");
 
     auto sources = GetAvailableSources();
     if (sources.empty()) {
@@ -3588,7 +3588,7 @@ void ReaperExtension::ConfigureVirtualSoundcheck() {
         for (auto& source : sources) {
             source.selected = (source.kind == SourceKind::Channel);
         }
-        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: No channels remained after filtering. Using all available channels.\n");
+        Log("WINGuard: No channels remained after filtering. Using all available channels.\n");
     }
 
     SetupSoundcheckFromSelection(sources, true);
@@ -3611,10 +3611,10 @@ void ReaperExtension::ToggleSoundcheckMode() {
     osc_handler_->SetAllChannelsAltEnabled(soundcheck_mode_enabled_);
     
     if (soundcheck_mode_enabled_) {
-        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Soundcheck Mode ENABLED - Channels using USB input from REAPER\n");
+        Log("WINGuard: Soundcheck Mode ENABLED - Channels using USB input from REAPER\n");
         status_message_ = "Soundcheck Mode ON";
     } else {
-        Log("AUDIOLAB.wing.reaper.virtualsoundcheck: Soundcheck Mode DISABLED - Channels using primary sources\n");
+        Log("WINGuard: Soundcheck Mode DISABLED - Channels using primary sources\n");
         status_message_ = "Soundcheck Mode OFF";
     }
 }

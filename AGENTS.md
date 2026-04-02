@@ -45,6 +45,7 @@ This repository contains a C++17 REAPER extension that connects to a Behringer W
 - Build on Windows: `build.bat`
 - Minimum validation bar after non-trivial changes: successful build
 - After code changes that produce a new plugin binary, rebuild and install the resulting plugin into `~/Library/Application Support/REAPER/UserPlugins/reaper_wingconnector.dylib` by default so the latest build is ready for manual REAPER testing unless the user explicitly says not to install it.
+- When CI, packaging, release assets, or GitHub Actions behavior matter, treat `.github/workflows/*.yml` as the canonical source of truth before relying on README text or issue phrasing.
 
 Hard prerequisites expected by the build:
 

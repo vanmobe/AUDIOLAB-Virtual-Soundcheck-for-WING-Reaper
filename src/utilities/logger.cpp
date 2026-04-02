@@ -1,5 +1,5 @@
 /*
- * Unified Logging System for AUDIOLAB.wing.reaper.virtualsoundcheck
+ * Unified logging system for WINGuard.
  */
 
 #include "internal/logger.h"

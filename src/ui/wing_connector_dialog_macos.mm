@@ -1,6 +1,6 @@
 /*
- * macOS Native AUDIOLAB.wing.reaper.virtualsoundcheck Dialog Implementation
- * Provides consolidated dialog for all Wing operations
+ * macOS native WINGuard dialog implementation.
+ * Provides the consolidated dialog for WING operations.
  */
 
 #ifdef __APPLE__

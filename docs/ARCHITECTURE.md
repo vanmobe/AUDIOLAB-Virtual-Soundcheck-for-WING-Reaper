@@ -52,6 +52,12 @@ Headers are split between:
 
 This keeps the product on native UI surfaces for both supported platforms while shared extension/core logic remains platform-neutral.
 
+## Naming Conventions
+
+- Operator-facing product copy, action labels, dialog titles, log prefixes, and undo labels should use `WINGuard`.
+- Compatibility-sensitive technical identifiers should stay stable unless there is an explicit migration plan. This includes REAPER custom action `idStr` values such as `_AUDIOLAB_VIRTUALSOUNDCHECK_MAIN_DIALOG`.
+- Legacy `AUDIOLAB...` identifiers may remain where REAPER bindings or persisted integration points depend on them, but they should not be reused for new visible copy.
+
 ## Build and Packaging
 
 Build system: `CMakeLists.txt`

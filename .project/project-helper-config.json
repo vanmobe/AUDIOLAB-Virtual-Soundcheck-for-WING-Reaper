@@ -1,0 +1,37 @@
+{
+  "repository": {
+    "full_name": "vanmobe/AUDIOLAB-Virtual-Soundcheck-for-WING-Reaper"
+  },
+  "tooling": {
+    "required_clis": [
+      "git",
+      "cmake"
+    ],
+    "optional_clis": [
+      "gh"
+    ]
+  },
+  "environment": {
+    "target_system": "plugin",
+    "host_platform": "REAPER desktop extension",
+    "platforms": [
+      "macOS",
+      "Windows"
+    ]
+  },
+  "integrations": {
+    "github": {
+      "repository": "vanmobe/AUDIOLAB-Virtual-Soundcheck-for-WING-Reaper"
+    }
+  },
+  "paths": {
+    "project_context": ".project/PROJECT_CONTEXT.md",
+    "project_root_readme": ".project/README.md",
+    "architecture_doc": "docs/ARCHITECTURE.md",
+    "protocol_doc": "docs/WING_OSC_PROTOCOL.md",
+    "user_guide": "docs/USER_GUIDE.md",
+    "quickstart": "QUICKSTART.md",
+    "setup_guide": "SETUP.md",
+    "runtime_config": "config.json"
+  }
+}
