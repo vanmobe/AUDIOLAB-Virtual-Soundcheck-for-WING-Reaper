@@ -24,7 +24,7 @@ jobs:
 
     env:
       VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '1.1.0-dev' }}
-      RELEASE_DIR: ${{ github.workspace }}/dist/${{ runner.os }}
+      RELEASE_DIR: ${{ github.workspace }}/dist/${{ matrix.artifact_name }}
 
     steps:
       - name: Checkout
