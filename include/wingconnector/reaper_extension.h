@@ -193,6 +193,8 @@ private:
     bool FindBridgeMapping(SourceKind kind, int source_number, BridgeMapping& mapping_out) const;
     void SendBridgeMidiMessage(int status, int data1, int data2) const;
     bool BridgeMessageNeedsRelease() const;
+    void InvalidateAvailableSourcesCache();
+    std::vector<SourceSelectionInfo> QueryAvailableSourcesSnapshot();
     bool SetupSoundcheckInternal(const std::vector<SourceSelectionInfo>& channels,
                                  const std::vector<PlaybackAllocation>* requested_allocations,
                                  const std::string* output_mode_override,
@@ -247,6 +249,10 @@ private:
     std::string pending_bridge_selection_id_;
     long long pending_bridge_selection_since_ms_{0};
     int last_bridge_midi_number_{-1};
+    mutable std::mutex available_sources_cache_mutex_;
+    std::vector<SourceSelectionInfo> available_sources_cache_;
+    std::string available_sources_cache_ip_;
+    long long available_sources_cache_until_ms_{0};
 };
 
 // Reaper action command IDs

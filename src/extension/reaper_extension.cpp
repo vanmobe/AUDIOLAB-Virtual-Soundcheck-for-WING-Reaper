@@ -52,6 +52,7 @@ constexpr int kManagedSourceMonitorPollMs = 900;
 constexpr int kManagedSourceUnreadableWarnThreshold = 3;
 constexpr int kManagedSourceDegradedCycleThreshold = 2;
 constexpr int kSoundcheckStatePollMs = 1000;
+constexpr int kAvailableSourcesCacheMs = 1500;
 constexpr int kReaperPlayStatePlayingBit = 1;
 constexpr int kReaperPlayStateRecordingBit = 4;
 constexpr const char* kTrackSourceIdExtKey = "P_EXT:WINGCONNECTOR_SOURCE_ID";
@@ -226,6 +227,15 @@ std::string NormalizeOutputMode(std::string output_mode) {
 bool AllocationHasError(const USBAllocation& allocation) {
     return !allocation.allocation_note.empty() &&
            allocation.allocation_note.find("ERROR") != std::string::npos;
+}
+
+bool MatchesExistingSelection(const SourceSelectionInfo& info,
+                              const std::set<std::string>& existing_source_ids,
+                              const std::set<std::string>& existing_source_names,
+                              bool has_existing_selection) {
+    return has_existing_selection &&
+           (existing_source_ids.count(SourcePersistentId(info)) > 0 ||
+            existing_source_names.count(info.name) > 0);
 }
 
 bool ReadTrackAllocation(MediaTrack* track, USBAllocation& allocation_out) {
@@ -787,6 +797,7 @@ bool ReaperExtension::ConnectToWing() {
     Log("WINGuard: Connecting to WING...\n");
     status_message_ = "Connecting...";
     last_connection_failure_detail_.clear();
+    InvalidateAvailableSourcesCache();
     
     // Wing OSC is fixed to 2223.
     config_.wing_port = 2223;
@@ -860,15 +871,7 @@ bool ReaperExtension::ConnectToWing() {
 
 // Get available recording sources with routing assigned.
 std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
-    std::vector<SourceSelectionInfo> result;
-    
-    if (!connected_ || !osc_handler_) {
-        Log("WINGuard: Not connected. Cannot query sources.\n");
-        return result;
-    }
-    
-    Log("WINGuard: Querying channel sources...\n");
-
+    const long long start_ms = SteadyNowMs();
     std::set<std::string> existing_source_ids;
     std::set<std::string> existing_source_names;
     if (track_manager_) {
@@ -894,9 +897,60 @@ std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
         existing_source_ids.insert(source_id);
     }
     const bool has_existing_selection = !existing_source_ids.empty() || !existing_source_names.empty();
-    
-    // Query all channels with retries
+    std::vector<SourceSelectionInfo> result;
+    const long long now_ms = SteadyNowMs();
+    {
+        std::lock_guard<std::mutex> lock(available_sources_cache_mutex_);
+        if (available_sources_cache_until_ms_ > now_ms &&
+            !available_sources_cache_.empty() &&
+            available_sources_cache_ip_ == config_.wing_ip) {
+            result = available_sources_cache_;
+        }
+    }
+    const bool used_cache = !result.empty();
+
+    if (result.empty()) {
+        result = QueryAvailableSourcesSnapshot();
+        if (!result.empty()) {
+            std::lock_guard<std::mutex> lock(available_sources_cache_mutex_);
+            available_sources_cache_ = result;
+            available_sources_cache_ip_ = config_.wing_ip;
+            available_sources_cache_until_ms_ = now_ms + kAvailableSourcesCacheMs;
+        }
+    }
+
+    for (auto& info : result) {
+        info.selected = MatchesExistingSelection(info, existing_source_ids, existing_source_names, has_existing_selection);
+    }
+
+    Log(std::string("WINGuard: GetAvailableSources timing — source=") +
+        (used_cache ? "cache" : "fresh") +
+        ", count=" + std::to_string(result.size()) +
+        ", total=" + std::to_string(SteadyNowMs() - start_ms) + " ms.\n");
+
+    return result;
+}
+
+void ReaperExtension::InvalidateAvailableSourcesCache() {
+    std::lock_guard<std::mutex> lock(available_sources_cache_mutex_);
+    available_sources_cache_.clear();
+    available_sources_cache_ip_.clear();
+    available_sources_cache_until_ms_ = 0;
+}
+
+std::vector<SourceSelectionInfo> ReaperExtension::QueryAvailableSourcesSnapshot() {
+    const long long start_ms = SteadyNowMs();
+    std::vector<SourceSelectionInfo> result;
+
+    if (!connected_ || !osc_handler_) {
+        Log("WINGuard: Not connected. Cannot query sources.\n");
+        return result;
+    }
+
+    Log("WINGuard: Querying channel sources...\n");
+
     const auto query_delay = std::chrono::milliseconds(kQueryResponseWaitMs);
+    long long channel_query_done_ms = start_ms;
     for (int attempt = 1; attempt <= kChannelQueryAttempts; ++attempt) {
         char attempt_msg[128];
         snprintf(attempt_msg, sizeof(attempt_msg),
@@ -906,26 +960,24 @@ std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
         osc_handler_->QueryAllChannels(config_.channel_count);
         std::this_thread::sleep_for(query_delay);
         if (!osc_handler_->GetChannelData().empty()) {
+            channel_query_done_ms = SteadyNowMs();
             break;
         }
         if (attempt < kChannelQueryAttempts) {
             Log("WINGuard: No channel data yet, retrying...\n");
         }
     }
-    
-    // Get channel data
+
     const auto& channel_data = osc_handler_->GetChannelData();
     if (channel_data.empty()) {
         Log("WINGuard: No channel data received. Check timeout settings.\n");
         return result;
     }
 
-    // Query USR routing so popup can display resolved sources (e.g. USR:25 -> A:8)
     osc_handler_->QueryUserSignalInputs(48);
+    const long long user_signal_done_ms = SteadyNowMs();
 
-    // Query source labels used by the selection popup (for name fallback).
     std::set<std::pair<std::string, int>> source_endpoints;
-    std::map<int, std::pair<std::string, int>> channel_display_sources;
     const auto effective_display_states = BuildManagedEffectiveDisplayStates(BuildChannelInputStateMap(channel_data));
 
     for (const auto& pair : channel_data) {
@@ -936,52 +988,16 @@ std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
         std::pair<std::string, int> display_source =
             ResolveDisplaySource(osc_handler_.get(), ch.primary_source_group, ch.primary_source_input);
         source_endpoints.insert(display_source);
-        channel_display_sources[ch.channel_number] = display_source;
         if (ch.stereo_linked) {
             source_endpoints.insert({display_source.first, display_source.second + 1});
         }
     }
     osc_handler_->QueryInputSourceNames(source_endpoints);
+    const long long input_name_done_ms = SteadyNowMs();
 
-    std::set<std::pair<std::string, int>> missing_channel_name_sources;
-    for (const auto& pair : channel_data) {
-        const ChannelInfo& ch = pair.second;
-        const bool has_generic_channel_name =
-            ch.name.empty() || ch.name.rfind("CH", 0) == 0 || ch.name.rfind("Channel ", 0) == 0;
-        if (!has_generic_channel_name) {
-            continue;
-        }
-        auto it = channel_display_sources.find(ch.channel_number);
-        if (it == channel_display_sources.end()) {
-            continue;
-        }
-        const auto& [grp, in] = it->second;
-        if (!osc_handler_->GetInputSourceName(grp, in).empty()) {
-            continue;
-        }
-        missing_channel_name_sources.insert({grp, in});
-    }
-    std::map<std::string, std::string> direct_channel_names;
-    if (!missing_channel_name_sources.empty()) {
-        std::vector<std::string> missing_name_addresses;
-        missing_name_addresses.reserve(missing_channel_name_sources.size());
-        for (const auto& [grp, in] : missing_channel_name_sources) {
-            missing_name_addresses.push_back("/io/in/" + grp + "/" + std::to_string(in) + "/name");
-        }
-        direct_channel_names = osc_handler_->QueryStringAddressesDirect(missing_name_addresses, 100, 15);
-    }
-    
     Log("WINGuard: Processing channel data...\n");
-    // stereo_linked is set from /io/in/{grp}/{num}/mode by the second pass in QueryAllChannels.
-    // No heuristics needed.
-    
-    // Build list of channels with sources.
-    // On Behringer Wing: stereo is SOURCE-based, not channel-based.
-    // A channel is stereo if its source is stereo. That's it - no pairing needed.
-    
     for (const auto& pair : channel_data) {
         const ChannelInfo& ch = pair.second;
-        
         if (ch.primary_source_group.empty()) {
             continue;
         }
@@ -993,17 +1009,14 @@ std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
         info.color_id = ch.color;
         info.source_group = ch.primary_source_group;
         info.source_input = ch.primary_source_input;
-        
-        // stereo if source mode was "ST" or "MS" (set by QueryChannelSourceStereo)
-        bool is_stereo = ch.stereo_linked;
-        
+
+        const bool is_stereo = ch.stereo_linked;
         const std::pair<std::string, int> raw_source = {ch.primary_source_group, ch.primary_source_input};
         const std::pair<std::string, int> display_source =
             ResolveDisplaySource(osc_handler_.get(), raw_source.first, raw_source.second);
         info.source_group = display_source.first;
         info.source_input = display_source.second;
 
-        // For stereo sources, the partner is always source_input+1 in the same group
         if (is_stereo) {
             info.partner_source_group = info.source_group;
             info.partner_source_input = info.source_input + 1;
@@ -1018,12 +1031,8 @@ std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
         }
 
         info.stereo_linked = is_stereo;
-        info.selected = has_existing_selection
-            ? (existing_source_ids.count(SourcePersistentId(info)) > 0 ||
-               existing_source_names.count(info.name) > 0)
-            : false;
+        info.selected = false;
         info.soundcheck_capable = true;
-
         result.push_back(info);
     }
 
@@ -1035,12 +1044,12 @@ std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
                                           const std::map<int, std::string>& names) {
         for (int i = 1; i <= count; ++i) {
             auto mode_it = modes.find(i);
-            std::string mode = (mode_it != modes.end()) ? mode_it->second : "";
+            const std::string mode = (mode_it != modes.end()) ? mode_it->second : "";
             if (mode.empty()) {
                 continue;
             }
             const bool is_stereo = (mode == "ST" || mode == "MS");
-            if (is_stereo && (i % 2 == 0)) {
+            if (is_stereo && (i % 2) == 0) {
                 continue;
             }
 
@@ -1051,10 +1060,7 @@ std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
             info.source_input = i;
             info.stereo_linked = is_stereo;
             info.soundcheck_capable = false;
-            info.selected = has_existing_selection
-                ? (existing_source_ids.count(SourcePersistentId(info)) > 0 ||
-                   existing_source_names.count(info.name) > 0)
-                : false;
+            info.selected = false;
 
             auto name_it = names.find(i);
             std::string name = (name_it != names.end()) ? name_it->second : "";
@@ -1117,15 +1123,20 @@ std::vector<SourceSelectionInfo> ReaperExtension::GetAvailableSources() {
     Log("WINGuard: Querying bus and matrix sources...\n");
     auto [bus_modes, bus_names] = load_record_only_metadata("$BUS", "bus", 32);
     auto [mtx_modes, mtx_names] = load_record_only_metadata("$MTX", "mtx", 16);
+    const long long record_only_done_ms = SteadyNowMs();
 
     append_record_only_sources(SourceKind::Bus, "BUS", 32, "Bus", bus_modes, bus_names);
     append_record_only_sources(SourceKind::Matrix, "MTX", 16, "Matrix", mtx_modes, mtx_names);
-    
+
     char msg[128];
-    snprintf(msg, sizeof(msg), "WINGuard: Found %d selectable sources\n",
-             (int)result.size());
+    snprintf(msg, sizeof(msg), "WINGuard: Found %d selectable sources\n", (int)result.size());
     Log(msg);
-    
+    Log("WINGuard: QueryAvailableSourcesSnapshot timing — "
+        "channels=" + std::to_string(channel_query_done_ms - start_ms) +
+        " ms, usr=" + std::to_string(user_signal_done_ms - channel_query_done_ms) +
+        " ms, names=" + std::to_string(input_name_done_ms - user_signal_done_ms) +
+        " ms, buses_mtx=" + std::to_string(record_only_done_ms - input_name_done_ms) +
+        " ms, total=" + std::to_string(record_only_done_ms - start_ms) + " ms.\n");
     return result;
 }
 
@@ -1958,6 +1969,7 @@ bool ReaperExtension::SetupSoundcheckInternal(const std::vector<SourceSelectionI
     } else {
         Log("\nSelected buses/matrices were configured for recording only.\n\n");
     }
+    InvalidateAvailableSourcesCache();
     return true;
 }
 
@@ -2340,7 +2352,8 @@ void ReaperExtension::DisconnectFromWing() {
         osc_handler_->Stop();
         osc_handler_.reset();
     }
-    
+
+    InvalidateAvailableSourcesCache();
     connected_ = false;
     monitoring_enabled_ = false;
     status_message_ = "Disconnected";

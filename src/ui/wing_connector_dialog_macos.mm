@@ -14,6 +14,7 @@
 #include <sstream>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <limits>
 #include <mutex>
 #include <dlfcn.h>
@@ -24,6 +25,12 @@ namespace {
 
 constexpr bool kShowBridgeTabInMainUI = false;
 constexpr NSUInteger kMaxActivityLogChars = 32000;
+
+long long CurrentSteadyTimeMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
 
 NSImage* LoadWingGuardHeaderImage() {
     static NSImage* image = nil;
@@ -345,6 +352,7 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
                                 bool& setup_soundcheck,
                                 bool& overwrite_existing) {
     @autoreleasepool {
+        const long long start_ms = CurrentSteadyTimeMs();
         int numChannels = (int)channels.size();
         const CGFloat rowHeight = 24.0;
         const CGFloat panelWidth = 720.0;
@@ -503,7 +511,9 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
         [cancelButton setAction:@selector(cancelPressed:)];
 
         [panel makeKeyAndOrderFront:nil];
+        const long long shown_ms = CurrentSteadyTimeMs();
         NSInteger result = [NSApp runModalForWindow:panel];
+        const long long finished_ms = CurrentSteadyTimeMs();
         [panel setDelegate:nil];
         [tableView setDelegate:nil];
         [tableView setDataSource:nil];
@@ -524,6 +534,11 @@ bool ShowChannelSelectionDialog(std::vector<WingConnector::ChannelSelectionInfo>
         [iconView release];
         [headerBox release];
         [contentView release];
+
+        ReaperExtension::Instance().Log(std::string("WINGuard: Source chooser timings — build/show=") +
+                                        std::to_string(shown_ms - start_ms) +
+                                        " ms, modal=" + std::to_string(finished_ms - shown_ms) +
+                                        " ms, total=" + std::to_string(finished_ms - start_ms) + " ms.\n");
         
         if (result == NSModalResponseOK) {
             // Update soundcheck mode option
@@ -4239,6 +4254,7 @@ bool ShowExistingProjectAdoptionEditor(const std::vector<AdoptionEditorRow>& row
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         auto& extension = ReaperExtension::Instance();
+        const long long flow_start_ms = CurrentSteadyTimeMs();
 
         if (!extension.IsConnected()) {
             dispatch_async(dispatch_get_main_queue(), ^{ [blockSelf appendToLog:@"Not connected — attempting to connect automatically so sources can be loaded...\n"]; });
@@ -4269,7 +4285,14 @@ bool ShowExistingProjectAdoptionEditor(const std::vector<AdoptionEditorRow>& row
         }
 
         auto channels = [blockSelf copyCachedAvailableSources];
-        if (channels.empty()) {
+        const bool using_pending_draft = hasPendingSetupDraft && !pendingSetupChannels.empty();
+        if (using_pending_draft) {
+            channels = pendingSetupChannels;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [blockSelf appendToLog:[NSString stringWithFormat:@"Reusing %d staged sources from the pending draft.\n", (int)channels.size()]];
+                [blockSelf refreshAvailableSourcesCacheIfNeeded:NO logMessage:nil];
+            });
+        } else if (channels.empty()) {
             dispatch_async(dispatch_get_main_queue(), ^{ [blockSelf appendToLog:@"Getting Wing sources for live recording setup...\n"]; });
             channels = extension.GetAvailableSources();
             if (!channels.empty()) {
@@ -4290,7 +4313,14 @@ bool ShowExistingProjectAdoptionEditor(const std::vector<AdoptionEditorRow>& row
             return;
         }
 
-        if (hasPendingSetupDraft && !pendingSetupChannels.empty()) {
+        const long long sources_ready_ms = CurrentSteadyTimeMs();
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [blockSelf appendToLog:[NSString stringWithFormat:@"Chooser timings: sources ready in %lld ms (%s)\n",
+                                    sources_ready_ms - flow_start_ms,
+                                    using_pending_draft ? "pending draft" : "loaded snapshot"]];
+        });
+
+        if (!using_pending_draft && !pendingSetupChannels.empty()) {
             std::set<std::string> pendingIds;
             auto pendingSourceId = [](const WingConnector::ChannelSelectionInfo& source) {
                 const char* kind = "SRC";
