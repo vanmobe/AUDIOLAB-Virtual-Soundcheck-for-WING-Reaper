@@ -194,6 +194,7 @@ private:
     void SendBridgeMidiMessage(int status, int data1, int data2) const;
     bool BridgeMessageNeedsRelease() const;
     void InvalidateAvailableSourcesCache();
+    void InvalidateValidationCache();
     std::vector<SourceSelectionInfo> QueryAvailableSourcesSnapshot();
     bool SetupSoundcheckInternal(const std::vector<SourceSelectionInfo>& channels,
                                  const std::vector<PlaybackAllocation>* requested_allocations,
@@ -253,6 +254,12 @@ private:
     std::vector<SourceSelectionInfo> available_sources_cache_;
     std::string available_sources_cache_ip_;
     long long available_sources_cache_until_ms_{0};
+    mutable std::mutex validation_cache_mutex_;
+    ValidationState validation_cache_state_{ValidationState::NotReady};
+    std::string validation_cache_details_;
+    std::string validation_cache_ip_;
+    std::string validation_cache_output_mode_;
+    long long validation_cache_until_ms_{0};
 };
 
 // Reaper action command IDs

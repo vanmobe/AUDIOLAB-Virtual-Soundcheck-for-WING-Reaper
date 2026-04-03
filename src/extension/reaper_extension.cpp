@@ -53,6 +53,7 @@ constexpr int kManagedSourceUnreadableWarnThreshold = 3;
 constexpr int kManagedSourceDegradedCycleThreshold = 2;
 constexpr int kSoundcheckStatePollMs = 1000;
 constexpr int kAvailableSourcesCacheMs = 1500;
+constexpr int kValidationCacheMs = 1500;
 constexpr int kReaperPlayStatePlayingBit = 1;
 constexpr int kReaperPlayStateRecordingBit = 4;
 constexpr const char* kTrackSourceIdExtKey = "P_EXT:WINGCONNECTOR_SOURCE_ID";
@@ -798,6 +799,7 @@ bool ReaperExtension::ConnectToWing() {
     status_message_ = "Connecting...";
     last_connection_failure_detail_.clear();
     InvalidateAvailableSourcesCache();
+    InvalidateValidationCache();
     
     // Wing OSC is fixed to 2223.
     config_.wing_port = 2223;
@@ -846,6 +848,7 @@ bool ReaperExtension::ConnectToWing() {
     connected_ = true;
     status_message_ = "Connected";
     last_connection_failure_detail_.clear();
+    InvalidateValidationCache();
     StartAutoRecordMonitor();
     
     // Query console info
@@ -936,6 +939,15 @@ void ReaperExtension::InvalidateAvailableSourcesCache() {
     available_sources_cache_.clear();
     available_sources_cache_ip_.clear();
     available_sources_cache_until_ms_ = 0;
+}
+
+void ReaperExtension::InvalidateValidationCache() {
+    std::lock_guard<std::mutex> lock(validation_cache_mutex_);
+    validation_cache_state_ = ValidationState::NotReady;
+    validation_cache_details_.clear();
+    validation_cache_ip_.clear();
+    validation_cache_output_mode_.clear();
+    validation_cache_until_ms_ = 0;
 }
 
 std::vector<SourceSelectionInfo> ReaperExtension::QueryAvailableSourcesSnapshot() {
@@ -1222,10 +1234,32 @@ bool ReaperExtension::CheckOutputModeAvailability(const std::string& output_mode
 }
 
 ValidationState ReaperExtension::ValidateLiveRecordingSetup(std::string& details) {
+    const long long now_ms = SteadyNowMs();
+    {
+        std::lock_guard<std::mutex> lock(validation_cache_mutex_);
+        if (validation_cache_until_ms_ > now_ms &&
+            validation_cache_ip_ == config_.wing_ip &&
+            validation_cache_output_mode_ == config_.soundcheck_output_mode &&
+            connected_) {
+            details = validation_cache_details_;
+            return validation_cache_state_;
+        }
+    }
+
     if (!connected_ || !osc_handler_) {
         details = "Not connected to Wing.";
         return ValidationState::NotReady;
     }
+
+    auto finish = [this, &details](ValidationState state) {
+        std::lock_guard<std::mutex> lock(validation_cache_mutex_);
+        validation_cache_state_ = state;
+        validation_cache_details_ = details;
+        validation_cache_ip_ = config_.wing_ip;
+        validation_cache_output_mode_ = config_.soundcheck_output_mode;
+        validation_cache_until_ms_ = SteadyNowMs() + kValidationCacheMs;
+        return state;
+    };
 
     // Refresh channel/ALT state from the console before validating.
     osc_handler_->QueryAllChannels(config_.channel_count);
@@ -1234,7 +1268,7 @@ ValidationState ReaperExtension::ValidateLiveRecordingSetup(std::string& details
     const auto& channel_data = osc_handler_->GetChannelData();
     if (channel_data.empty()) {
         details = "No channel data received from Wing.";
-        return ValidationState::NotReady;
+        return finish(ValidationState::NotReady);
     }
     const auto effective_display_states = BuildManagedEffectiveDisplayStates(BuildChannelInputStateMap(channel_data));
 
@@ -1276,12 +1310,12 @@ ValidationState ReaperExtension::ValidateLiveRecordingSetup(std::string& details
 
     if (routable_channels == 0) {
         details = "Wing has no routable input channels.";
-        return ValidationState::NotReady;
+        return finish(ValidationState::NotReady);
     }
 
     if (expected_track_inputs_1based.empty()) {
         details = "Wing ALT sources are not configured for " + std::string(card_mode ? "CARD" : "USB") + ".";
-        return ValidationState::NotReady;
+        return finish(ValidationState::NotReady);
     }
 
     // Validate REAPER tracks against expected I/O mapping:
@@ -1290,7 +1324,7 @@ ValidationState ReaperExtension::ValidateLiveRecordingSetup(std::string& details
     ReaProject* proj = EnumProjects(-1, nullptr, 0);
     if (!proj) {
         details = "No active REAPER project.";
-        return ValidationState::NotReady;
+        return finish(ValidationState::NotReady);
     }
 
     int matching_tracks = 0;
@@ -1391,7 +1425,7 @@ ValidationState ReaperExtension::ValidateLiveRecordingSetup(std::string& details
 
     if (matching_tracks == 0 || matched_inputs_1based.empty()) {
         details = "No REAPER tracks match Wing ALT input/hardware routing.";
-        return ValidationState::NotReady;
+        return finish(ValidationState::NotReady);
     }
 
     if (matched_inputs_1based.size() < expected_track_inputs_1based.size()) {
@@ -1400,7 +1434,7 @@ ValidationState ReaperExtension::ValidateLiveRecordingSetup(std::string& details
             << " of " << expected_track_inputs_1based.size()
             << " expected ALT-mapped input routes.";
         details = msg.str();
-        return ValidationState::NotReady;
+        return finish(ValidationState::NotReady);
     }
 
     std::vector<std::string> mode_addresses;
@@ -1466,11 +1500,11 @@ ValidationState ReaperExtension::ValidateLiveRecordingSetup(std::string& details
 
     if (!warnings.empty()) {
         details = summary.str() + ". Warning: " + warnings.front();
-        return ValidationState::Warning;
+        return finish(ValidationState::Warning);
     }
 
     details = summary.str() + ".";
-    return ValidationState::Ready;
+    return finish(ValidationState::Ready);
 }
 
 bool ReaperExtension::SetupSoundcheckFromSelection(const std::vector<SourceSelectionInfo>& channels, bool setup_soundcheck, bool replace_existing) {
@@ -1970,6 +2004,7 @@ bool ReaperExtension::SetupSoundcheckInternal(const std::vector<SourceSelectionI
         Log("\nSelected buses/matrices were configured for recording only.\n\n");
     }
     InvalidateAvailableSourcesCache();
+    InvalidateValidationCache();
     return true;
 }
 
@@ -2354,6 +2389,7 @@ void ReaperExtension::DisconnectFromWing() {
     }
 
     InvalidateAvailableSourcesCache();
+    InvalidateValidationCache();
     connected_ = false;
     monitoring_enabled_ = false;
     status_message_ = "Disconnected";
@@ -3699,6 +3735,7 @@ bool ReaperExtension::SetSoundcheckModeEnabled(bool enable, std::string* error_d
         Log("WINGuard: Soundcheck Mode DISABLED - Channels using primary sources\n");
         status_message_ = "Soundcheck Mode OFF";
     }
+    InvalidateValidationCache();
     return true;
 }
 
