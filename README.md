@@ -32,10 +32,14 @@ Platform-specific steps are in [INSTALL.md](INSTALL.md).
 
 1. Install the plugin for your platform.
 2. Restart REAPER.
-3. Open `Extensions -> WINGuard: Configure Virtual Soundcheck/Recording`.
+3. Open the REAPER Actions list with `?`, search `WINGuard`, then run `WINGuard: Configure Virtual Soundcheck/Recording`.
 4. Scan for a WING, select a discovered console or enter the WING IP manually, then connect/fetch channels.
 5. Confirm the console is reachable on the WING OSC runtime port `2223` used by WINGuard.
 6. Confirm tracks are created/updated in REAPER.
+
+Shortcut:
+
+- Main action: `Cmd+Shift+W` on macOS, `Ctrl+Shift+W` on Windows
 
 See [QUICKSTART.md](QUICKSTART.md) for the 5-minute flow.
 

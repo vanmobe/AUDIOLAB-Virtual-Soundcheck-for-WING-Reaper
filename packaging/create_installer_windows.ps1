@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 
 $pluginName = 'reaper_wingconnector.dll'
 $configName = 'config.json'
-$appName = 'AUDIOLAB.wing.reaper.virtualsoundcheck'
+$appName = 'WINGuard'
 
 $stagePath = (Resolve-Path $StageDir).Path
 if (-not (Test-Path (Join-Path $stagePath $pluginName))) {

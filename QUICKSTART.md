@@ -25,9 +25,13 @@ See [INSTALL.md](INSTALL.md) if needed.
 ## 3. Launch REAPER and Connect
 
 1. Restart REAPER after installation.
-2. Open `Extensions -> WINGuard: Configure Virtual Soundcheck/Recording`.
+2. Open the REAPER Actions list with `?`, search `WINGuard`, then run `WINGuard: Configure Virtual Soundcheck/Recording`.
 3. Run `Scan`, then select a discovered WING or enter the WING IP manually.
 4. Run channel fetch / connect in the dialog.
+
+Fastest open path:
+
+- Main action shortcut: `Cmd+Shift+W` on macOS, `Ctrl+Shift+W` on Windows
 
 Expected result:
 
@@ -55,6 +59,7 @@ Notes:
 - If you open a REAPER project that was not prepared by WINGuard, use `Adopt Existing Reaper Project for Virtual Soundcheck` to review likely channel matches first. This action now lets you keep or override the proposed channel mapping, choose global `USB` or `CARD` routing, optionally override playback slots, and then adopt the imported tracks in place without creating duplicate tracks.
 - The main WINGuard action opens the native tabbed window on both supported platforms.
 - The existing-project adoption action remains a separate review-first workflow that connects to WING before imported-track review starts.
+- Existing-project adoption shortcut: `Cmd+Shift+I` on macOS, `Ctrl+Shift+I` on Windows.
 
 Config note:
 
@@ -136,6 +141,7 @@ Destination is configured by `osc_out_host` + `osc_out_port`.
 - Verify the console is reachable on WING OSC port `2223`.
 - Check firewall rules for UDP traffic.
 - Confirm REAPER loaded the extension from `UserPlugins`.
+- Open the REAPER Actions list with `?` and search `WINGuard`; if the actions are missing, restart REAPER and re-check the plugin file in `UserPlugins`.
 - If settings differ between a packaged install and a development install, check both `UserPlugins/config.json` and `~/.wingconnector/config.json`.
 - If both config files exist, edit or remove the `UserPlugins` copy first because it takes precedence.
 

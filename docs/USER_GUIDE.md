@@ -7,12 +7,13 @@ Practical guide for daily operation in REAPER with a Behringer WING.
 ## 1. Validate Installation
 
 1. Restart REAPER after installing the plugin.
-2. Confirm the extension is available in REAPER.
-3. Open `Extensions -> WINGuard: Configure Virtual Soundcheck/Recording`.
+2. Confirm `WINGuard` actions are available in REAPER.
+3. Open the REAPER Actions list with `?`, search `WINGuard`, then run `WINGuard: Configure Virtual Soundcheck/Recording`.
+4. Shortcut: `Cmd+Shift+W` on macOS, `Ctrl+Shift+W` on Windows.
 
 ![Extensions actions](images/actions-menu.png)
 
-If the menu is missing, verify plugin files are in your REAPER `UserPlugins` folder for your OS.
+If the action is missing, verify plugin files are in your REAPER `UserPlugins` folder for your OS and restart REAPER.
 
 ## 2. Connect to WING and Fetch Channels
 
@@ -62,12 +63,13 @@ From the same dialog flow you can:
 
 Selected-channel bridge work is intentionally separate:
 
-- use `Extensions -> WINGuard: Selected Channel Bridge Setup` for bridge-specific notes and status
+- see [docs/WING_SELECTED_CHANNEL_BRIDGE.md](WING_SELECTED_CHANNEL_BRIDGE.md) for bridge-specific notes and status
 - do not expect bridge behavior to be part of the live soundcheck/recording flow
 
 Imported-project adoption work is also separate:
 
-- use `Extensions -> WINGuard: Adopt Existing Reaper Project for Virtual Soundcheck` to review an imported project against live WING channel metadata
+- use the REAPER Actions list and run `WINGuard: Adopt Existing Reaper Project for Virtual Soundcheck` to review an imported project against live WING channel metadata
+- shortcut: `Cmd+Shift+I` on macOS, `Ctrl+Shift+I` on Windows
 - this action can now adopt imported tracks in place after you review or override the proposed channel and routing plan
 - imported track names, order, and FX stay in place while WINGuard rewrites the agreed routing
 
@@ -86,7 +88,7 @@ Imported-project adoption work is also separate:
 When you reopen a project that was already prepared by WINGuard:
 
 1. Open the project in REAPER.
-2. Open `Extensions -> WINGuard: Configure Virtual Soundcheck/Recording`.
+2. Run `WINGuard: Configure Virtual Soundcheck/Recording` from the REAPER Actions list, or use the main shortcut.
 3. Connect to the same WING.
 4. Wait for the Reaper tab validation status to confirm whether the managed setup is ready.
 5. If the setup is ready, use `Live Mode` / `Soundcheck Mode` directly.
@@ -100,7 +102,7 @@ WINGuard does not treat an arbitrary imported REAPER project as a managed setup 
 If you receive a REAPER project that was not prepared by WINGuard:
 
 1. Open the project in REAPER.
-2. Run `Extensions -> WINGuard: Adopt Existing Reaper Project for Virtual Soundcheck`.
+2. Run `WINGuard: Adopt Existing Reaper Project for Virtual Soundcheck` from the REAPER Actions list, or use the adoption shortcut.
 3. Use the same WING connection step to scan/select a console or enter a manual IP, then connect and fetch live channel metadata.
 4. Review the summary of:
    - already managed tracks

@@ -29,7 +29,8 @@ Platform requirements:
 1. Download the latest `WINGuard-MAC-v*.pkg`.
 2. Double-click the package and follow prompts.
 3. Restart REAPER.
-4. Open `Extensions -> WINGuard: Configure Virtual Soundcheck/Recording`.
+4. Open the REAPER Actions list with `?`, search `WINGuard`, then run `WINGuard: Configure Virtual Soundcheck/Recording`.
+5. Shortcut: `Cmd+Shift+W`.
 
 Default plugin path:
 
@@ -40,7 +41,12 @@ Default plugin path:
 1. Download the latest `WINGuard-WIN-v*.exe`.
 2. Run the installer and complete setup.
 3. Restart REAPER.
-4. Open `Extensions -> WINGuard: Configure Virtual Soundcheck/Recording`.
+4. Open the REAPER Actions list with `?`, search `WINGuard`, then run `WINGuard: Configure Virtual Soundcheck/Recording`.
+5. Shortcut: `Ctrl+Shift+W`.
+
+Windows note:
+
+- The installed app should appear as `WINGuard` in Windows installed apps / Add or Remove Programs.
 
 Default plugin path:
 
@@ -62,13 +68,18 @@ What this means in practice:
 
 ## First Run
 
-1. Go to `Extensions -> WINGuard: Configure Virtual Soundcheck/Recording`.
+1. Open the REAPER Actions list with `?`, search `WINGuard`, then run `WINGuard: Configure Virtual Soundcheck/Recording`.
 2. Enter or discover the WING IP address.
 3. Fetch channels and confirm track creation. WINGuard uses the fixed WING OSC runtime port `2223`.
 
+Useful shortcuts:
+
+- Main action: `Cmd+Shift+W` on macOS, `Ctrl+Shift+W` on Windows
+- Existing-project adoption: `Cmd+Shift+I` on macOS, `Ctrl+Shift+I` on Windows
+
 ## Verify Installation
 
-- Extension appears under the `Extensions` menu in REAPER.
+- `WINGuard` actions appear in the REAPER Actions list when you search for `WINGuard`.
 - Plugin binary exists in your `UserPlugins` directory.
 - Connection to WING succeeds without OSC timeout errors.
 
