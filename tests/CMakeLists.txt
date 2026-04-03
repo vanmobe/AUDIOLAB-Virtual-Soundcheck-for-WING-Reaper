@@ -20,6 +20,12 @@ add_executable(playback_naming_tests
     playback_naming_tests.cpp
 )
 
+add_executable(wing_config_tests
+    wing_config_tests.cpp
+    ../src/utilities/wing_config.cpp
+    ../src/utilities/platform_util.cpp
+)
+
 add_executable(osc_builder_tests
     osc_builder_tests.cpp
     ../src/core/osc_builder.cpp
@@ -75,6 +81,14 @@ target_include_directories(playback_allocator_tests
 
 target_include_directories(playback_naming_tests
     PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include/wingconnector
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include/internal
+)
+
+target_include_directories(wing_config_tests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../lib
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
         ${CMAKE_CURRENT_SOURCE_DIR}/../include/wingconnector
         ${CMAKE_CURRENT_SOURCE_DIR}/../include/internal
@@ -138,6 +152,7 @@ else()
     target_compile_options(adoption_plan_tests PRIVATE -Wall -Wextra -Wpedantic -Wno-error)
     target_compile_options(playback_allocator_tests PRIVATE -Wall -Wextra -Wpedantic -Wno-error)
     target_compile_options(playback_naming_tests PRIVATE -Wall -Wextra -Wpedantic -Wno-error)
+    target_compile_options(wing_config_tests PRIVATE -Wall -Wextra -Wpedantic -Wno-error)
     target_compile_options(osc_builder_tests PRIVATE -Wall -Wextra -Wpedantic -Wno-error)
     target_compile_options(source_input_mode_plan_tests PRIVATE -Wall -Wextra -Wpedantic -Wno-error)
     target_compile_options(stereo_channel_plan_tests PRIVATE -Wall -Wextra -Wpedantic -Wno-error)
@@ -185,6 +200,7 @@ add_test(NAME soundcheck_state_tests COMMAND soundcheck_state_tests)
 add_test(NAME adoption_plan_tests COMMAND adoption_plan_tests)
 add_test(NAME playback_allocator_tests COMMAND playback_allocator_tests)
 add_test(NAME playback_naming_tests COMMAND playback_naming_tests)
+add_test(NAME wing_config_tests COMMAND wing_config_tests)
 add_test(NAME osc_builder_tests COMMAND osc_builder_tests)
 add_test(NAME source_input_mode_plan_tests COMMAND source_input_mode_plan_tests)
 add_test(NAME stereo_channel_plan_tests COMMAND stereo_channel_plan_tests)
