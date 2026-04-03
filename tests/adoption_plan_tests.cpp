@@ -218,6 +218,65 @@ void TestBuildRequestedAllocationsFollowAssignedChannelOrder() {
            "stereo channel should be routed after lower assigned channels, not by track row order");
 }
 
+void TestNormalizeOutputModeDefaultsToUsb() {
+    Expect(AdoptionPlan::NormalizeOutputMode("CARD") == "CARD", "CARD should stay CARD");
+    Expect(AdoptionPlan::NormalizeOutputMode("USB") == "USB", "USB should stay USB");
+    Expect(AdoptionPlan::NormalizeOutputMode("bogus") == "USB", "unknown output mode should fall back to USB");
+}
+
+void TestValidateAssignmentsIgnoresExistingRouteForReAdoptedSource() {
+    auto row = MakeRow(4, "Kick", false, 4);
+    row.slot_overridden = true;
+    row.slot_start = 5;
+    row.slot_end = 5;
+
+    const std::vector<AdoptionPlan::ExistingRoute> existing{
+        {"CH:4", 5, 5},
+    };
+
+    std::string error;
+    Expect(AdoptionPlan::ValidateAssignments({row}, existing, "USB", error),
+           "re-adopting the same source should ignore its existing route collision");
+}
+
+void TestBuildRequestedAllocationsFailsWhenMonoSlotsExhausted() {
+    const std::vector<AdoptionPlan::Row> rows{
+        MakeRow(40, "LateMono", false, 40),
+    };
+
+    std::vector<AdoptionPlan::ExistingRoute> existing;
+    existing.reserve(48);
+    for (int slot = 1; slot <= 48; ++slot) {
+        existing.push_back({"USED:" + std::to_string(slot), slot, slot});
+    }
+
+    std::vector<PlaybackAllocation> allocations;
+    std::string error;
+    Expect(!AdoptionPlan::BuildRequestedAllocations(rows, existing, "USB", allocations, error),
+           "mono allocation should fail when every slot is occupied");
+    Expect(error == "No free playback slot is available for track 40.",
+           "mono slot exhaustion message should stay stable");
+}
+
+void TestBuildRequestedAllocationsFailsWhenStereoPairsExhausted() {
+    const std::vector<AdoptionPlan::Row> rows{
+        MakeRow(41, "LateStereo", true, 41),
+    };
+
+    std::vector<AdoptionPlan::ExistingRoute> existing;
+    existing.reserve(24);
+    for (int slot = 1; slot <= 48; slot += 2) {
+        existing.push_back({"USEDPAIR:" + std::to_string(slot), slot, slot + 1});
+    }
+
+    std::vector<PlaybackAllocation> allocations;
+    std::string error;
+    Expect(!AdoptionPlan::BuildRequestedAllocations(rows, existing, "USB", allocations, error),
+           "stereo allocation should fail when every odd-start pair is occupied");
+    Expect(error == "No free odd-start stereo pair is available for track 41.",
+           "stereo slot exhaustion message should stay stable");
+}
+
 }  // namespace
 
 int main() {
@@ -231,6 +290,10 @@ int main() {
     TestBuildRequestedAllocationsUsesCardBankLimit();
     TestBuildRequestedAllocationsAcceptsCardStereoPair();
     TestBuildRequestedAllocationsFollowAssignedChannelOrder();
+    TestNormalizeOutputModeDefaultsToUsb();
+    TestValidateAssignmentsIgnoresExistingRouteForReAdoptedSource();
+    TestBuildRequestedAllocationsFailsWhenMonoSlotsExhausted();
+    TestBuildRequestedAllocationsFailsWhenStereoPairsExhausted();
 
     std::cout << "adoption_plan_tests: OK\n";
     return 0;

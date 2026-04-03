@@ -94,6 +94,48 @@ void TestLoadReadsBridgeMappingsAndManagedSelection() {
     Expect(config.bridge_mappings[1].kind == SourceKind::Matrix, "matrix mapping kind should decode");
 }
 
+void TestLoadFallsBackForUnknownBridgeKindAndMissingArrays() {
+    const auto path = MakeTempPath("load_unknown_bridge_kind.json");
+    WriteJsonFile(path, {
+        {"bridge_mappings", json::array({
+            {
+                {"kind", "not-a-real-kind"},
+                {"source_number", 11},
+                {"midi_value", 45},
+                {"enabled", true}
+            }
+        })}
+    });
+
+    WingConfig config;
+    config.last_selected_source_ids = {"CH:99"};
+    Expect(config.LoadFromFile(path.string()), "config load should succeed");
+    Expect(config.bridge_mappings.size() == 1, "unknown bridge kind input should still load one mapping");
+    Expect(config.bridge_mappings[0].kind == SourceKind::Channel,
+           "unknown bridge kind should fall back to channel");
+    Expect(config.last_selected_source_ids.empty(),
+           "missing managed selection array should reset to an empty default");
+}
+
+void TestLoadClampsAndDefaultsTrackColor() {
+    const auto path = MakeTempPath("load_track_color_defaults.json");
+    WriteJsonFile(path, {
+        {"default_track_color", {
+            {"r", 999},
+            {"b", -5}
+        }}
+    });
+
+    WingConfig config;
+    config.default_color.r = 1;
+    config.default_color.g = 2;
+    config.default_color.b = 3;
+    Expect(config.LoadFromFile(path.string()), "config load should succeed");
+    Expect(config.default_color.r == 255, "red should clamp down to 255");
+    Expect(config.default_color.g == 150, "missing green should use the default value");
+    Expect(config.default_color.b == 0, "blue should clamp up to 0");
+}
+
 void TestSaveWritesRoundTrippableFields() {
     const auto path = MakeTempPath("save_round_trip.json");
 
@@ -144,6 +186,8 @@ void TestSaveWritesRoundTrippableFields() {
 int main() {
     TestLoadForcesFixedPortsAndConvertsTimeout();
     TestLoadReadsBridgeMappingsAndManagedSelection();
+    TestLoadFallsBackForUnknownBridgeKindAndMissingArrays();
+    TestLoadClampsAndDefaultsTrackColor();
     TestSaveWritesRoundTrippableFields();
 
     std::cout << "wing_config_tests: OK\n";
