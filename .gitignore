@@ -1,5 +1,6 @@
 # Build directories
 build/
+build-tests/
 install/
 cmake-build-*/
 pkg_root/
