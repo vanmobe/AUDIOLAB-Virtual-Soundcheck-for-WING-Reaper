@@ -26,7 +26,7 @@ Platform requirements:
 
 ## macOS
 
-1. Download the latest `AUDIOLAB-Virtual-Soundcheck-v*-macOS.pkg`.
+1. Download the latest `WINGuard-MAC-v*.pkg`.
 2. Double-click the package and follow prompts.
 3. Restart REAPER.
 4. Open `Extensions -> WINGuard: Configure Virtual Soundcheck/Recording`.
@@ -37,7 +37,7 @@ Default plugin path:
 
 ## Windows
 
-1. Download the latest `AUDIOLAB-Virtual-Soundcheck-v*-Windows-Setup.exe`.
+1. Download the latest `WINGuard-WIN-v*.exe`.
 2. Run the installer and complete setup.
 3. Restart REAPER.
 4. Open `Extensions -> WINGuard: Configure Virtual Soundcheck/Recording`.

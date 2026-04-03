@@ -62,7 +62,7 @@ exit 0
 POSTINSTALL
 chmod +x "$PKG_SCRIPTS/postinstall"
 
-OUT_FILE="$OUT_DIR/AUDIOLAB-Virtual-Soundcheck-v$VERSION-macOS.pkg"
+OUT_FILE="$OUT_DIR/WINGuard-MAC-v$VERSION.pkg"
 pkgbuild \
   --root "$TMP_ROOT/pkg_root" \
   --scripts "$PKG_SCRIPTS" \

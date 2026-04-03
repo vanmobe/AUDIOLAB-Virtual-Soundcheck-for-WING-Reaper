@@ -43,7 +43,7 @@ DefaultDirName={userappdata}\REAPER\UserPlugins
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 OutputDir=$outPath
-OutputBaseFilename=AUDIOLAB-Virtual-Soundcheck-v$Version-Windows-Setup
+OutputBaseFilename=WINGuard-WIN-v$Version
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
@@ -70,7 +70,7 @@ Set-Content -Path $issPath -Value $iss -NoNewline
 
 & $iscc.Source $issPath | Out-Host
 
-$exePath = Join-Path $outPath "AUDIOLAB-Virtual-Soundcheck-v$Version-Windows-Setup.exe"
+$exePath = Join-Path $outPath "WINGuard-WIN-v$Version.exe"
 if (-not (Test-Path $exePath)) {
     throw "Expected installer not found: $exePath"
 }

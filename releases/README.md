@@ -8,8 +8,8 @@ Primary distribution is via GitHub Releases:
 
 ## Installer Types
 
-- macOS: `AUDIOLAB-Virtual-Soundcheck-v<version>-macOS.pkg`
-- Windows: `AUDIOLAB-Virtual-Soundcheck-v<version>-Windows-Setup.exe`
+- macOS: `WINGuard-MAC-v<version>.pkg`
+- Windows: `WINGuard-WIN-v<version>.exe`
 
 ## How Releases Are Built
 
