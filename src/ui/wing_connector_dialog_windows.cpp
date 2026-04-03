@@ -22,6 +22,7 @@
 #include <sstream>
 #include <set>
 #include <string>
+#include <thread>
 #include <mutex>
 #include <utility>
 #include <vector>
@@ -47,7 +48,55 @@ constexpr int kMinWindowWidth = 1180;
 constexpr int kMinWindowHeight = 860;
 constexpr UINT_PTR kRefreshTimerId = 101;
 constexpr UINT kRefreshTimerMs = 500;
+constexpr UINT kMsgAsyncScanComplete = WM_APP + 1;
+constexpr UINT kMsgAsyncConnectComplete = WM_APP + 2;
+constexpr UINT kMsgAsyncSourcesComplete = WM_APP + 3;
+constexpr UINT kMsgAsyncApplyPlanComplete = WM_APP + 4;
+constexpr UINT kMsgAsyncToggleComplete = WM_APP + 5;
+constexpr UINT kMsgAsyncValidationComplete = WM_APP + 6;
 constexpr int kScrollLineStep = 36;
+constexpr unsigned long kValidationRefreshIntervalMs = 1500;
+
+struct AsyncScanResult {
+    std::vector<WingInfo> wings;
+    bool show_feedback = true;
+};
+
+struct AsyncConnectResult {
+    bool success = false;
+    std::string ip;
+    std::string failure_detail;
+    std::wstring success_footer;
+};
+
+struct AsyncSourcesResult {
+    bool success = false;
+    bool used_pending_draft = false;
+    std::vector<SourceSelectionInfo> channels;
+    std::string failure_detail;
+};
+
+struct AsyncApplyPlanResult {
+    bool success = false;
+    bool setup_soundcheck = true;
+    bool replace_existing = true;
+    std::string output_mode;
+    std::vector<SourceSelectionInfo> prepared_channels;
+    std::vector<PlaybackAllocation> prepared_allocations;
+    std::string failure_detail;
+};
+
+struct AsyncToggleResult {
+    bool success = false;
+    bool enabled = false;
+    std::string failure_detail;
+};
+
+struct AsyncValidationResult {
+    unsigned long long generation = 0;
+    ValidationState state = ValidationState::NotReady;
+    std::string details;
+};
 
 enum ControlId {
     kIdTab = 100,
@@ -182,6 +231,17 @@ std::wstring ReadWindowText(HWND hwnd) {
     }
     text.resize(static_cast<size_t>(std::max(length, 0)));
     return text;
+}
+
+bool SetWindowTextIfChanged(HWND hwnd, const std::wstring& text) {
+    if (!hwnd) {
+        return false;
+    }
+    if (ReadWindowText(hwnd) == text) {
+        return false;
+    }
+    SetWindowTextW(hwnd, text.c_str());
+    return true;
 }
 
 void SetWindowFontRecursive(HWND hwnd, HFONT font) {
@@ -1240,6 +1300,11 @@ private:
                     return context->owner->HandlePageMessage(context->state, msg, wparam, lparam);
                 }
                 break;
+            case WM_ERASEBKGND:
+                if (context && context->owner && context->state) {
+                    return context->owner->OnPageEraseBackground(context->state, reinterpret_cast<HDC>(wparam));
+                }
+                break;
             case WM_COMMAND:
             case WM_NOTIFY:
             case WM_CTLCOLORSTATIC:
@@ -1321,6 +1386,12 @@ private:
             case WM_COMMAND: return self->OnCommand(LOWORD(wparam), HIWORD(wparam));
             case WM_NOTIFY: return self->OnNotify(reinterpret_cast<NMHDR*>(lparam));
             case WM_TIMER: return self->OnTimer(static_cast<UINT_PTR>(wparam));
+            case kMsgAsyncScanComplete: return self->OnAsyncScanComplete(reinterpret_cast<AsyncScanResult*>(lparam));
+            case kMsgAsyncConnectComplete: return self->OnAsyncConnectComplete(reinterpret_cast<AsyncConnectResult*>(lparam));
+            case kMsgAsyncSourcesComplete: return self->OnAsyncSourcesComplete(reinterpret_cast<AsyncSourcesResult*>(lparam));
+            case kMsgAsyncApplyPlanComplete: return self->OnAsyncApplyPlanComplete(reinterpret_cast<AsyncApplyPlanResult*>(lparam));
+            case kMsgAsyncToggleComplete: return self->OnAsyncToggleComplete(reinterpret_cast<AsyncToggleResult*>(lparam));
+            case kMsgAsyncValidationComplete: return self->OnAsyncValidationComplete(reinterpret_cast<AsyncValidationResult*>(lparam));
             case WM_CTLCOLORSTATIC: return self->OnCtlColor(reinterpret_cast<HDC>(wparam), reinterpret_cast<HWND>(lparam));
             case WM_ERASEBKGND: return self->OnEraseBackground(reinterpret_cast<HDC>(wparam));
             case WM_SIZE: return self->OnSize(LOWORD(lparam), HIWORD(lparam));
@@ -1329,6 +1400,8 @@ private:
                 ShowWindow(hwnd, SW_HIDE);
                 return 0;
             case WM_DESTROY:
+                KillTimer(hwnd, kRefreshTimerId);
+                ReaperExtension::Instance().SetLogCallback({});
                 self->hwnd_ = nullptr;
                 return 0;
             default:
@@ -1870,6 +1943,16 @@ private:
         return 1;
     }
 
+    LRESULT OnPageEraseBackground(PageLayoutState* page, HDC hdc) {
+        if (!page || !page->hwnd || !hdc) {
+            return 0;
+        }
+        RECT client{};
+        GetClientRect(page->hwnd, &client);
+        FillRect(hdc, &client, body_brush_);
+        return 1;
+    }
+
     LRESULT HandlePageMessage(PageLayoutState* page, UINT msg, WPARAM wparam, LPARAM lparam) {
         if (!page || !page->hwnd) {
             return 0;
@@ -1910,8 +1993,8 @@ private:
             const int delta_y = page->scroll_y - next_scroll;
             page->scroll_y = next_scroll;
             UpdatePageScroll(*page, PageViewportHeight(*page));
-            ScrollWindowEx(page->hwnd, 0, delta_y, nullptr, nullptr, nullptr, nullptr, SW_INVALIDATE | SW_SCROLLCHILDREN);
-            UpdateWindow(page->hwnd);
+            ScrollWindowEx(page->hwnd, 0, delta_y, nullptr, nullptr, nullptr, nullptr,
+                           SW_INVALIDATE | SW_ERASE | SW_SCROLLCHILDREN);
         }
         return 0;
     }
@@ -1938,6 +2021,26 @@ private:
 
     int PageY(const PageLayoutState& page, int content_y) const {
         return content_y - page.scroll_y;
+    }
+
+    bool ShouldRefreshValidation() const {
+        if (validation_in_progress_) {
+            return false;
+        }
+        const DWORD now = GetTickCount();
+        if (!validation_snapshot_ready_) {
+            return true;
+        }
+        return (now - last_validation_tick_) >= kValidationRefreshIntervalMs;
+    }
+
+    void InvalidateValidationSnapshot() {
+        validation_in_progress_ = false;
+        ++validation_generation_;
+        validation_snapshot_ready_ = false;
+        last_validation_tick_ = 0;
+        latest_validation_state_ = ValidationState::NotReady;
+        latest_validation_details_.clear();
     }
 
     void LayoutControls(int client_width, int client_height) {
@@ -2226,6 +2329,190 @@ private:
         return 0;
     }
 
+    LRESULT OnAsyncScanComplete(AsyncScanResult* result_ptr) {
+        std::unique_ptr<AsyncScanResult> result(result_ptr);
+        scan_in_progress_ = false;
+        discovered_wings_ = result ? std::move(result->wings) : std::vector<WingInfo>{};
+        RefreshDiscoveryControls(true);
+        auto& extension = ReaperExtension::Instance();
+        if (discovered_wings_.empty()) {
+            footer_message_ = L"Scan finished. No WING consoles were discovered on the network.";
+            if (result && result->show_feedback) {
+                ShowMessageBox("No WING consoles were discovered. Enter a manual IP if the console is on a reachable network path.",
+                               "WINGuard",
+                               0);
+            }
+        } else {
+            wchar_t buffer[160];
+            std::swprintf(buffer, sizeof(buffer) / sizeof(wchar_t),
+                          L"Scan finished. Found %zu WING console(s).", discovered_wings_.size());
+            footer_message_ = buffer;
+            if (discovered_wings_.size() == 1 && !extension.IsConnected()) {
+                StartConnectAsync(L"auto-connect", L"Connected to WING.");
+            }
+        }
+        RefreshAll();
+        return 0;
+    }
+
+    LRESULT OnAsyncConnectComplete(AsyncConnectResult* result_ptr) {
+        std::unique_ptr<AsyncConnectResult> result(result_ptr);
+        connect_in_progress_ = false;
+        if (result && result->success) {
+            InvalidateValidationSnapshot();
+            footer_message_ = result->success_footer.empty() ? L"Connected to WING." : result->success_footer;
+            if (pending_choose_sources_after_connect_) {
+                pending_choose_sources_after_connect_ = false;
+                StartChooseSourcesAsync();
+                return 0;
+            }
+            if (pending_apply_after_connect_) {
+                pending_apply_after_connect_ = false;
+                StartApplySetupAsync();
+                return 0;
+            }
+            if (pending_toggle_after_connect_) {
+                pending_toggle_after_connect_ = false;
+                StartToggleSoundcheckAsync();
+                return 0;
+            }
+        } else {
+            pending_choose_sources_after_connect_ = false;
+            pending_apply_after_connect_ = false;
+            pending_toggle_after_connect_ = false;
+            std::string message = "WINGuard could not connect to the configured WING.";
+            if (result && !result->failure_detail.empty()) {
+                message += "\n\nFailure detail:\n" + result->failure_detail;
+            }
+            ShowMessageBox(message.c_str(), "WINGuard", 0);
+            footer_message_ = L"Connection to WING failed.";
+        }
+        RefreshAll();
+        return 0;
+    }
+
+    LRESULT OnAsyncSourcesComplete(AsyncSourcesResult* result_ptr) {
+        std::unique_ptr<AsyncSourcesResult> result(result_ptr);
+        source_load_in_progress_ = false;
+        if (!result || !result->success || result->channels.empty()) {
+            std::string message = "Connected, but no selectable sources were discovered.";
+            if (result && !result->failure_detail.empty()) {
+                message += "\n\nFailure detail:\n" + result->failure_detail;
+            }
+            ShowMessageBox(message.c_str(), "WINGuard", 0);
+            footer_message_ = L"No selectable sources were discovered.";
+            RefreshAll();
+            return 0;
+        }
+
+        if (!result->used_pending_draft) {
+            ApplyPendingSelectionOverlay(result->channels);
+        }
+
+        SourcePickerDialog picker(hwnd_,
+                                  std::move(result->channels),
+                                  pending_setup_soundcheck_,
+                                  pending_replace_existing_);
+        SourcePickerResult picker_result = picker.Run();
+        if (!picker_result.confirmed) {
+            footer_message_ = L"Source review cancelled.";
+            RefreshAll();
+            return 0;
+        }
+        size_t selected_count = 0;
+        for (const auto& channel : picker_result.channels) {
+            if (channel.selected) {
+                ++selected_count;
+            }
+        }
+        if (selected_count == 0) {
+            ShowMessageBox("No sources were selected for the next apply.", "WINGuard", 0);
+            footer_message_ = L"No sources were staged.";
+            RefreshAll();
+            return 0;
+        }
+        has_pending_setup_draft_ = true;
+        pending_setup_channels_ = std::move(picker_result.channels);
+        pending_setup_soundcheck_ = picker_result.setup_soundcheck;
+        pending_replace_existing_ = picker_result.replace_existing;
+        pending_output_mode_ = CurrentOutputMode();
+        InvalidateValidationSnapshot();
+        footer_message_ = L"Live setup draft staged. Review the summary and click Apply Setup when ready.";
+        RefreshAll();
+        return 0;
+    }
+
+    LRESULT OnAsyncApplyPlanComplete(AsyncApplyPlanResult* result_ptr) {
+        std::unique_ptr<AsyncApplyPlanResult> result(result_ptr);
+        apply_plan_in_progress_ = false;
+        if (!result || !result->success || result->prepared_channels.empty()) {
+            std::string message = "WINGuard could not prepare the live setup plan.";
+            if (result && !result->failure_detail.empty()) {
+                message += "\n\nFailure detail:\n" + result->failure_detail;
+            }
+            ShowMessageBox(message.c_str(), "WINGuard", 0);
+            footer_message_ = L"Live setup preparation failed.";
+            RefreshAll();
+            return 0;
+        }
+
+        auto& extension = ReaperExtension::Instance();
+        extension.PauseAutoRecordForSetup();
+        extension.GetConfig().soundcheck_output_mode = result->output_mode;
+        if (extension.SetupSoundcheckFromPlan(result->prepared_channels,
+                                              result->prepared_allocations,
+                                              result->output_mode,
+                                              result->setup_soundcheck,
+                                              result->replace_existing)) {
+            has_pending_setup_draft_ = false;
+            pending_setup_channels_.clear();
+            pending_output_mode_ = ToWide(extension.GetConfig().soundcheck_output_mode);
+            SaveConfigIfPossible(extension);
+            InvalidateValidationSnapshot();
+            footer_message_ = L"Live recording setup applied.";
+        } else {
+            InvalidateValidationSnapshot();
+            footer_message_ = L"Setup apply returned without success confirmation.";
+        }
+        RefreshAll();
+        return 0;
+    }
+
+    LRESULT OnAsyncToggleComplete(AsyncToggleResult* result_ptr) {
+        std::unique_ptr<AsyncToggleResult> result(result_ptr);
+        toggle_in_progress_ = false;
+        if (!result || !result->success) {
+            std::string message = "WINGuard could not change soundcheck mode.";
+            if (result && !result->failure_detail.empty()) {
+                message += "\n\nFailure detail:\n" + result->failure_detail;
+            }
+            ShowMessageBox(message.c_str(), "WINGuard", 0);
+            footer_message_ = L"Soundcheck mode change failed.";
+            RefreshAll();
+            return 0;
+        }
+        InvalidateValidationSnapshot();
+        footer_message_ = result->enabled
+            ? L"Soundcheck mode enabled."
+            : L"Live mode restored.";
+        RefreshAll();
+        return 0;
+    }
+
+    LRESULT OnAsyncValidationComplete(AsyncValidationResult* result_ptr) {
+        std::unique_ptr<AsyncValidationResult> result(result_ptr);
+        validation_in_progress_ = false;
+        if (!result || result->generation != validation_generation_) {
+            return 0;
+        }
+        latest_validation_state_ = result->state;
+        latest_validation_details_ = std::move(result->details);
+        last_validation_tick_ = GetTickCount();
+        validation_snapshot_ready_ = true;
+        RefreshAll();
+        return 0;
+    }
+
     LRESULT OnTimer(UINT_PTR timer_id) {
         if (timer_id == kRefreshTimerId) {
             RefreshAll();
@@ -2441,7 +2728,7 @@ private:
         } else {
             detail = L"Recorder coordination is aligned with the current setup and ready to be used.";
         }
-        SetWindowTextW(wing_placeholder_body_, detail.c_str());
+        SetWindowTextIfChanged(wing_placeholder_body_, detail);
         EnableWindow(apply_recorder_button_, recorder_settings_dirty_ ? TRUE : FALSE);
         EnableWindow(discard_recorder_button_, recorder_settings_dirty_ ? TRUE : FALSE);
     }
@@ -2450,15 +2737,18 @@ private:
         if (!auto_trigger_monitor_combo_) {
             return;
         }
-        auto& config = ReaperExtension::Instance().GetConfig();
-        SendMessageW(auto_trigger_monitor_combo_, CB_RESETCONTENT, 0, 0);
-        SendMessageW(auto_trigger_monitor_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Auto (Armed+Monitored)"));
         const int track_count = ReaperExtension::Instance().GetProjectTrackCount();
-        for (int i = 1; i <= track_count; ++i) {
-            wchar_t label[64];
-            std::swprintf(label, sizeof(label) / sizeof(wchar_t), L"Track %d", i);
-            SendMessageW(auto_trigger_monitor_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
+        if (track_count != last_monitor_track_count_) {
+            SendMessageW(auto_trigger_monitor_combo_, CB_RESETCONTENT, 0, 0);
+            SendMessageW(auto_trigger_monitor_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Auto (Armed+Monitored)"));
+            for (int i = 1; i <= track_count; ++i) {
+                wchar_t label[64];
+                std::swprintf(label, sizeof(label) / sizeof(wchar_t), L"Track %d", i);
+                SendMessageW(auto_trigger_monitor_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
+            }
+            last_monitor_track_count_ = track_count;
         }
+        auto& config = ReaperExtension::Instance().GetConfig();
         int wanted = std::max(0, pending_auto_record_monitor_track_);
         if (wanted > track_count) {
             wanted = 0;
@@ -2467,7 +2757,10 @@ private:
                 config.auto_record_monitor_track = 0;
             }
         }
-        SendMessageW(auto_trigger_monitor_combo_, CB_SETCURSEL, wanted, 0);
+        const LRESULT current_selection = SendMessageW(auto_trigger_monitor_combo_, CB_GETCURSEL, 0, 0);
+        if (current_selection != wanted) {
+            SendMessageW(auto_trigger_monitor_combo_, CB_SETCURSEL, wanted, 0);
+        }
     }
 
     void SyncAutoTriggerFromConfig() {
@@ -2564,8 +2857,8 @@ private:
         std::wstring hint = auto_trigger_dirty_
             ? L"Pending changes stay parked until you click Apply Auto Trigger Settings."
             : L"Warning mode flashes controls when triggered; Record mode starts and stops recording automatically.";
-        SetWindowTextW(auto_trigger_detail_, detail.c_str());
-        SetWindowTextW(auto_trigger_hint_, hint.c_str());
+        SetWindowTextIfChanged(auto_trigger_detail_, detail);
+        SetWindowTextIfChanged(auto_trigger_hint_, hint);
 
         EnableWindow(auto_trigger_enable_off_, live_setup_controls_enabled ? TRUE : FALSE);
         EnableWindow(auto_trigger_enable_on_, live_setup_controls_enabled ? TRUE : FALSE);
@@ -2591,8 +2884,8 @@ private:
         } else {
             detail = L"MIDI shortcuts are disabled. Enable them after live setup is validated if you want hands-on transport control from the console.";
         }
-        SetWindowTextW(midi_summary_, summary.c_str());
-        SetWindowTextW(midi_detail_, detail.c_str());
+        SetWindowTextIfChanged(midi_summary_, summary);
+        SetWindowTextIfChanged(midi_detail_, detail);
         EnableWindow(apply_midi_button_, midi_actions_dirty_ ? TRUE : FALSE);
         EnableWindow(discard_midi_button_, midi_actions_dirty_ ? TRUE : FALSE);
     }
@@ -2610,9 +2903,18 @@ private:
             chunk.swap(pending_log_buffer_);
         }
 
-        const std::wstring current = ReadWindowText(debug_log_view_);
-        std::wstring combined = current + chunk;
         constexpr size_t kMaxLogChars = 32000;
+        const int current_length = GetWindowTextLengthW(debug_log_view_);
+        if (current_length > 0 &&
+            (static_cast<size_t>(current_length) + chunk.size()) <= kMaxLogChars) {
+            SendMessageW(debug_log_view_, EM_SETSEL, current_length, current_length);
+            SendMessageW(debug_log_view_, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(chunk.c_str()));
+            SendMessageW(debug_log_view_, EM_SCROLLCARET, 0, 0);
+            debug_log_popup_.SetText(CurrentLogText());
+            return;
+        }
+
+        std::wstring combined = ReadWindowText(debug_log_view_) + chunk;
         if (combined.size() > kMaxLogChars) {
             combined = combined.substr(combined.size() - kMaxLogChars);
         }
@@ -2653,40 +2955,61 @@ private:
         const StatusSnapshot previous_snapshot = current_snapshot_;
         auto snapshot = BuildSnapshot();
         current_snapshot_ = snapshot;
-        auto update_text = [](HWND control, const std::wstring& text) {
-            if (control && ReadWindowText(control) != text) {
-                SetWindowTextW(control, text.c_str());
-            }
-        };
         auto redraw_control = [](HWND control) {
             if (control) {
-                RedrawWindow(control, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+                RedrawWindow(control, nullptr, nullptr, RDW_INVALIDATE);
             }
         };
 
-        update_text(header_console_status_, snapshot.console.text);
-        update_text(header_validation_status_, snapshot.validation.text);
-        update_text(header_recorder_status_, snapshot.recorder.text);
-        update_text(header_midi_status_, snapshot.midi.text);
-        update_text(tab_status_console_, snapshot.console_tab.text);
-        update_text(tab_status_reaper_, snapshot.reaper_tab.text);
-        update_text(tab_status_wing_, snapshot.wing_tab.text);
-        update_text(tab_status_control_, snapshot.control_tab.text);
-        update_text(pending_summary_, snapshot.pending_summary);
-        update_text(readiness_detail_, snapshot.readiness_detail);
-        update_text(footer_status_, snapshot.footer);
-        update_text(apply_setup_button_, snapshot.apply_label);
-        update_text(toggle_soundcheck_button_, snapshot.toggle_label);
+        SetWindowTextIfChanged(header_console_status_, snapshot.console.text);
+        SetWindowTextIfChanged(header_validation_status_, snapshot.validation.text);
+        SetWindowTextIfChanged(header_recorder_status_, snapshot.recorder.text);
+        SetWindowTextIfChanged(header_midi_status_, snapshot.midi.text);
+        SetWindowTextIfChanged(tab_status_console_, snapshot.console_tab.text);
+        SetWindowTextIfChanged(tab_status_reaper_, snapshot.reaper_tab.text);
+        SetWindowTextIfChanged(tab_status_wing_, snapshot.wing_tab.text);
+        SetWindowTextIfChanged(tab_status_control_, snapshot.control_tab.text);
+        SetWindowTextIfChanged(pending_summary_, snapshot.pending_summary);
+        SetWindowTextIfChanged(readiness_detail_, snapshot.readiness_detail);
+        SetWindowTextIfChanged(footer_status_, snapshot.footer);
+        SetWindowTextIfChanged(apply_setup_button_, snapshot.apply_label);
+        SetWindowTextIfChanged(toggle_soundcheck_button_, snapshot.toggle_label);
         UpdateAutoTriggerMeterPreview();
         FlushPendingLogBuffer();
         RefreshMonitorTrackDropdown();
         UpdateAutoTriggerUI();
         UpdateWingTabUI();
         UpdateControlTabUI();
-        EnableWindow(apply_setup_button_, snapshot.can_apply ? TRUE : FALSE);
-        EnableWindow(discard_setup_button_, snapshot.can_discard ? TRUE : FALSE);
-        EnableWindow(toggle_soundcheck_button_, snapshot.can_toggle ? TRUE : FALSE);
-        update_text(connect_button_, ReaperExtension::Instance().IsConnected() ? L"Disconnect" : L"Connect");
+        const bool async_busy = scan_in_progress_ || connect_in_progress_ || source_load_in_progress_ ||
+                                apply_plan_in_progress_ || toggle_in_progress_;
+        EnableWindow(scan_button_, async_busy ? FALSE : TRUE);
+        EnableWindow(wing_combo_, async_busy ? FALSE : TRUE);
+        EnableWindow(manual_ip_edit_, async_busy ? FALSE : TRUE);
+        EnableWindow(connect_button_, async_busy ? FALSE : TRUE);
+        EnableWindow(choose_sources_button_, async_busy ? FALSE : TRUE);
+        EnableWindow(apply_setup_button_, (!async_busy && snapshot.can_apply) ? TRUE : FALSE);
+        EnableWindow(discard_setup_button_, (!async_busy && snapshot.can_discard) ? TRUE : FALSE);
+        EnableWindow(toggle_soundcheck_button_, (!async_busy && snapshot.can_toggle) ? TRUE : FALSE);
+        if (scan_in_progress_) {
+            SetWindowTextIfChanged(scan_button_, L"Scanning...");
+        } else {
+            SetWindowTextIfChanged(scan_button_, L"Scan");
+        }
+        if (connect_in_progress_) {
+            SetWindowTextIfChanged(connect_button_, L"Connecting...");
+        } else {
+            SetWindowTextIfChanged(connect_button_, ReaperExtension::Instance().IsConnected() ? L"Disconnect" : L"Connect");
+        }
+        if (apply_plan_in_progress_) {
+            SetWindowTextIfChanged(apply_setup_button_, L"Preparing...");
+        } else {
+            SetWindowTextIfChanged(apply_setup_button_, snapshot.apply_label);
+        }
+        if (toggle_in_progress_) {
+            SetWindowTextIfChanged(toggle_soundcheck_button_, L"Switching...");
+        } else {
+            SetWindowTextIfChanged(toggle_soundcheck_button_, snapshot.toggle_label);
+        }
 
         if (previous_snapshot.console.color != snapshot.console.color || previous_snapshot.console.text != snapshot.console.text) {
             redraw_control(header_console_icon_);
@@ -2781,6 +3104,158 @@ private:
         return true;
     }
 
+    void StartConnectAsync(const wchar_t* context, std::wstring success_footer) {
+        if (connect_in_progress_) {
+            return;
+        }
+        std::wstring ip = SelectedOrManualIp();
+        if (ip.empty()) {
+            wchar_t message[256];
+            std::swprintf(message, sizeof(message) / sizeof(wchar_t),
+                          L"No WING IP is selected. Scan or enter a manual IP before %ls.", context);
+            ShowMessageBox(ToUtf8(message).c_str(), "WINGuard", 0);
+            return;
+        }
+        auto& extension = ReaperExtension::Instance();
+        extension.GetConfig().wing_ip = ToUtf8(ip);
+        SaveConfigIfPossible(extension);
+        connect_in_progress_ = true;
+        footer_message_ = std::wstring(L"Connecting to WING for ") + context + L"...";
+        RefreshAll();
+        HWND target = hwnd_;
+        const std::string ip_utf8 = ToUtf8(ip);
+        std::thread([target, ip_utf8, success_footer = std::move(success_footer)]() {
+            auto result = std::make_unique<AsyncConnectResult>();
+            auto& extension = ReaperExtension::Instance();
+            extension.GetConfig().wing_ip = ip_utf8;
+            result->success = extension.ConnectToWing();
+            result->ip = ip_utf8;
+            result->success_footer = success_footer;
+            if (!result->success) {
+                result->failure_detail = extension.GetLastConnectionFailureDetail();
+            }
+            if (!PostMessageW(target, kMsgAsyncConnectComplete, 0, reinterpret_cast<LPARAM>(result.get()))) {
+                return;
+            }
+            result.release();
+        }).detach();
+    }
+
+    void StartChooseSourcesAsync() {
+        source_load_in_progress_ = true;
+        footer_message_ = L"Loading selectable sources...";
+        RefreshAll();
+        HWND target = hwnd_;
+        const bool use_pending_draft = has_pending_setup_draft_ && !pending_setup_channels_.empty();
+        const auto pending_channels = pending_setup_channels_;
+        std::thread([target, use_pending_draft, pending_channels]() {
+            auto result = std::make_unique<AsyncSourcesResult>();
+            result->used_pending_draft = use_pending_draft;
+            auto& extension = ReaperExtension::Instance();
+            if (!extension.IsConnected()) {
+                result->failure_detail = "Not connected to a WING.";
+            } else if (use_pending_draft) {
+                result->channels = pending_channels;
+                result->success = !result->channels.empty();
+            } else {
+                result->channels = extension.GetAvailableSources();
+                result->success = !result->channels.empty();
+            }
+            if (!PostMessageW(target, kMsgAsyncSourcesComplete, 0, reinterpret_cast<LPARAM>(result.get()))) {
+                return;
+            }
+            result.release();
+        }).detach();
+    }
+
+    void StartApplySetupAsync() {
+        if (apply_plan_in_progress_) {
+            return;
+        }
+        apply_plan_in_progress_ = true;
+        footer_message_ = L"Preparing live setup...";
+        RefreshAll();
+        HWND target = hwnd_;
+        const bool has_pending_draft = has_pending_setup_draft_;
+        const auto pending_channels = pending_setup_channels_;
+        const bool setup_soundcheck = pending_setup_soundcheck_;
+        const bool replace_existing = pending_replace_existing_;
+        const std::string output_mode = ToUtf8(pending_output_mode_);
+        std::thread([target, has_pending_draft, pending_channels, setup_soundcheck, replace_existing, output_mode]() {
+            auto result = std::make_unique<AsyncApplyPlanResult>();
+            auto& extension = ReaperExtension::Instance();
+            std::vector<SourceSelectionInfo> channels_to_apply;
+            if (has_pending_draft) {
+                channels_to_apply = pending_channels;
+            } else {
+                channels_to_apply = extension.GetAvailableSources();
+            }
+            size_t selected_count = 0;
+            for (const auto& channel : channels_to_apply) {
+                if (channel.selected) {
+                    ++selected_count;
+                }
+            }
+            if (selected_count == 0) {
+                result->failure_detail = "No sources are staged for apply.";
+            } else if (!extension.PrepareSoundcheckPlan(channels_to_apply,
+                                                        result->prepared_channels,
+                                                        result->prepared_allocations,
+                                                        result->failure_detail)) {
+                // failure_detail already filled by PrepareSoundcheckPlan.
+            } else {
+                result->success = true;
+                result->setup_soundcheck = setup_soundcheck;
+                result->replace_existing = replace_existing;
+                result->output_mode = output_mode;
+            }
+            if (!PostMessageW(target, kMsgAsyncApplyPlanComplete, 0, reinterpret_cast<LPARAM>(result.get()))) {
+                return;
+            }
+            result.release();
+        }).detach();
+    }
+
+    void StartToggleSoundcheckAsync() {
+        if (toggle_in_progress_) {
+            return;
+        }
+        toggle_in_progress_ = true;
+        footer_message_ = L"Toggling soundcheck mode...";
+        RefreshAll();
+        HWND target = hwnd_;
+        const bool enable = !ReaperExtension::Instance().IsSoundcheckModeEnabled();
+        std::thread([target, enable]() {
+            auto result = std::make_unique<AsyncToggleResult>();
+            std::string failure_detail;
+            result->enabled = enable;
+            result->success = ReaperExtension::Instance().SetSoundcheckModeEnabled(enable, &failure_detail);
+            result->failure_detail = failure_detail;
+            if (!PostMessageW(target, kMsgAsyncToggleComplete, 0, reinterpret_cast<LPARAM>(result.get()))) {
+                return;
+            }
+            result.release();
+        }).detach();
+    }
+
+    void StartValidationAsync() {
+        if (validation_in_progress_ || !hwnd_) {
+            return;
+        }
+        validation_in_progress_ = true;
+        const unsigned long long generation = validation_generation_;
+        HWND target = hwnd_;
+        std::thread([target, generation]() {
+            auto result = std::make_unique<AsyncValidationResult>();
+            result->generation = generation;
+            result->state = ReaperExtension::Instance().ValidateLiveRecordingSetup(result->details);
+            if (!PostMessageW(target, kMsgAsyncValidationComplete, 0, reinterpret_cast<LPARAM>(result.get()))) {
+                return;
+            }
+            result.release();
+        }).detach();
+    }
+
     StatusSnapshot BuildSnapshot() {
         StatusSnapshot snapshot;
         auto& extension = ReaperExtension::Instance();
@@ -2788,11 +3263,14 @@ private:
         const bool connected = extension.IsConnected();
         const std::wstring applied_output = ToWide(config.soundcheck_output_mode);
         const std::wstring staged_output = pending_output_mode_.empty() ? applied_output : pending_output_mode_;
+        const bool should_validate_now = connected && !has_pending_setup_draft_ && staged_output == applied_output;
 
-        latest_validation_details_.clear();
-        latest_validation_state_ = ValidationState::NotReady;
-        if (connected && !has_pending_setup_draft_ && staged_output == applied_output) {
-            latest_validation_state_ = extension.ValidateLiveRecordingSetup(latest_validation_details_);
+        if (should_validate_now && ShouldRefreshValidation()) {
+            StartValidationAsync();
+        } else if (!should_validate_now) {
+            if (validation_snapshot_ready_ || validation_in_progress_ || !latest_validation_details_.empty()) {
+                InvalidateValidationSnapshot();
+            }
         }
 
         snapshot.console = connected
@@ -2801,6 +3279,8 @@ private:
 
         if (has_pending_setup_draft_ || staged_output != applied_output) {
             snapshot.validation = MakeStatus(L"Reaper Recorder: Pending Apply", RGB(215, 135, 30));
+        } else if (connected && validation_in_progress_ && !validation_snapshot_ready_) {
+            snapshot.validation = MakeStatus(L"Reaper Recorder: Checking...", RGB(215, 135, 30));
         } else if (latest_validation_state_ == ValidationState::Ready) {
             if (config.auto_record_enabled) {
                 snapshot.validation = MakeStatus(
@@ -2886,6 +3366,11 @@ private:
                 L"Pending setup changes are staged. Applying them will update WING routing, REAPER tracks, and playback inputs for the selected sources.\r\n"
                 L"Next step: review the staged draft, then click Apply Setup.";
             snapshot.readiness_color = RGB(215, 135, 30);
+        } else if (validation_in_progress_ && !validation_snapshot_ready_) {
+            snapshot.readiness_detail =
+                L"Checking the current live setup against WING and REAPER.\r\n"
+                L"Next step: wait for validation to finish, then review whether the managed setup is ready or needs rebuild.";
+            snapshot.readiness_color = RGB(95, 95, 95);
         } else if (!latest_validation_details_.empty()) {
             snapshot.readiness_detail = ToWide(latest_validation_details_);
             if (latest_validation_state_ == ValidationState::Ready) {
@@ -2958,28 +3443,27 @@ private:
         }
     }
 
-    void RunScan(bool show_feedback = true) {
-        auto& extension = ReaperExtension::Instance();
-        discovered_wings_ = extension.DiscoverWings(1500);
-        RefreshDiscoveryControls(true);
-        if (discovered_wings_.empty()) {
-            footer_message_ = L"Scan finished. No WING consoles were discovered on the network.";
-            if (show_feedback) {
-                ShowMessageBox("No WING consoles were discovered. Enter a manual IP if the console is on a reachable network path.",
-                               "WINGuard",
-                               0);
-            }
-        } else {
-            wchar_t buffer[160];
-            std::swprintf(buffer, sizeof(buffer) / sizeof(wchar_t),
-                          L"Scan finished. Found %zu WING console(s).", discovered_wings_.size());
-            footer_message_ = buffer;
-            if (discovered_wings_.size() == 1 && !extension.IsConnected()) {
-                OnConnectClicked();
+    void StartScanAsync(bool show_feedback = true) {
+        if (scan_in_progress_) {
+            return;
+        }
+        scan_in_progress_ = true;
+        footer_message_ = L"Scanning for WING consoles...";
+        RefreshAll();
+        HWND target = hwnd_;
+        std::thread([target, show_feedback]() {
+            auto result = std::make_unique<AsyncScanResult>();
+            result->wings = ReaperExtension::Instance().DiscoverWings(1500);
+            result->show_feedback = show_feedback;
+            if (!PostMessageW(target, kMsgAsyncScanComplete, 0, reinterpret_cast<LPARAM>(result.get()))) {
                 return;
             }
-        }
-        RefreshAll();
+            result.release();
+        }).detach();
+    }
+
+    void RunScan(bool show_feedback = true) {
+        StartScanAsync(show_feedback);
     }
 
     void OnWingSelectionChanged() {
@@ -3005,21 +3489,25 @@ private:
 
     void OnConnectClicked() {
         auto& extension = ReaperExtension::Instance();
+        if (connect_in_progress_ || source_load_in_progress_) {
+            return;
+        }
+        pending_choose_sources_after_connect_ = false;
         if (extension.IsConnected()) {
             extension.DisconnectFromWing();
+            InvalidateValidationSnapshot();
             footer_message_ = L"Disconnected from WING.";
             RefreshAll();
             return;
         }
-        if (EnsureConnected(L"connecting")) {
-            RefreshAll();
-        }
+        StartConnectAsync(L"connecting", L"Connected to WING.");
     }
 
     void OnOutputModeChanged() {
         const std::wstring current_mode = CurrentOutputMode();
         const std::wstring applied_mode = ToWide(ReaperExtension::Instance().GetConfig().soundcheck_output_mode);
         pending_output_mode_ = current_mode;
+        InvalidateValidationSnapshot();
         if (!has_pending_setup_draft_ && pending_output_mode_ == applied_mode) {
             footer_message_ = L"Recording mode matches the applied setup.";
         } else if (!has_pending_setup_draft_) {
@@ -3046,85 +3534,27 @@ private:
     }
 
     void OnChooseSources() {
-        if (!EnsureConnected(L"loading sources")) {
-            RefreshAll();
+        if (connect_in_progress_ || source_load_in_progress_ || scan_in_progress_) {
             return;
         }
-        auto channels = ReaperExtension::Instance().GetAvailableSources();
-        if (channels.empty()) {
-            ShowMessageBox("Connected, but no selectable sources were discovered.", "WINGuard", 0);
-            footer_message_ = L"No selectable sources were discovered.";
-            RefreshAll();
+        if (!ReaperExtension::Instance().IsConnected()) {
+            pending_choose_sources_after_connect_ = true;
+            StartConnectAsync(L"loading sources", L"Connected to WING. Loading selectable sources...");
             return;
         }
-        ApplyPendingSelectionOverlay(channels);
-        SourcePickerDialog picker(hwnd_,
-                                  std::move(channels),
-                                  pending_setup_soundcheck_,
-                                  pending_replace_existing_);
-        SourcePickerResult result = picker.Run();
-        if (!result.confirmed) {
-            footer_message_ = L"Source review cancelled.";
-            RefreshAll();
-            return;
-        }
-        size_t selected_count = 0;
-        for (const auto& channel : result.channels) {
-            if (channel.selected) {
-                ++selected_count;
-            }
-        }
-        if (selected_count == 0) {
-            ShowMessageBox("No sources were selected for the next apply.", "WINGuard", 0);
-            footer_message_ = L"No sources were staged.";
-            RefreshAll();
-            return;
-        }
-        has_pending_setup_draft_ = true;
-        pending_setup_channels_ = std::move(result.channels);
-        pending_setup_soundcheck_ = result.setup_soundcheck;
-        pending_replace_existing_ = result.replace_existing;
-        pending_output_mode_ = CurrentOutputMode();
-        footer_message_ = L"Live setup draft staged. Review the summary and click Apply Setup when ready.";
-        RefreshAll();
+        StartChooseSourcesAsync();
     }
 
     void OnApplySetup() {
-        auto& extension = ReaperExtension::Instance();
-        if (!EnsureConnected(L"applying setup")) {
-            RefreshAll();
+        if (connect_in_progress_ || source_load_in_progress_ || scan_in_progress_ || apply_plan_in_progress_ || toggle_in_progress_) {
             return;
         }
-        std::vector<SourceSelectionInfo> channels_to_apply;
-        if (has_pending_setup_draft_) {
-            channels_to_apply = pending_setup_channels_;
-        } else {
-            channels_to_apply = extension.GetAvailableSources();
-        }
-        size_t selected_count = 0;
-        for (const auto& channel : channels_to_apply) {
-            if (channel.selected) {
-                ++selected_count;
-            }
-        }
-        if (selected_count == 0) {
-            ShowMessageBox("No sources are staged for apply.", "WINGuard", 0);
-            footer_message_ = L"No staged sources are available to apply.";
-            RefreshAll();
+        if (!ReaperExtension::Instance().IsConnected()) {
+            pending_apply_after_connect_ = true;
+            StartConnectAsync(L"applying setup", L"Connected to WING. Preparing live setup...");
             return;
         }
-        extension.PauseAutoRecordForSetup();
-        extension.GetConfig().soundcheck_output_mode = ToUtf8(pending_output_mode_);
-        if (extension.SetupSoundcheckFromSelection(channels_to_apply, pending_setup_soundcheck_, pending_replace_existing_)) {
-            has_pending_setup_draft_ = false;
-            pending_setup_channels_.clear();
-            pending_output_mode_ = ToWide(extension.GetConfig().soundcheck_output_mode);
-            SaveConfigIfPossible(extension);
-            footer_message_ = L"Live recording setup applied.";
-        } else {
-            footer_message_ = L"Setup apply returned without success confirmation.";
-        }
-        RefreshAll();
+        StartApplySetupAsync();
     }
 
     void OnDiscardSetup() {
@@ -3134,21 +3564,21 @@ private:
         pending_replace_existing_ = true;
         pending_output_mode_ = ToWide(ReaperExtension::Instance().GetConfig().soundcheck_output_mode);
         SelectOutputMode(ToUtf8(pending_output_mode_));
+        InvalidateValidationSnapshot();
         footer_message_ = L"Staged setup changes discarded.";
         RefreshAll();
     }
 
     void OnToggleSoundcheck() {
-        auto& extension = ReaperExtension::Instance();
-        if (!EnsureConnected(L"toggling soundcheck mode")) {
-            RefreshAll();
+        if (connect_in_progress_ || source_load_in_progress_ || scan_in_progress_ || apply_plan_in_progress_ || toggle_in_progress_) {
             return;
         }
-        extension.ToggleSoundcheckMode();
-        footer_message_ = extension.IsSoundcheckModeEnabled()
-            ? L"Soundcheck mode enabled."
-            : L"Live mode restored.";
-        RefreshAll();
+        if (!ReaperExtension::Instance().IsConnected()) {
+            pending_toggle_after_connect_ = true;
+            StartConnectAsync(L"toggling soundcheck mode", L"Connected to WING. Toggling soundcheck mode...");
+            return;
+        }
+        StartToggleSoundcheckAsync();
     }
 
     void SyncPendingSettingsFromConfig() {
@@ -3433,6 +3863,10 @@ private:
     bool auto_trigger_dirty_ = false;
     ValidationState latest_validation_state_ = ValidationState::NotReady;
     std::string latest_validation_details_;
+    DWORD last_validation_tick_ = 0;
+    bool validation_snapshot_ready_ = false;
+    bool validation_in_progress_ = false;
+    unsigned long long validation_generation_ = 1;
     std::wstring footer_message_;
     StatusSnapshot current_snapshot_;
     int current_tab_index_ = 0;
@@ -3444,6 +3878,15 @@ private:
     bool pending_midi_actions_enabled_ = false;
     int pending_warning_layer_ = 1;
     bool midi_actions_dirty_ = false;
+    int last_monitor_track_count_ = -1;
+    bool scan_in_progress_ = false;
+    bool connect_in_progress_ = false;
+    bool source_load_in_progress_ = false;
+    bool apply_plan_in_progress_ = false;
+    bool toggle_in_progress_ = false;
+    bool pending_choose_sources_after_connect_ = false;
+    bool pending_apply_after_connect_ = false;
+    bool pending_toggle_after_connect_ = false;
     std::mutex log_buffer_mutex_;
     std::wstring pending_log_buffer_;
     DebugLogPopup debug_log_popup_;
