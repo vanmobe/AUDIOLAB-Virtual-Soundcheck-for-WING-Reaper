@@ -43,6 +43,10 @@ public:
     // Channel operations (called by dialog)
     std::vector<SourceSelectionInfo> GetAvailableSources();
     void CreateTracksFromSelection(const std::vector<SourceSelectionInfo>& channels);
+    bool PrepareSoundcheckPlan(const std::vector<SourceSelectionInfo>& channels,
+                               std::vector<SourceSelectionInfo>& prepared_channels,
+                               std::vector<PlaybackAllocation>& requested_allocations,
+                               std::string& error_detail);
     bool SetupSoundcheckFromSelection(const std::vector<SourceSelectionInfo>& channels, bool setup_soundcheck = true, bool replace_existing = true);
     bool SetupSoundcheckFromPlan(const std::vector<SourceSelectionInfo>& channels,
                                  const std::vector<PlaybackAllocation>& requested_allocations,
@@ -72,6 +76,7 @@ public:
     void RefreshTracks();
     void ShowSettings();
     void ConfigureVirtualSoundcheck();
+    bool SetSoundcheckModeEnabled(bool enable, std::string* error_detail = nullptr);
     void ToggleSoundcheckMode();
     bool IsSoundcheckModeEnabled() const { return soundcheck_mode_enabled_; }
     

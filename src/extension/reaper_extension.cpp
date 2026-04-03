@@ -1466,6 +1466,72 @@ bool ReaperExtension::SetupSoundcheckFromSelection(const std::vector<SourceSelec
     return SetupSoundcheckInternal(channels, nullptr, nullptr, setup_soundcheck, replace_existing);
 }
 
+bool ReaperExtension::PrepareSoundcheckPlan(const std::vector<SourceSelectionInfo>& channels,
+                                            std::vector<SourceSelectionInfo>& prepared_channels,
+                                            std::vector<PlaybackAllocation>& requested_allocations,
+                                            std::string& error_detail) {
+    prepared_channels.clear();
+    requested_allocations.clear();
+
+    if (!connected_ || !osc_handler_) {
+        error_detail = "Not connected to Wing.";
+        Log("WINGuard: Not connected\n");
+        return false;
+    }
+
+    const auto& channel_data = osc_handler_->GetChannelData();
+    for (const auto& sel : channels) {
+        if (!sel.selected) {
+            continue;
+        }
+
+        SourceSelectionInfo selected = sel;
+        if (selected.kind == SourceKind::Channel) {
+            auto it = channel_data.find(selected.source_number);
+            if (it == channel_data.end()) {
+                continue;
+            }
+            if (selected.name.empty()) {
+                selected.name = StableChannelTrackName(selected.source_number);
+            }
+        }
+        prepared_channels.push_back(selected);
+    }
+
+    if (prepared_channels.empty()) {
+        error_detail = "No sources selected.";
+        Log("WINGuard: No sources selected\n");
+        return false;
+    }
+
+    Log("Refreshing selected channel source metadata from Wing...\n");
+    for (const auto& source : prepared_channels) {
+        if (source.kind == SourceKind::Channel) {
+            osc_handler_->QueryChannel(source.source_number);
+        }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    const auto& updated_channel_data = osc_handler_->GetChannelData();
+    for (auto& selected : prepared_channels) {
+        if (selected.kind != SourceKind::Channel) {
+            continue;
+        }
+        auto it = updated_channel_data.find(selected.source_number);
+        if (it != updated_channel_data.end()) {
+            if (!selected.stereo_intent_override) {
+                selected.stereo_linked = it->second.stereo_linked;
+            }
+            if (selected.name.empty()) {
+                selected.name = StableChannelTrackName(selected.source_number);
+            }
+        }
+    }
+
+    requested_allocations = osc_handler_->CalculatePlaybackAllocation(prepared_channels);
+    return true;
+}
+
 bool ReaperExtension::SetupSoundcheckFromPlan(const std::vector<SourceSelectionInfo>& channels,
                                               const std::vector<USBAllocation>& requested_allocations,
                                               const std::string& output_mode,
@@ -1581,32 +1647,35 @@ bool ReaperExtension::SetupSoundcheckInternal(const std::vector<SourceSelectionI
         });
     }
     
-    Log("Refreshing selected channel source metadata from Wing...\n");
-    for (const auto& source : selected_sources) {
-        if (source.kind == SourceKind::Channel) {
-            osc_handler_->QueryChannel(source.source_number);
-        }
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-
-    const auto& updated_channel_data = osc_handler_->GetChannelData();
-    for (auto& selected : selected_sources) {
-        if (selected.kind != SourceKind::Channel) {
-            continue;
-        }
-        auto it = updated_channel_data.find(selected.source_number);
-        if (it != updated_channel_data.end()) {
-            if (!selected.stereo_intent_override) {
-                selected.stereo_linked = it->second.stereo_linked;
+    const bool has_requested_allocations = requested_allocations && !requested_allocations->empty();
+    if (!has_requested_allocations) {
+        Log("Refreshing selected channel source metadata from Wing...\n");
+        for (const auto& source : selected_sources) {
+            if (source.kind == SourceKind::Channel) {
+                osc_handler_->QueryChannel(source.source_number);
             }
-            if (selected.name.empty()) {
-                selected.name = StableChannelTrackName(selected.source_number);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+        const auto& updated_channel_data = osc_handler_->GetChannelData();
+        for (auto& selected : selected_sources) {
+            if (selected.kind != SourceKind::Channel) {
+                continue;
+            }
+            auto it = updated_channel_data.find(selected.source_number);
+            if (it != updated_channel_data.end()) {
+                if (!selected.stereo_intent_override) {
+                    selected.stereo_linked = it->second.stereo_linked;
+                }
+                if (selected.name.empty()) {
+                    selected.name = StableChannelTrackName(selected.source_number);
+                }
             }
         }
     }
     
     std::vector<USBAllocation> allocations;
-    if (requested_allocations && !requested_allocations->empty()) {
+    if (has_requested_allocations) {
         std::map<std::string, USBAllocation> allocation_map = preserved_allocations;
         for (const auto& allocation : *requested_allocations) {
             allocation_map[SourcePersistentId(allocation.source_kind, allocation.source_number)] = allocation;
@@ -3594,28 +3663,36 @@ void ReaperExtension::ConfigureVirtualSoundcheck() {
     SetupSoundcheckFromSelection(sources, true);
 }
 
-void ReaperExtension::ToggleSoundcheckMode() {
+bool ReaperExtension::SetSoundcheckModeEnabled(bool enable, std::string* error_detail) {
     if (!connected_ || !osc_handler_) {
-        ShowMessageBox(
-            "Please connect to Wing console first",
-            "WINGuard - Soundcheck Mode",
-            0
-        );
-        return;
+        if (error_detail) {
+            *error_detail = "Please connect to Wing console first";
+        }
+        return false;
     }
-    
-    // Toggle the state
-    soundcheck_mode_enabled_ = !soundcheck_mode_enabled_;
-    
-    // Apply to all channels
-    osc_handler_->SetAllChannelsAltEnabled(soundcheck_mode_enabled_);
-    
-    if (soundcheck_mode_enabled_) {
+
+    const bool current_state = soundcheck_mode_enabled_.load();
+    if (current_state == enable) {
+        return true;
+    }
+
+    osc_handler_->SetAllChannelsAltEnabled(enable);
+    soundcheck_mode_enabled_ = enable;
+
+    if (enable) {
         Log("WINGuard: Soundcheck Mode ENABLED - Channels using USB input from REAPER\n");
         status_message_ = "Soundcheck Mode ON";
     } else {
         Log("WINGuard: Soundcheck Mode DISABLED - Channels using primary sources\n");
         status_message_ = "Soundcheck Mode OFF";
+    }
+    return true;
+}
+
+void ReaperExtension::ToggleSoundcheckMode() {
+    std::string error_detail;
+    if (!SetSoundcheckModeEnabled(!soundcheck_mode_enabled_.load(), &error_detail)) {
+        ShowMessageBox(error_detail.c_str(), "WINGuard - Soundcheck Mode", 0);
     }
 }
 
