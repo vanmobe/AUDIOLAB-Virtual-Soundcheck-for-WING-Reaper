@@ -48,6 +48,7 @@ constexpr int kMinWindowHeight = 860;
 constexpr UINT_PTR kRefreshTimerId = 101;
 constexpr UINT kRefreshTimerMs = 500;
 constexpr int kScrollLineStep = 36;
+constexpr unsigned long kValidationRefreshIntervalMs = 1500;
 
 enum ControlId {
     kIdTab = 100,
@@ -182,6 +183,17 @@ std::wstring ReadWindowText(HWND hwnd) {
     }
     text.resize(static_cast<size_t>(std::max(length, 0)));
     return text;
+}
+
+bool SetWindowTextIfChanged(HWND hwnd, const std::wstring& text) {
+    if (!hwnd) {
+        return false;
+    }
+    if (ReadWindowText(hwnd) == text) {
+        return false;
+    }
+    SetWindowTextW(hwnd, text.c_str());
+    return true;
 }
 
 void SetWindowFontRecursive(HWND hwnd, HFONT font) {
@@ -1240,6 +1252,11 @@ private:
                     return context->owner->HandlePageMessage(context->state, msg, wparam, lparam);
                 }
                 break;
+            case WM_ERASEBKGND:
+                if (context && context->owner && context->state) {
+                    return context->owner->OnPageEraseBackground(context->state, reinterpret_cast<HDC>(wparam));
+                }
+                break;
             case WM_COMMAND:
             case WM_NOTIFY:
             case WM_CTLCOLORSTATIC:
@@ -1329,6 +1346,8 @@ private:
                 ShowWindow(hwnd, SW_HIDE);
                 return 0;
             case WM_DESTROY:
+                KillTimer(hwnd, kRefreshTimerId);
+                ReaperExtension::Instance().SetLogCallback({});
                 self->hwnd_ = nullptr;
                 return 0;
             default:
@@ -1870,6 +1889,16 @@ private:
         return 1;
     }
 
+    LRESULT OnPageEraseBackground(PageLayoutState* page, HDC hdc) {
+        if (!page || !page->hwnd || !hdc) {
+            return 0;
+        }
+        RECT client{};
+        GetClientRect(page->hwnd, &client);
+        FillRect(hdc, &client, body_brush_);
+        return 1;
+    }
+
     LRESULT HandlePageMessage(PageLayoutState* page, UINT msg, WPARAM wparam, LPARAM lparam) {
         if (!page || !page->hwnd) {
             return 0;
@@ -1910,8 +1939,8 @@ private:
             const int delta_y = page->scroll_y - next_scroll;
             page->scroll_y = next_scroll;
             UpdatePageScroll(*page, PageViewportHeight(*page));
-            ScrollWindowEx(page->hwnd, 0, delta_y, nullptr, nullptr, nullptr, nullptr, SW_INVALIDATE | SW_SCROLLCHILDREN);
-            UpdateWindow(page->hwnd);
+            ScrollWindowEx(page->hwnd, 0, delta_y, nullptr, nullptr, nullptr, nullptr,
+                           SW_INVALIDATE | SW_ERASE | SW_SCROLLCHILDREN);
         }
         return 0;
     }
@@ -1938,6 +1967,21 @@ private:
 
     int PageY(const PageLayoutState& page, int content_y) const {
         return content_y - page.scroll_y;
+    }
+
+    bool ShouldRefreshValidation() const {
+        const DWORD now = GetTickCount();
+        if (!validation_snapshot_ready_) {
+            return true;
+        }
+        return (now - last_validation_tick_) >= kValidationRefreshIntervalMs;
+    }
+
+    void InvalidateValidationSnapshot() {
+        validation_snapshot_ready_ = false;
+        last_validation_tick_ = 0;
+        latest_validation_state_ = ValidationState::NotReady;
+        latest_validation_details_.clear();
     }
 
     void LayoutControls(int client_width, int client_height) {
@@ -2441,7 +2485,7 @@ private:
         } else {
             detail = L"Recorder coordination is aligned with the current setup and ready to be used.";
         }
-        SetWindowTextW(wing_placeholder_body_, detail.c_str());
+        SetWindowTextIfChanged(wing_placeholder_body_, detail);
         EnableWindow(apply_recorder_button_, recorder_settings_dirty_ ? TRUE : FALSE);
         EnableWindow(discard_recorder_button_, recorder_settings_dirty_ ? TRUE : FALSE);
     }
@@ -2450,15 +2494,18 @@ private:
         if (!auto_trigger_monitor_combo_) {
             return;
         }
-        auto& config = ReaperExtension::Instance().GetConfig();
-        SendMessageW(auto_trigger_monitor_combo_, CB_RESETCONTENT, 0, 0);
-        SendMessageW(auto_trigger_monitor_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Auto (Armed+Monitored)"));
         const int track_count = ReaperExtension::Instance().GetProjectTrackCount();
-        for (int i = 1; i <= track_count; ++i) {
-            wchar_t label[64];
-            std::swprintf(label, sizeof(label) / sizeof(wchar_t), L"Track %d", i);
-            SendMessageW(auto_trigger_monitor_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
+        if (track_count != last_monitor_track_count_) {
+            SendMessageW(auto_trigger_monitor_combo_, CB_RESETCONTENT, 0, 0);
+            SendMessageW(auto_trigger_monitor_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Auto (Armed+Monitored)"));
+            for (int i = 1; i <= track_count; ++i) {
+                wchar_t label[64];
+                std::swprintf(label, sizeof(label) / sizeof(wchar_t), L"Track %d", i);
+                SendMessageW(auto_trigger_monitor_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
+            }
+            last_monitor_track_count_ = track_count;
         }
+        auto& config = ReaperExtension::Instance().GetConfig();
         int wanted = std::max(0, pending_auto_record_monitor_track_);
         if (wanted > track_count) {
             wanted = 0;
@@ -2467,7 +2514,10 @@ private:
                 config.auto_record_monitor_track = 0;
             }
         }
-        SendMessageW(auto_trigger_monitor_combo_, CB_SETCURSEL, wanted, 0);
+        const LRESULT current_selection = SendMessageW(auto_trigger_monitor_combo_, CB_GETCURSEL, 0, 0);
+        if (current_selection != wanted) {
+            SendMessageW(auto_trigger_monitor_combo_, CB_SETCURSEL, wanted, 0);
+        }
     }
 
     void SyncAutoTriggerFromConfig() {
@@ -2564,8 +2614,8 @@ private:
         std::wstring hint = auto_trigger_dirty_
             ? L"Pending changes stay parked until you click Apply Auto Trigger Settings."
             : L"Warning mode flashes controls when triggered; Record mode starts and stops recording automatically.";
-        SetWindowTextW(auto_trigger_detail_, detail.c_str());
-        SetWindowTextW(auto_trigger_hint_, hint.c_str());
+        SetWindowTextIfChanged(auto_trigger_detail_, detail);
+        SetWindowTextIfChanged(auto_trigger_hint_, hint);
 
         EnableWindow(auto_trigger_enable_off_, live_setup_controls_enabled ? TRUE : FALSE);
         EnableWindow(auto_trigger_enable_on_, live_setup_controls_enabled ? TRUE : FALSE);
@@ -2591,8 +2641,8 @@ private:
         } else {
             detail = L"MIDI shortcuts are disabled. Enable them after live setup is validated if you want hands-on transport control from the console.";
         }
-        SetWindowTextW(midi_summary_, summary.c_str());
-        SetWindowTextW(midi_detail_, detail.c_str());
+        SetWindowTextIfChanged(midi_summary_, summary);
+        SetWindowTextIfChanged(midi_detail_, detail);
         EnableWindow(apply_midi_button_, midi_actions_dirty_ ? TRUE : FALSE);
         EnableWindow(discard_midi_button_, midi_actions_dirty_ ? TRUE : FALSE);
     }
@@ -2610,9 +2660,18 @@ private:
             chunk.swap(pending_log_buffer_);
         }
 
-        const std::wstring current = ReadWindowText(debug_log_view_);
-        std::wstring combined = current + chunk;
         constexpr size_t kMaxLogChars = 32000;
+        const int current_length = GetWindowTextLengthW(debug_log_view_);
+        if (current_length > 0 &&
+            (static_cast<size_t>(current_length) + chunk.size()) <= kMaxLogChars) {
+            SendMessageW(debug_log_view_, EM_SETSEL, current_length, current_length);
+            SendMessageW(debug_log_view_, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(chunk.c_str()));
+            SendMessageW(debug_log_view_, EM_SCROLLCARET, 0, 0);
+            debug_log_popup_.SetText(CurrentLogText());
+            return;
+        }
+
+        std::wstring combined = ReadWindowText(debug_log_view_) + chunk;
         if (combined.size() > kMaxLogChars) {
             combined = combined.substr(combined.size() - kMaxLogChars);
         }
@@ -2653,30 +2712,25 @@ private:
         const StatusSnapshot previous_snapshot = current_snapshot_;
         auto snapshot = BuildSnapshot();
         current_snapshot_ = snapshot;
-        auto update_text = [](HWND control, const std::wstring& text) {
-            if (control && ReadWindowText(control) != text) {
-                SetWindowTextW(control, text.c_str());
-            }
-        };
         auto redraw_control = [](HWND control) {
             if (control) {
-                RedrawWindow(control, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+                RedrawWindow(control, nullptr, nullptr, RDW_INVALIDATE);
             }
         };
 
-        update_text(header_console_status_, snapshot.console.text);
-        update_text(header_validation_status_, snapshot.validation.text);
-        update_text(header_recorder_status_, snapshot.recorder.text);
-        update_text(header_midi_status_, snapshot.midi.text);
-        update_text(tab_status_console_, snapshot.console_tab.text);
-        update_text(tab_status_reaper_, snapshot.reaper_tab.text);
-        update_text(tab_status_wing_, snapshot.wing_tab.text);
-        update_text(tab_status_control_, snapshot.control_tab.text);
-        update_text(pending_summary_, snapshot.pending_summary);
-        update_text(readiness_detail_, snapshot.readiness_detail);
-        update_text(footer_status_, snapshot.footer);
-        update_text(apply_setup_button_, snapshot.apply_label);
-        update_text(toggle_soundcheck_button_, snapshot.toggle_label);
+        SetWindowTextIfChanged(header_console_status_, snapshot.console.text);
+        SetWindowTextIfChanged(header_validation_status_, snapshot.validation.text);
+        SetWindowTextIfChanged(header_recorder_status_, snapshot.recorder.text);
+        SetWindowTextIfChanged(header_midi_status_, snapshot.midi.text);
+        SetWindowTextIfChanged(tab_status_console_, snapshot.console_tab.text);
+        SetWindowTextIfChanged(tab_status_reaper_, snapshot.reaper_tab.text);
+        SetWindowTextIfChanged(tab_status_wing_, snapshot.wing_tab.text);
+        SetWindowTextIfChanged(tab_status_control_, snapshot.control_tab.text);
+        SetWindowTextIfChanged(pending_summary_, snapshot.pending_summary);
+        SetWindowTextIfChanged(readiness_detail_, snapshot.readiness_detail);
+        SetWindowTextIfChanged(footer_status_, snapshot.footer);
+        SetWindowTextIfChanged(apply_setup_button_, snapshot.apply_label);
+        SetWindowTextIfChanged(toggle_soundcheck_button_, snapshot.toggle_label);
         UpdateAutoTriggerMeterPreview();
         FlushPendingLogBuffer();
         RefreshMonitorTrackDropdown();
@@ -2686,7 +2740,7 @@ private:
         EnableWindow(apply_setup_button_, snapshot.can_apply ? TRUE : FALSE);
         EnableWindow(discard_setup_button_, snapshot.can_discard ? TRUE : FALSE);
         EnableWindow(toggle_soundcheck_button_, snapshot.can_toggle ? TRUE : FALSE);
-        update_text(connect_button_, ReaperExtension::Instance().IsConnected() ? L"Disconnect" : L"Connect");
+        SetWindowTextIfChanged(connect_button_, ReaperExtension::Instance().IsConnected() ? L"Disconnect" : L"Connect");
 
         if (previous_snapshot.console.color != snapshot.console.color || previous_snapshot.console.text != snapshot.console.text) {
             redraw_control(header_console_icon_);
@@ -2788,11 +2842,18 @@ private:
         const bool connected = extension.IsConnected();
         const std::wstring applied_output = ToWide(config.soundcheck_output_mode);
         const std::wstring staged_output = pending_output_mode_.empty() ? applied_output : pending_output_mode_;
+        const bool should_validate_now = connected && !has_pending_setup_draft_ && staged_output == applied_output;
 
-        latest_validation_details_.clear();
-        latest_validation_state_ = ValidationState::NotReady;
-        if (connected && !has_pending_setup_draft_ && staged_output == applied_output) {
+        if (should_validate_now && ShouldRefreshValidation()) {
+            latest_validation_details_.clear();
+            latest_validation_state_ = ValidationState::NotReady;
             latest_validation_state_ = extension.ValidateLiveRecordingSetup(latest_validation_details_);
+            last_validation_tick_ = GetTickCount();
+            validation_snapshot_ready_ = true;
+        } else if (!should_validate_now) {
+            latest_validation_details_.clear();
+            latest_validation_state_ = ValidationState::NotReady;
+            validation_snapshot_ready_ = false;
         }
 
         snapshot.console = connected
@@ -3007,11 +3068,13 @@ private:
         auto& extension = ReaperExtension::Instance();
         if (extension.IsConnected()) {
             extension.DisconnectFromWing();
+            InvalidateValidationSnapshot();
             footer_message_ = L"Disconnected from WING.";
             RefreshAll();
             return;
         }
         if (EnsureConnected(L"connecting")) {
+            InvalidateValidationSnapshot();
             RefreshAll();
         }
     }
@@ -3020,6 +3083,7 @@ private:
         const std::wstring current_mode = CurrentOutputMode();
         const std::wstring applied_mode = ToWide(ReaperExtension::Instance().GetConfig().soundcheck_output_mode);
         pending_output_mode_ = current_mode;
+        InvalidateValidationSnapshot();
         if (!has_pending_setup_draft_ && pending_output_mode_ == applied_mode) {
             footer_message_ = L"Recording mode matches the applied setup.";
         } else if (!has_pending_setup_draft_) {
@@ -3085,6 +3149,7 @@ private:
         pending_setup_soundcheck_ = result.setup_soundcheck;
         pending_replace_existing_ = result.replace_existing;
         pending_output_mode_ = CurrentOutputMode();
+        InvalidateValidationSnapshot();
         footer_message_ = L"Live setup draft staged. Review the summary and click Apply Setup when ready.";
         RefreshAll();
     }
@@ -3120,8 +3185,10 @@ private:
             pending_setup_channels_.clear();
             pending_output_mode_ = ToWide(extension.GetConfig().soundcheck_output_mode);
             SaveConfigIfPossible(extension);
+            InvalidateValidationSnapshot();
             footer_message_ = L"Live recording setup applied.";
         } else {
+            InvalidateValidationSnapshot();
             footer_message_ = L"Setup apply returned without success confirmation.";
         }
         RefreshAll();
@@ -3134,6 +3201,7 @@ private:
         pending_replace_existing_ = true;
         pending_output_mode_ = ToWide(ReaperExtension::Instance().GetConfig().soundcheck_output_mode);
         SelectOutputMode(ToUtf8(pending_output_mode_));
+        InvalidateValidationSnapshot();
         footer_message_ = L"Staged setup changes discarded.";
         RefreshAll();
     }
@@ -3145,6 +3213,7 @@ private:
             return;
         }
         extension.ToggleSoundcheckMode();
+        InvalidateValidationSnapshot();
         footer_message_ = extension.IsSoundcheckModeEnabled()
             ? L"Soundcheck mode enabled."
             : L"Live mode restored.";
@@ -3433,6 +3502,8 @@ private:
     bool auto_trigger_dirty_ = false;
     ValidationState latest_validation_state_ = ValidationState::NotReady;
     std::string latest_validation_details_;
+    DWORD last_validation_tick_ = 0;
+    bool validation_snapshot_ready_ = false;
     std::wstring footer_message_;
     StatusSnapshot current_snapshot_;
     int current_tab_index_ = 0;
@@ -3444,6 +3515,7 @@ private:
     bool pending_midi_actions_enabled_ = false;
     int pending_warning_layer_ = 1;
     bool midi_actions_dirty_ = false;
+    int last_monitor_track_count_ = -1;
     std::mutex log_buffer_mutex_;
     std::wstring pending_log_buffer_;
     DebugLogPopup debug_log_popup_;
